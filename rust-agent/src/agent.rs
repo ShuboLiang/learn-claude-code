@@ -195,11 +195,19 @@ impl AgentApp {
                             self.run_subagent(prompt).await?
                         }
                     } else {
-                        let dispatch = toolbox.dispatch(name, input).await?;
-                        used_todo |= dispatch.used_todo;
-                        println!("> {name}:");
-                        println!("{}", preview(&dispatch.output));
-                        dispatch.output
+                        match toolbox.dispatch(name, input).await {
+                            Ok(dispatch) => {
+                                used_todo |= dispatch.used_todo;
+                                println!("> {name}:");
+                                println!("{}", preview(&dispatch.output));
+                                dispatch.output
+                            }
+                            Err(e) => {
+                                let msg = format!("Error: {e}");
+                                println!("> {name}: {msg}");
+                                msg
+                            }
+                        }
                     };
 
                     results.push(tool_result_block(id, output));
@@ -256,8 +264,13 @@ impl AgentApp {
     /// # 运作原理
     /// 拼接固定模板字符串，填入工作区路径和技能描述列表
     fn system_prompt(&self) -> String {
+        let platform = if cfg!(windows) {
+            "Windows (PowerShell). Use PowerShell syntax for shell commands: use `Get-ChildItem` instead of `ls`, `Get-Content` instead of `cat`, `-Command` instead of `-lc`, `;` instead of `&&`"
+        } else {
+            "Unix (bash)"
+        };
         format!(
-            "You are a coding agent at {}.\nUse tools to solve tasks. Prefer acting over long explanations.\nUse the todo tool to plan multi-step work. Use the task tool to delegate subtasks with fresh context. Use load_skill before unfamiliar domain work.\n\nSkills available:\n{}",
+            "You are a coding agent at {}.\nPlatform: {platform}\nUse tools to solve tasks. Prefer acting over long explanations.\nUse the todo tool to plan multi-step work. Use the task tool to delegate subtasks with fresh context. Use load_skill before unfamiliar domain work.\n\nSkills available:\n{}",
             self.workspace_root.display(),
             self.skills.descriptions_for_system_prompt()
         )

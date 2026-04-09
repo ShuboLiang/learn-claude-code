@@ -24,8 +24,10 @@ use crate::AgentResult;
 /// 3. 最终检查结果路径是否以 `base` 开头，不是的话说明路径逃逸了，直接报错
 pub fn resolve_workspace_path(root: &Path, input: &str) -> AgentResult<PathBuf> {
     let base = if root.exists() {
-        root.canonicalize()
-            .with_context(|| format!("Failed to resolve workspace root: {}", root.display()))?
+        strip_unc_prefix(
+            root.canonicalize()
+                .with_context(|| format!("Failed to resolve workspace root: {}", root.display()))?,
+        )
     } else if root.is_absolute() {
         normalize_path(root.to_path_buf())
     } else {
@@ -78,4 +80,40 @@ fn normalize_path(path: PathBuf) -> PathBuf {
     }
 
     normalized
+}
+
+/// 剥离 Windows 上 canonicalize() 返回的 UNC 前缀（`\\?\`）
+///
+/// # 参数
+/// - `path`: 待处理的路径
+///
+/// # 返回值
+/// 去除 UNC 前缀后的路径（非 Windows 环境原样返回）
+///
+/// # 使用场景
+/// 被 `resolve_workspace_path` 调用，确保 base 路径与 normalize_path 处理后的路径格式一致
+///
+/// # 运作原理
+/// Windows 上 `std::fs::canonicalize()` 会返回 `\\?\C:\...` 格式的 UNC 路径，
+/// 而 `normalize_path` 处理绝对路径输入时返回 `C:\...` 格式。
+/// 两者在 `starts_with` 比较时不匹配，导致路径校验误报逃逸错误。
+/// 此函数将 UNC 前缀剥离，统一为普通路径格式。
+fn strip_unc_prefix(path: PathBuf) -> PathBuf {
+    let s = path.to_str().unwrap_or("");
+    if s.starts_with(r"\\?\") {
+        PathBuf::from(&s[4..])
+    } else {
+        path
+    }
+}
+#[cfg(test)]
+mod test {
+    use std::path::Path;
+
+    #[test]
+    fn test_path() {
+        let path = Path::new("c:\\hp");
+        let path = path.canonicalize().unwrap();
+        println!("{}", path.display())
+    }
 }

@@ -1,7 +1,10 @@
+use std::time::Duration;
+
 use anyhow::{Context, anyhow};
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tokio::time::sleep;
 
 use crate::AgentResult;
 
@@ -175,26 +178,41 @@ impl AnthropicClient {
         request: &MessagesRequest<'_>,
     ) -> AgentResult<MessagesResponse> {
         let url = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
-        let response = self
-            .http
-            .post(url)
-            .header("x-api-key", &self.api_key)
-            .json(request)
-            .send()
-            .await
-            .context("Failed to call Anthropic Messages API")?;
+        let max_retries: u32 = 5;
 
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .context("Failed to read Anthropic response body")?;
+        for attempt in 0..=max_retries {
+            let response = self
+                .http
+                .post(&url)
+                .header("x-api-key", &self.api_key)
+                .json(request)
+                .send()
+                .await
+                .context("Failed to call Anthropic Messages API")?;
 
-        if !status.is_success() {
+            let status = response.status();
+            let body = response
+                .text()
+                .await
+                .context("Failed to read Anthropic response body")?;
+
+            if status.is_success() {
+                return serde_json::from_str(&body)
+                    .context("Failed to parse Anthropic response JSON");
+            }
+
+            // 仅对 429（限流）和 529（过载）进行重试
+            if (status.as_u16() == 429 || status.as_u16() == 529) && attempt < max_retries {
+                let wait = Duration::from_secs(1 << attempt); // 1s, 2s, 4s, 8s, 16s
+                eprintln!("API 返回 {status}，第 {}/{} 次重试，等待 {wait:?}...", attempt + 1, max_retries);
+                sleep(wait).await;
+                continue;
+            }
+
             return Err(anyhow!("Anthropic API error {status}: {body}"));
         }
 
-        serde_json::from_str(&body).context("Failed to parse Anthropic response JSON")
+        unreachable!()
     }
 }
 
