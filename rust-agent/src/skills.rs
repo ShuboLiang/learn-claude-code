@@ -71,6 +71,7 @@ impl SkillLoader {
         }
 
         for entry in WalkDir::new(skills_dir)
+            .follow_links(true)
             .into_iter()
             .filter_map(Result::ok)
             .filter(|entry| entry.file_type().is_file() && entry.file_name() == "SKILL.md")
@@ -128,6 +129,26 @@ impl SkillLoader {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    /// 合并另一个 SkillLoader 的技能到当前实例中
+    ///
+    /// 同名技能会被另一个加载器中的技能覆盖（即后加载的优先）
+    ///
+    /// # 使用场景
+    /// 当需要从多个目录（用户目录 + 项目目录）加载技能时，分别加载后合并
+    pub fn merge(&mut self, other: SkillLoader) {
+        self.skills.extend(other.skills);
+    }
+
+    /// 从多个目录依次加载技能并合并，同名技能后被加载的覆盖先加载的
+    pub fn load_from_dirs(dirs: &[&Path]) -> AgentResult<Self> {
+        let mut loader = Self::default();
+        for dir in dirs {
+            let other = Self::load_from_dir(dir)?;
+            loader.merge(other);
+        }
+        Ok(loader)
     }
 
     /// 按名称加载指定技能的完整内容，用 XML 标签包裹后返回

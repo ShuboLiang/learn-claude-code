@@ -90,7 +90,13 @@ impl AgentApp {
             std::env::current_dir().context("Failed to determine current directory")?;
         let client = AnthropicClient::from_env()?;
         let model = std::env::var("MODEL_ID").context("Missing MODEL_ID in environment or .env")?;
-        let skills = SkillLoader::load_from_dir(&workspace_root.join("skills"))?;
+        let user_skills_dir = dirs::home_dir()
+            .map(|p| p.join(".claude/skills"))
+            .unwrap_or_default();
+        let skills = SkillLoader::load_from_dirs(&[
+            &user_skills_dir,
+            &workspace_root.join("skills"),
+        ])?;
 
         Ok(Self {
             client,
