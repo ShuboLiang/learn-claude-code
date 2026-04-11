@@ -1,4 +1,4 @@
-use std::io::{self, Write};
+use std::io::{self, Write as IoWrite};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -137,26 +137,24 @@ impl AgentApp {
         history: &mut Vec<ApiMessage>,
         user_input: &str,
     ) -> AgentResult<String> {
-        let mut log_entries = Vec::new();
-        log_entries.push(format!("=== 用户 ===\n{user_input}"));
+        let mut logger = ConversationLogger::create();
 
         history.push(ApiMessage::user_text(user_input));
+        logger.log(&format!("=== 用户 ===\n{user_input}"));
+
         let result = self
             .run_agent_loop(
                 history,
                 self.system_prompt(),
                 AgentRunConfig::parent(),
-                &mut log_entries,
+                &mut logger,
             )
             .await;
 
         match &result {
-            Ok(text) => log_entries.push(format!("=== 助手 ===\n{text}")),
-            Err(e) => log_entries.push(format!("=== 错误 ===\n{e}")),
+            Ok(text) => logger.log(&format!("=== 助手 ===\n{text}")),
+            Err(e) => logger.log(&format!("=== 错误 ===\n{e}")),
         }
-
-        // 写入日志文件
-        write_conversation_log(&log_entries);
 
         result
     }
@@ -189,7 +187,7 @@ impl AgentApp {
         messages: &mut Vec<ApiMessage>,
         system_prompt: String,
         config: AgentRunConfig,
-        log_entries: &mut Vec<String>,
+        logger: &mut ConversationLogger,
     ) -> AgentResult<String> {
         let mut toolbox = AgentToolbox::new(
             self.workspace_root.clone(),
@@ -222,7 +220,7 @@ impl AgentApp {
                 if let ResponseContentBlock::ToolUse { id, name, input } = block {
                     // 记录工具调用日志
                     let input_preview = preview(&input.to_string());
-                    log_entries.push(format!("=== 工具调用: {name} ===\n输入: {input_preview}"));
+                    logger.log(&format!("=== 工具调用: {name} ===\n输入: {input_preview}"));
 
                     let output = if name == "task" {
                         if !config.allow_task {
@@ -238,7 +236,7 @@ impl AgentApp {
                                 .and_then(Value::as_str)
                                 .unwrap_or("subtask");
                             println!("> task ({description}): {}", preview(&prompt));
-                            self.run_subagent(prompt, log_entries).await?
+                            self.run_subagent(prompt, logger).await?
                         }
                     } else {
                         match toolbox.dispatch(name, input).await {
@@ -257,7 +255,7 @@ impl AgentApp {
                     };
 
                     // 记录工具结果日志
-                    log_entries.push(format!("=== 工具结果: {name} ===\n{output}"));
+                    logger.log(&format!("=== 工具结果: {name} ===\n{output}"));
 
                     results.push(tool_result_block(id, output));
                 }
@@ -292,13 +290,13 @@ impl AgentApp {
     /// # 运作原理
     /// 创建一个新的消息列表（只包含任务 prompt），以子代理系统提示和 `child` 配置
     /// 调用 `run_agent_loop`，子代理不能再用 `task` 工具（防止递归嵌套）
-    async fn run_subagent(&self, prompt: String, log_entries: &mut Vec<String>) -> AgentResult<String> {
+    async fn run_subagent(&self, prompt: String, logger: &mut ConversationLogger) -> AgentResult<String> {
         let mut messages = vec![ApiMessage::user_text(prompt)];
         self.run_agent_loop(
             &mut messages,
             self.subagent_system_prompt(),
             AgentRunConfig::child(),
-            log_entries,
+            logger,
         )
         .await
     }
@@ -442,41 +440,46 @@ fn preview(text: &str) -> String {
     format!("{head}...")
 }
 
-/// 将一轮对话的日志写入文件
+/// 对话日志记录器，实时写入文件
 ///
-/// # 参数
-/// - `entries`: 日志条目列表（用户问题、工具调用、工具结果、助手回复等）
-///
-/// # 日志文件位置
-/// `~/.rust-agent/logs/YYYY-MM-DD_HH-MM-SS.log`
-///
-/// # 运作原理
-/// 1. 确保日志目录存在
-/// 2. 用当前时间戳生成文件名
-/// 3. 将所有条目用分隔线拼接后写入文件
-/// 4. 写入失败时静默忽略（不影响主流程）
-fn write_conversation_log(entries: &[String]) {
-    let log_dir = match dirs::home_dir() {
-        Some(home) => home.join(".rust-agent").join("logs"),
-        None => return,
-    };
+/// 每条日志写入后立即 flush，确保即使程序崩溃也能保留已记录的内容
+struct ConversationLogger {
+    file: Option<std::fs::File>,
+}
 
-    if let Err(e) = std::fs::create_dir_all(&log_dir) {
-        eprintln!("创建日志目录失败: {e}");
-        return;
+impl ConversationLogger {
+    /// 创建新的日志记录器，在 `~/.rust-agent/logs/` 下创建以时间戳命名的日志文件
+    fn create() -> Self {
+        let log_dir = match dirs::home_dir() {
+            Some(home) => home.join(".rust-agent").join("logs"),
+            None => return Self { file: None },
+        };
+
+        if let Err(e) = std::fs::create_dir_all(&log_dir) {
+            eprintln!("创建日志目录失败: {e}");
+            return Self { file: None };
+        }
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default();
+        let datetime = chrono::DateTime::from_timestamp(now.as_secs() as i64, 0)
+            .map(|dt| dt.format("%Y-%m-%d_%H-%M-%S").to_string())
+            .unwrap_or_else(|| format!("{}", now.as_secs()));
+
+        let filename = log_dir.join(format!("{datetime}.log"));
+        let file = std::fs::File::create(&filename)
+            .map_err(|e| eprintln!("创建日志文件失败: {e}"))
+            .ok();
+
+        Self { file }
     }
 
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    let datetime = chrono::DateTime::from_timestamp(now.as_secs() as i64, 0)
-        .map(|dt| dt.format("%Y-%m-%d_%H-%M-%S").to_string())
-        .unwrap_or_else(|| format!("{}", now.as_secs()));
-
-    let filename = log_dir.join(format!("{datetime}.log"));
-    let content = entries.join("\n\n---\n\n");
-
-    if let Err(e) = std::fs::write(&filename, content) {
-        eprintln!("写入日志失败: {e}");
+    /// 写入一条日志，立即 flush 到磁盘
+    fn log(&mut self, entry: &str) {
+        if let Some(file) = &mut self.file {
+            let _ = writeln!(file, "{entry}\n---");
+            let _ = file.flush();
+        }
     }
 }

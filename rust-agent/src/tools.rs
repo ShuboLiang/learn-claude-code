@@ -235,10 +235,16 @@ impl AgentToolbox {
                 let mut manager = self.todo.lock().await;
                 manager.update(items)?
             }
-            "load_skill" => self
-                .skills
-                .read().unwrap()
-                .load_skill_content(required_string(input, "name")?),
+            "load_skill" => {
+                let skill_name = required_string(input, "name")?;
+                let content = self.skills.read().unwrap().load_skill_content(skill_name);
+                let tree = list_skill_tree(skill_name, &self.skill_dirs);
+                if tree.is_empty() {
+                    content
+                } else {
+                    format!("{tree}\n\n{content}")
+                }
+            }
             "search_skillhub" => {
                 let queries = input
                     .get("queries")
@@ -269,7 +275,9 @@ impl AgentToolbox {
                 }
                 // 直接返回技能内容，省去额外一轮 load_skill 调用
                 let skill_content = self.skills.read().unwrap().load_skill_content(skill_name);
-                format!("{result}\n\n{skill_content}")
+                // 列出技能目录的文件结构
+                let tree = list_skill_tree(skill_name, &self.skill_dirs);
+                format!("{result}\n\n{tree}\n\n{skill_content}")
             }
             other => bail!("Unknown tool: {other}"),
         };
@@ -597,6 +605,47 @@ fn decoding_score(text: &str) -> i32 {
                 _ => 0,
             }
     })
+}
+
+/// 列出已安装技能目录的文件树结构
+///
+/// # 参数
+/// - `skill_name`: 技能名称（对应目录名）
+/// - `skill_dirs`: 技能搜索目录列表
+///
+/// # 返回值
+/// 目录树文本，让 Claude 了解技能的完整文件结构并自行判断调用方式
+fn list_skill_tree(skill_name: &str, skill_dirs: &[PathBuf]) -> String {
+    // 在所有技能目录中查找
+    let skill_dir = skill_dirs
+        .iter()
+        .map(|d| d.join(skill_name))
+        .find(|d| d.exists());
+
+    let skill_dir = match skill_dir {
+        Some(d) => d,
+        None => return String::new(),
+    };
+
+    let mut lines = vec![format!("技能目录结构 ({}):", skill_dir.display())];
+    for entry in walkdir::WalkDir::new(&skill_dir)
+        .sort_by(|a, b| a.file_name().cmp(b.file_name()))
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        let depth = entry.depth();
+        let indent = "  ".repeat(depth);
+        let name = entry.file_name().to_string_lossy();
+        if depth == 0 {
+            lines.push(format!("{indent}{name}/"));
+        } else if entry.file_type().is_dir() {
+            lines.push(format!("{indent}{name}/"));
+        } else {
+            lines.push(format!("{indent}{name}"));
+        }
+    }
+
+    lines.join("\n")
 }
 
 #[cfg(test)]
