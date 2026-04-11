@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod anthropic;
+pub mod skillhub;
 pub mod skills;
 pub mod todo;
 pub mod tools;

@@ -181,20 +181,31 @@ impl AnthropicClient {
         let max_retries: u32 = 5;
 
         for attempt in 0..=max_retries {
-            let response = self
+            let send_result = self
                 .http
                 .post(&url)
                 .header("x-api-key", &self.api_key)
                 .json(request)
                 .send()
-                .await
-                .context("Failed to call Anthropic Messages API")?;
+                .await;
+
+            let response = match send_result {
+                Ok(resp) => resp,
+                Err(e) if e.to_string().contains("UTF-8") && attempt < max_retries => {
+                    let wait = Duration::from_secs(1 << attempt);
+                    eprintln!("API 请求遇到编码错误，第 {}/{} 次重试，等待 {wait:?}...", attempt + 1, max_retries);
+                    sleep(wait).await;
+                    continue;
+                }
+                Err(e) => return Err(e).context("Failed to call Anthropic Messages API"),
+            };
 
             let status = response.status();
-            let body = response
-                .text()
+            let body_bytes = response
+                .bytes()
                 .await
                 .context("Failed to read Anthropic response body")?;
+            let body = String::from_utf8_lossy(&body_bytes).into_owned();
 
             if status.is_success() {
                 return serde_json::from_str(&body)

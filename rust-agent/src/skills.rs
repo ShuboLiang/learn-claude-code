@@ -151,6 +151,20 @@ impl SkillLoader {
         Ok(loader)
     }
 
+    /// 重新从原始目录加载所有技能文件
+    ///
+    /// # 参数
+    /// - `dirs`: 要扫描的目录列表
+    ///
+    /// # 返回值
+    /// 新加载的 `SkillLoader` 实例
+    ///
+    /// # 使用场景
+    /// 在 `install_skill` 安装完成后调用，生成包含新技能的加载器
+    pub fn reload_from_dirs(dirs: &[&Path]) -> AgentResult<Self> {
+        Self::load_from_dirs(dirs)
+    }
+
     /// 按名称加载指定技能的完整内容，用 XML 标签包裹后返回
     ///
     /// # 参数

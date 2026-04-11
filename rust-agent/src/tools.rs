@@ -1,5 +1,5 @@
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
 
 use anyhow::{Context, anyhow, bail};
 use serde_json::{Value, json};
@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 use tokio::time::{Duration, timeout};
 
 use crate::AgentResult;
+use crate::skillhub;
 use crate::skills::SkillLoader;
 use crate::todo::{TodoItemInput, TodoManager};
 use crate::workspace::resolve_workspace_path;
@@ -26,8 +27,10 @@ pub struct ToolDispatchResult {
 pub struct AgentToolbox {
     /// 工作区根目录，所有文件操作的基准路径
     workspace_root: PathBuf,
-    /// 技能加载器的共享引用
-    skills: Arc<SkillLoader>,
+    /// 技能加载器，用 RwLock 包装以支持安装后热更新，与 AgentApp 共享同一个 Arc
+    skills: Arc<RwLock<SkillLoader>>,
+    /// 技能加载目录列表，用于安装后重新加载
+    skill_dirs: Vec<PathBuf>,
     /// 待办事项管理器，用 Mutex 保护以支持异步安全访问
     todo: Arc<Mutex<TodoManager>>,
 }
@@ -41,10 +44,11 @@ impl AgentToolbox {
     ///
     /// # 使用场景
     /// 在 `agent.rs` 的 `run_agent_loop` 中，每轮循环开始时创建一个新的工具箱
-    pub fn new(workspace_root: PathBuf, skills: Arc<SkillLoader>) -> Self {
+    pub fn new(workspace_root: PathBuf, skills: Arc<RwLock<SkillLoader>>, skill_dirs: Vec<PathBuf>) -> Self {
         Self {
             workspace_root,
             skills,
+            skill_dirs,
             todo: Arc::new(Mutex::new(TodoManager::default())),
         }
     }
@@ -148,6 +152,32 @@ impl AgentToolbox {
                     "required": ["name"]
                 }
             }),
+            json!({
+                "name": "search_skillhub",
+                "description": "Search SkillHub skill store for available skills. Use when you need to find skills that are not locally installed.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "queries": {
+                            "type": "array",
+                            "items": { "type": "string" },
+                            "description": "Search keywords. Each keyword will be searched separately and results merged."
+                        }
+                    },
+                    "required": ["queries"]
+                }
+            }),
+            json!({
+                "name": "install_skill",
+                "description": "Install a skill from SkillHub to the current workspace. After installation, the skill will be available for use.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string", "description": "Skill name to install" }
+                    },
+                    "required": ["name"]
+                }
+            }),
         ];
 
         if allow_task {
@@ -183,7 +213,7 @@ impl AgentToolbox {
     ///
     /// # 运作原理
     /// 用 match 匹配工具名，从 input JSON 中提取所需参数，调用对应的私有方法执行
-    pub async fn dispatch(&self, name: &str, input: &Value) -> AgentResult<ToolDispatchResult> {
+    pub async fn dispatch(&mut self, name: &str, input: &Value) -> AgentResult<ToolDispatchResult> {
         let output = match name {
             "bash" => self.run_bash(required_string(input, "command")?).await?,
             "read_file" => {
@@ -207,7 +237,40 @@ impl AgentToolbox {
             }
             "load_skill" => self
                 .skills
+                .read().unwrap()
                 .load_skill_content(required_string(input, "name")?),
+            "search_skillhub" => {
+                let queries = input
+                    .get("queries")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| anyhow!("Missing array field 'queries'"))?;
+                let mut results = Vec::new();
+                for q in queries {
+                    if let Some(keyword) = q.as_str() {
+                        match skillhub::search(keyword).await {
+                            Ok(result) => results.push(format!("[{keyword}]\n{result}")),
+                            Err(e) => results.push(format!("[{keyword}] 搜索失败: {e}")),
+                        }
+                    }
+                }
+                if results.is_empty() {
+                    "(未提供搜索关键词)".to_owned()
+                } else {
+                    results.join("\n\n")
+                }
+            }
+            "install_skill" => {
+                let skill_name = required_string(input, "name")?;
+                let result = skillhub::install(skill_name, &self.workspace_root).await?;
+                // 安装后立即重新加载技能，无需重启
+                let dirs: Vec<&Path> = self.skill_dirs.iter().map(|p| p.as_path()).collect();
+                if let Ok(reloaded) = SkillLoader::reload_from_dirs(&dirs) {
+                    *self.skills.write().unwrap() = reloaded;
+                }
+                // 直接返回技能内容，省去额外一轮 load_skill 调用
+                let skill_content = self.skills.read().unwrap().load_skill_content(skill_name);
+                format!("{result}\n\n{skill_content}")
+            }
             other => bail!("Unknown tool: {other}"),
         };
 
@@ -472,17 +535,22 @@ chcp 65001 > $null; \
 /// 主要解决 Windows 中文环境下部分命令输出 GBK 编码的问题
 ///
 /// # 运作原理
-/// 1. 先尝试 UTF-8 解码
-/// 2. 再尝试 GBK 解码
-/// 3. 用 `decoding_score` 给两种结果打分（中文字符+3，常见 ASCII+1，乱码字符扣分）
-/// 4. 返回得分更高的那个结果
+/// 1. 先尝试 UTF-8 严格解码
+/// 2. 如果 UTF-8 完全成功，直接返回（不再尝试 GBK）
+/// 3. 如果 UTF-8 失败（含无效字节），再尝试 GBK 解码
+/// 4. 用 `decoding_score` 给两种结果打分，返回得分更高的
 fn decode_command_output(bytes: &[u8]) -> String {
     if bytes.is_empty() {
         return String::new();
     }
 
-    let utf8 = String::from_utf8(bytes.to_vec())
-        .unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned());
+    // UTF-8 严格解码：如果完全成功则直接返回，不尝试 GBK
+    if let Ok(utf8) = String::from_utf8(bytes.to_vec()) {
+        return utf8;
+    }
+
+    // UTF-8 失败，用 lossy 解码作为候选
+    let utf8 = String::from_utf8_lossy(bytes).into_owned();
     let (gbk, _, gbk_had_errors) = encoding_rs::GBK.decode(bytes);
     let gbk = gbk.into_owned();
 
@@ -534,7 +602,7 @@ fn decoding_score(text: &str) -> i32 {
 #[cfg(test)]
 mod tests {
     use std::path::Path;
-    use std::sync::Arc;
+    use std::sync::{Arc, RwLock};
 
     use encoding_rs::GBK;
     use serde_json::json;
@@ -545,7 +613,7 @@ mod tests {
     #[tokio::test]
     async fn load_skill_wraps_body() {
         let skills = SkillLoader::load_from_dir(Path::new("../skills")).unwrap();
-        let toolbox = AgentToolbox::new(std::env::current_dir().unwrap(), Arc::new(skills));
+        let mut toolbox = AgentToolbox::new(std::env::current_dir().unwrap(), Arc::new(RwLock::new(skills)), vec![]);
         let result = toolbox
             .dispatch("load_skill", &json!({ "name": "pdf" }))
             .await

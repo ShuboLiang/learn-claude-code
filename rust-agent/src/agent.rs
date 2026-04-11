@@ -1,6 +1,7 @@
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use async_recursion::async_recursion;
@@ -9,6 +10,7 @@ use serde_json::{Value, json};
 
 use crate::AgentResult;
 use crate::anthropic::{AnthropicClient, ApiMessage, MessagesRequest, ResponseContentBlock};
+use crate::skillhub;
 use crate::skills::SkillLoader;
 use crate::tools::AgentToolbox;
 
@@ -25,8 +27,10 @@ pub struct AgentApp {
     client: AnthropicClient,
     /// 工作区根目录的绝对路径，所有文件操作以此为基准
     workspace_root: PathBuf,
-    /// 技能加载器，管理所有可用的 skill 文件
-    skills: Arc<SkillLoader>,
+    /// 技能加载器，用 RwLock 包装以支持安装后热更新
+    skills: Arc<RwLock<SkillLoader>>,
+    /// 技能加载目录列表（用户目录 + 工作区目录），用于安装后重新加载
+    skill_dirs: Vec<PathBuf>,
     /// 使用的模型 ID（如 "claude-sonnet-4-20250514"）
     model: String,
 }
@@ -83,25 +87,33 @@ impl AgentApp {
     /// 2. 获取当前工作目录作为工作区根路径
     /// 3. 初始化 Anthropic API 客户端
     /// 4. 读取 `MODEL_ID` 环境变量
-    /// 5. 从工作区下的 `skills/` 目录加载所有技能文件
-    pub fn from_env() -> AgentResult<Self> {
+    /// 5. 从用户目录的 `.skills` 文件夹和工作区下的 `skills/` 目录加载所有技能文件
+    pub async fn from_env() -> AgentResult<Self> {
         let _ = dotenv();
         let workspace_root =
             std::env::current_dir().context("Failed to determine current directory")?;
         let client = AnthropicClient::from_env()?;
         let model = std::env::var("MODEL_ID").context("Missing MODEL_ID in environment or .env")?;
+
+        // 检查并安装 SkillHub CLI
+        let skillhub_available = skillhub::ensure_cli_installed().await;
+        if skillhub_available {
+            println!("SkillHub CLI 已就绪。");
+        }
+
         let user_skills_dir = dirs::home_dir()
-            .map(|p| p.join(".claude/skills"))
+            .map(|p| p.join(".rust-agent").join("skills"))
             .unwrap_or_default();
-        let skills = SkillLoader::load_from_dirs(&[
-            &user_skills_dir,
-            &workspace_root.join("skills"),
-        ])?;
+        let skill_dirs = vec![user_skills_dir.clone(), workspace_root.join("skills")];
+        let skills = SkillLoader::load_from_dirs(
+            &skill_dirs.iter().map(|p| p.as_path()).collect::<Vec<_>>(),
+        )?;
 
         Ok(Self {
             client,
             workspace_root,
-            skills: Arc::new(skills),
+            skills: Arc::new(RwLock::new(skills)),
+            skill_dirs,
             model,
         })
     }
@@ -125,9 +137,28 @@ impl AgentApp {
         history: &mut Vec<ApiMessage>,
         user_input: &str,
     ) -> AgentResult<String> {
+        let mut log_entries = Vec::new();
+        log_entries.push(format!("=== 用户 ===\n{user_input}"));
+
         history.push(ApiMessage::user_text(user_input));
-        self.run_agent_loop(history, self.system_prompt(), AgentRunConfig::parent())
-            .await
+        let result = self
+            .run_agent_loop(
+                history,
+                self.system_prompt(),
+                AgentRunConfig::parent(),
+                &mut log_entries,
+            )
+            .await;
+
+        match &result {
+            Ok(text) => log_entries.push(format!("=== 助手 ===\n{text}")),
+            Err(e) => log_entries.push(format!("=== 错误 ===\n{e}")),
+        }
+
+        // 写入日志文件
+        write_conversation_log(&log_entries);
+
+        result
     }
 
     /// Agent 的核心循环：反复调用 Claude API → 执行工具 → 回传结果，直到得到最终文本回复
@@ -158,8 +189,13 @@ impl AgentApp {
         messages: &mut Vec<ApiMessage>,
         system_prompt: String,
         config: AgentRunConfig,
+        log_entries: &mut Vec<String>,
     ) -> AgentResult<String> {
-        let toolbox = AgentToolbox::new(self.workspace_root.clone(), Arc::clone(&self.skills));
+        let mut toolbox = AgentToolbox::new(
+            self.workspace_root.clone(),
+            Arc::clone(&self.skills),
+            self.skill_dirs.clone(),
+        );
         let mut rounds_since_todo = 0usize;
 
         for _ in 0..MAX_TOOL_ROUNDS {
@@ -184,6 +220,10 @@ impl AgentApp {
 
             for block in &response.content {
                 if let ResponseContentBlock::ToolUse { id, name, input } = block {
+                    // 记录工具调用日志
+                    let input_preview = preview(&input.to_string());
+                    log_entries.push(format!("=== 工具调用: {name} ===\n输入: {input_preview}"));
+
                     let output = if name == "task" {
                         if !config.allow_task {
                             "Error: task tool unavailable in subagent".to_owned()
@@ -198,7 +238,7 @@ impl AgentApp {
                                 .and_then(Value::as_str)
                                 .unwrap_or("subtask");
                             println!("> task ({description}): {}", preview(&prompt));
-                            self.run_subagent(prompt).await?
+                            self.run_subagent(prompt, log_entries).await?
                         }
                     } else {
                         match toolbox.dispatch(name, input).await {
@@ -215,6 +255,9 @@ impl AgentApp {
                             }
                         }
                     };
+
+                    // 记录工具结果日志
+                    log_entries.push(format!("=== 工具结果: {name} ===\n{output}"));
 
                     results.push(tool_result_block(id, output));
                 }
@@ -249,12 +292,13 @@ impl AgentApp {
     /// # 运作原理
     /// 创建一个新的消息列表（只包含任务 prompt），以子代理系统提示和 `child` 配置
     /// 调用 `run_agent_loop`，子代理不能再用 `task` 工具（防止递归嵌套）
-    async fn run_subagent(&self, prompt: String) -> AgentResult<String> {
+    async fn run_subagent(&self, prompt: String, log_entries: &mut Vec<String>) -> AgentResult<String> {
         let mut messages = vec![ApiMessage::user_text(prompt)];
         self.run_agent_loop(
             &mut messages,
             self.subagent_system_prompt(),
             AgentRunConfig::child(),
+            log_entries,
         )
         .await
     }
@@ -275,10 +319,22 @@ impl AgentApp {
         } else {
             "Unix (bash)"
         };
+        let skills_desc = self.skills.read().unwrap().descriptions_for_system_prompt();
         format!(
-            "You are a coding agent at {}.\nPlatform: {platform}\nUse tools to solve tasks. Prefer acting over long explanations.\nUse the todo tool to plan multi-step work. Use the task tool to delegate subtasks with fresh context. Use load_skill before unfamiliar domain work.\n\nSkills available:\n{}",
+            "You are a coding agent at {}.\nPlatform: {platform}\nUse tools to solve tasks. Prefer acting over long explanations.\n\n\
+            MANDATORY skill workflow — you MUST follow these steps in order for EVERY task:\n\
+            1. Check if an installed skill covers this task. If yes, call load_skill.\n\
+            2. If no installed skill matches, you MUST call search_skillhub before doing anything else.\n\
+            3. If search_skillhub returns a relevant skill, you MUST call install_skill to install it.\n\
+            4. Only after steps 1-3 (and no skill found) may you proceed with bash or other tools.\n\
+            5. NEVER skip to bash/curl/other tools without first checking SkillHub.\n\
+            6. NEVER claim inability before completing the skill workflow above.\n\n\
+            Other tools:\n\
+            - Use the todo tool to plan multi-step work.\n\
+            - Use the task tool to delegate subtasks with fresh context.\n\n\
+            Skills available:\n{}",
             self.workspace_root.display(),
-            self.skills.descriptions_for_system_prompt()
+            skills_desc
         )
     }
 
@@ -310,7 +366,7 @@ impl AgentApp {
 /// 2. 进入循环：打印 `agent >>` 提示符 → 读取用户输入 → 调用 `handle_user_turn`
 /// 3. 输入 `q`/`quit`/`exit` 或 EOF（Ctrl+C/Ctrl+D）时退出
 pub async fn run_repl() -> AgentResult<()> {
-    let app = AgentApp::from_env()?;
+    let app = AgentApp::from_env().await?;
     let mut history = Vec::new();
     let stdin = io::stdin();
 
@@ -384,4 +440,43 @@ fn preview(text: &str) -> String {
     }
     let head = text.chars().take(LIMIT).collect::<String>();
     format!("{head}...")
+}
+
+/// 将一轮对话的日志写入文件
+///
+/// # 参数
+/// - `entries`: 日志条目列表（用户问题、工具调用、工具结果、助手回复等）
+///
+/// # 日志文件位置
+/// `~/.rust-agent/logs/YYYY-MM-DD_HH-MM-SS.log`
+///
+/// # 运作原理
+/// 1. 确保日志目录存在
+/// 2. 用当前时间戳生成文件名
+/// 3. 将所有条目用分隔线拼接后写入文件
+/// 4. 写入失败时静默忽略（不影响主流程）
+fn write_conversation_log(entries: &[String]) {
+    let log_dir = match dirs::home_dir() {
+        Some(home) => home.join(".rust-agent").join("logs"),
+        None => return,
+    };
+
+    if let Err(e) = std::fs::create_dir_all(&log_dir) {
+        eprintln!("创建日志目录失败: {e}");
+        return;
+    }
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let datetime = chrono::DateTime::from_timestamp(now.as_secs() as i64, 0)
+        .map(|dt| dt.format("%Y-%m-%d_%H-%M-%S").to_string())
+        .unwrap_or_else(|| format!("{}", now.as_secs()));
+
+    let filename = log_dir.join(format!("{datetime}.log"));
+    let content = entries.join("\n\n---\n\n");
+
+    if let Err(e) = std::fs::write(&filename, content) {
+        eprintln!("写入日志失败: {e}");
+    }
 }
