@@ -616,9 +616,10 @@ fn decoding_score(text: &str) -> i32 {
 /// # 返回值
 /// 目录树文本，让 Claude 了解技能的完整文件结构并自行判断调用方式
 fn list_skill_tree(skill_name: &str, skill_dirs: &[PathBuf]) -> String {
-    // 在所有技能目录中查找
+    // 在所有技能目录中查找，后加载的优先（项目目录覆盖用户目录）
     let skill_dir = skill_dirs
         .iter()
+        .rev()
         .map(|d| d.join(skill_name))
         .find(|d| d.exists());
 
