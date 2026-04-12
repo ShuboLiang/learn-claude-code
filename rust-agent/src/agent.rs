@@ -208,7 +208,13 @@ impl AgentApp {
                 tools: &tools,
                 max_tokens: MAX_TOKENS,
             };
-            let response = self.client.create_message(&request).await?;
+            let response = match self.client.create_message(&request).await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    eprintln!("[Agent] create_message 失败！错误: {e}");
+                    return Err(e);
+                }
+            };
             let stop_reason = response.stop_reason().to_owned();
             messages.push(ApiMessage::assistant_blocks(&response.content)?);
 

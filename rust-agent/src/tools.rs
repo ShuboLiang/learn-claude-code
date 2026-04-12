@@ -154,6 +154,39 @@ impl AgentToolbox {
                 }
             }),
             json!({
+                "name": "glob",
+                "description": "使用 glob 模式快速搜索匹配的文件路径。支持通配符如 **/*.rs、src/**/*.ts 等。",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "pattern": { "type": "string", "description": "glob 模式，如 **/*.rs、src/**/*.ts、*.toml" },
+                        "path": { "type": "string", "description": "搜索的基准目录（可选，默认为工作区根目录）" }
+                    },
+                    "required": ["pattern"]
+                }
+            }),
+            json!({
+                "name": "grep",
+                "description": "在文件内容中搜索匹配正则表达式的行。支持多种输出模式、上下文行、大小写忽略等。",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "pattern": { "type": "string", "description": "正则表达式搜索模式" },
+                        "path": { "type": "string", "description": "搜索的文件或目录路径（可选，默认为工作区根目录）" },
+                        "glob": { "type": "string", "description": "用于过滤文件的 glob 模式，如 *.rs（可选）" },
+                        "output_mode": {
+                            "type": "string",
+                            "enum": ["files_with_matches", "content", "count"],
+                            "description": "输出模式：files_with_matches 只返回文件路径，content 返回匹配行及行号，count 返回每个文件的匹配数（可选，默认 files_with_matches）"
+                        },
+                        "-i": { "type": "boolean", "description": "是否忽略大小写（可选，默认 false）" },
+                        "-C": { "type": "integer", "description": "显示匹配行前后各多少行上下文（可选）" },
+                        "head_limit": { "type": "integer", "description": "限制返回的最大结果数（可选，默认 250）" }
+                    },
+                    "required": ["pattern"]
+                }
+            }),
+            json!({
                 "name": "search_skillhub",
                 "description": "搜索 SkillHub 技能商店中的可用技能。当本地没有安装所需技能时使用。",
                 "input_schema": {
@@ -230,6 +263,19 @@ impl AgentToolbox {
                 required_string(input, "path")?,
                 required_string(input, "old_text")?,
                 required_string(input, "new_text")?,
+            )?,
+            "glob" => self.glob_search(
+                required_string(input, "pattern")?,
+                optional_string(input, "path")?,
+            )?,
+            "grep" => self.grep_search(
+                required_string(input, "pattern")?,
+                optional_string(input, "path")?,
+                optional_string(input, "glob")?,
+                optional_string(input, "output_mode")?,
+                input.get("-i").and_then(Value::as_bool).unwrap_or(false),
+                input.get("-C").and_then(Value::as_u64).map(|v| v as usize),
+                input.get("head_limit").and_then(Value::as_u64).map(|v| v as usize),
             )?,
             "todo" => {
                 let items = parse_todo_items(input)?;
@@ -421,6 +467,258 @@ impl AgentToolbox {
             .with_context(|| format!("Failed to write {}", resolved.display()))?;
         Ok(format!("已编辑 {path}"))
     }
+
+    /// 使用 glob 模式搜索匹配的文件路径
+    ///
+    /// # 参数
+    /// - `pattern`: glob 模式，如 `**/*.rs`、`src/**/*.ts`
+    /// - `path`: 可选的搜索基准目录，默认为工作区根目录
+    ///
+    /// # 返回值
+    /// 匹配的文件路径列表（相对于工作区根目录），按修改时间排序（最新的在前）
+    fn glob_search(&self, pattern: &str, path: Option<&str>) -> AgentResult<String> {
+        let base = match path {
+            Some(p) => resolve_workspace_path(&self.workspace_root, p)?,
+            None => self.workspace_root.clone(),
+        };
+
+        if !base.is_dir() {
+            return Ok(format!("错误：{} 不是目录", base.display()));
+        }
+
+        let full_pattern = base.join(pattern);
+        let full_pattern_str = full_pattern.to_string_lossy();
+
+        let paths: Vec<_> = glob::glob(&full_pattern_str)
+            .with_context(|| format!("无效的 glob 模式: {pattern}"))?
+            .filter_map(Result::ok)
+            .filter(|p| p.is_file())
+            .collect();
+
+        if paths.is_empty() {
+            return Ok("（无匹配文件）".to_owned());
+        }
+
+        // 按修改时间降序排列
+        let mut paths = paths;
+        paths.sort_by(|a, b| {
+            let time_a = std::fs::metadata(a).and_then(|m| m.modified()).ok();
+            let time_b = std::fs::metadata(b).and_then(|m| m.modified()).ok();
+            time_b.cmp(&time_a)
+        });
+
+        let results: Vec<String> = paths
+            .iter()
+            .filter_map(|p| {
+                p.strip_prefix(&self.workspace_root)
+                    .ok()
+                    .map(|rel| rel.to_string_lossy().into_owned())
+            })
+            .collect();
+
+        let count = results.len();
+        let output = results
+            .into_iter()
+            .take(250)
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let suffix = if count > 250 {
+            format!("\n... （共 {count} 个匹配，仅显示前 250 个）")
+        } else {
+            String::new()
+        };
+
+        Ok(format!("{output}{suffix}"))
+    }
+
+    /// 在文件内容中搜索匹配正则表达式的行
+    ///
+    /// # 参数
+    /// - `pattern`: 正则表达式搜索模式
+    /// - `path`: 可选的搜索路径（文件或目录），默认为工作区根目录
+    /// - `glob_filter`: 可选的 glob 模式用于过滤搜索的文件
+    /// - `output_mode`: 输出模式，"files_with_matches" | "content" | "count"
+    /// - `case_insensitive`: 是否忽略大小写
+    /// - `context_lines`: 匹配行前后显示的上下文行数
+    /// - `head_limit`: 限制返回的最大结果数
+    fn grep_search(
+        &self,
+        pattern: &str,
+        path: Option<&str>,
+        glob_filter: Option<&str>,
+        output_mode: Option<&str>,
+        case_insensitive: bool,
+        context_lines: Option<usize>,
+        head_limit: Option<usize>,
+    ) -> AgentResult<String> {
+        let mode = output_mode.unwrap_or("files_with_matches");
+        let limit = head_limit.unwrap_or(250);
+
+        let base = match path {
+            Some(p) => resolve_workspace_path(&self.workspace_root, p)?,
+            None => self.workspace_root.clone(),
+        };
+
+        // 构建正则表达式
+        let mut regex_builder = regex::RegexBuilder::new(pattern);
+        regex_builder.case_insensitive(case_insensitive);
+        let re = regex_builder
+            .build()
+            .with_context(|| format!("无效的正则表达式: {pattern}"))?;
+
+        // 收集要搜索的文件列表
+        let files = self.collect_search_files(&base, glob_filter)?;
+        if files.is_empty() {
+            return Ok("（无文件可搜索）".to_owned());
+        }
+
+        // 三种模式各自就地构建输出，避免二次遍历
+        let mut output_lines: Vec<String> = Vec::new();
+        let mut file_count = 0;
+
+        for file_path in &files {
+            if file_count >= limit {
+                break;
+            }
+
+            let content = match std::fs::read_to_string(file_path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+
+            let lines: Vec<&str> = content.lines().collect();
+
+            // 找到所有匹配行的索引（0-based）
+            let matched_indices: Vec<usize> = lines
+                .iter()
+                .enumerate()
+                .filter(|(_, line)| re.is_match(line))
+                .map(|(i, _)| i)
+                .collect();
+
+            if matched_indices.is_empty() {
+                continue;
+            }
+
+            let rel_path = file_path
+                .strip_prefix(&self.workspace_root)
+                .unwrap_or(file_path)
+                .to_string_lossy();
+
+            match mode {
+                "files_with_matches" => {
+                    output_lines.push(rel_path.into_owned());
+                    file_count += 1;
+                }
+                "count" => {
+                    output_lines.push(format!("{}: {}", rel_path, matched_indices.len()));
+                    file_count += 1;
+                }
+                "content" => {
+                    let ctx = context_lines.unwrap_or(0);
+
+                    if ctx > 0 {
+                        // 带上下文行：收集需要显示的行号，合并相邻区间
+                        let mut show_ranges: Vec<(usize, usize)> = Vec::new();
+                        for &idx in &matched_indices {
+                            let start = idx.saturating_sub(ctx);
+                            let end = (idx + ctx + 1).min(lines.len());
+                            show_ranges.push((start, end));
+                        }
+                        // 合并重叠区间
+                        show_ranges.sort();
+                        let mut merged: Vec<(usize, usize)> = Vec::new();
+                        for range in show_ranges {
+                            if let Some(last) = merged.last_mut() {
+                                if range.0 <= last.1 {
+                                    last.1 = last.1.max(range.1);
+                                    continue;
+                                }
+                            }
+                            merged.push(range);
+                        }
+
+                        output_lines.push(format!("{}:", rel_path));
+                        for (start, end) in merged {
+                            for i in start..end {
+                                let line_num = i + 1;
+                                let marker =
+                                    if matched_indices.contains(&i) { ">" } else { " " };
+                                output_lines.push(format!(
+                                    "{marker} {line_num:4} | {}",
+                                    lines[i]
+                                ));
+                                file_count += 1;
+                                if file_count >= limit {
+                                    break;
+                                }
+                            }
+                        }
+                    } else {
+                        // 无上下文，只显示匹配行
+                        for &idx in &matched_indices {
+                            output_lines.push(format!(
+                                "  {}:{}: {}",
+                                rel_path,
+                                idx + 1,
+                                lines[idx]
+                            ));
+                            file_count += 1;
+                            if file_count >= limit {
+                                break;
+                            }
+                        }
+                    }
+                }
+                _ => return Ok(format!("未知输出模式: {mode}")),
+            }
+        }
+
+        if output_lines.is_empty() {
+            return Ok("（无匹配结果）".to_owned());
+        }
+
+        let total = output_lines.len();
+        let output = output_lines.into_iter().take(limit).collect::<Vec<_>>().join("\n");
+        let suffix = if total > limit {
+            format!("\n... （共 {total} 条结果，仅显示前 {limit} 条）")
+        } else {
+            String::new()
+        };
+
+        Ok(truncate(&format!("{output}{suffix}")))
+    }
+
+    /// 收集指定路径下需要搜索的文件列表
+    ///
+    /// # 参数
+    /// - `base`: 搜索的基准路径（文件或目录）
+    /// - `glob_filter`: 可选的 glob 过滤模式
+    ///
+    /// # 返回值
+    /// 需要搜索的文件绝对路径列表
+    fn collect_search_files(
+        &self,
+        base: &Path,
+        glob_filter: Option<&str>,
+    ) -> AgentResult<Vec<PathBuf>> {
+        if base.is_file() {
+            return Ok(vec![base.to_path_buf()]);
+        }
+
+        let pattern = glob_filter.unwrap_or("**/*");
+        let full_pattern = base.join(pattern);
+        let full_pattern_str = full_pattern.to_string_lossy();
+
+        let files: Vec<PathBuf> = glob::glob(&full_pattern_str)
+            .with_context(|| format!("无效的 glob 模式: {pattern}"))?
+            .filter_map(Result::ok)
+            .filter(|p| p.is_file())
+            .collect();
+
+        Ok(files)
+    }
 }
 
 /// 从 JSON 对象中提取必需的字符串字段值
@@ -458,6 +756,24 @@ fn optional_u64(input: &Value, key: &str) -> AgentResult<Option<u64>> {
             .as_u64()
             .map(Some)
             .ok_or_else(|| anyhow!("字段 '{key}' 必须是整数")),
+        None => Ok(None),
+    }
+}
+
+/// 从 JSON 对象中提取可选的字符串字段值
+///
+/// # 参数
+/// - `input`: JSON 对象
+/// - `key`: 要提取的字段名
+///
+/// # 返回值
+/// `Some(值)` 如果字段存在且为字符串，`None` 如果字段不存在
+fn optional_string<'a>(input: &'a Value, key: &str) -> AgentResult<Option<&'a str>> {
+    match input.get(key) {
+        Some(value) => value
+            .as_str()
+            .map(Some)
+            .ok_or_else(|| anyhow!("字段 '{key}' 必须是字符串")),
         None => Ok(None),
     }
 }

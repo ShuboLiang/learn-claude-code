@@ -180,6 +180,15 @@ impl AnthropicClient {
         let url = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
         let max_retries: u32 = 5;
 
+        // 记录请求概况：模型名和消息数量
+        eprintln!(
+            "[API] 请求 {} | 模型: {} | 消息数: {} | 工具数: {}",
+            &url,
+            request.model,
+            request.messages.len(),
+            request.tools.len(),
+        );
+
         for attempt in 0..=max_retries {
             let send_result = self
                 .http
@@ -193,34 +202,80 @@ impl AnthropicClient {
                 Ok(resp) => resp,
                 Err(e) if e.to_string().contains("UTF-8") && attempt < max_retries => {
                     let wait = Duration::from_secs(1 << attempt);
-                    eprintln!("API 请求遇到编码错误，第 {}/{} 次重试，等待 {wait:?}...", attempt + 1, max_retries);
+                    eprintln!(
+                        "[API] UTF-8 编码错误（发送阶段），第 {}/{} 次重试，等待 {wait:?}\n\
+                         错误详情: {e}",
+                        attempt + 1, max_retries
+                    );
                     sleep(wait).await;
                     continue;
                 }
-                Err(e) => return Err(e).context("Failed to call Anthropic Messages API"),
+                Err(e) => return Err(e).context("调用 Anthropic Messages API 失败"),
             };
 
             let status = response.status();
-            let body_bytes = response
-                .bytes()
-                .await
-                .context("Failed to read Anthropic response body")?;
-            let body = String::from_utf8_lossy(&body_bytes).into_owned();
+            // 记录响应状态和 headers
+            eprintln!("[API] 响应状态: {status}");
+            for (key, value) in response.headers() {
+                if key == "content-type" || key == "content-length" || key == "x-request-id" {
+                    eprintln!("[API] Header: {key}: {}", value.to_str().unwrap_or("(非 UTF-8)"));
+                }
+            }
+
+            let body_bytes = match response.bytes().await {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    // 读取响应体时的 UTF-8 错误，打印完整错误信息
+                    eprintln!(
+                        "[API] 读取响应体失败！错误详情:\n\
+                         类型: {:?}\n\
+                         信息: {e}\n\
+                         HTTP 状态: {status}",
+                        std::any::type_name_of_val(&e)
+                    );
+                    if attempt < max_retries {
+                        let wait = Duration::from_secs(1 << attempt);
+                        eprintln!("[API] 第 {}/{} 次重试，等待 {wait:?}...", attempt + 1, max_retries);
+                        sleep(wait).await;
+                        continue;
+                    }
+                    return Err(e).context("读取 Anthropic 响应体失败");
+                }
+            };
+
+            eprintln!("[API] 响应体大小: {} 字节", body_bytes.len());
+
+            // 检测响应体中是否含有非 UTF-8 字节
+            let body = match String::from_utf8(body_bytes.to_vec()) {
+                Ok(s) => s,
+                Err(e) => {
+                    // 有非 UTF-8 字节，记录位置和原始字节
+                    let lossy = String::from_utf8_lossy(&body_bytes).into_owned();
+                    eprintln!(
+                        "[API] 响应体包含非 UTF-8 字节！\n\
+                         错误位置: {:?}\n\
+                         lossy 转换前 200 字符: {}",
+                        e.utf8_error(),
+                        &lossy[..lossy.len().min(200)]
+                    );
+                    lossy
+                }
+            };
 
             if status.is_success() {
                 return serde_json::from_str(&body)
-                    .context("Failed to parse Anthropic response JSON");
+                    .context("解析 Anthropic 响应 JSON 失败");
             }
 
             // 仅对 429（限流）和 529（过载）进行重试
             if (status.as_u16() == 429 || status.as_u16() == 529) && attempt < max_retries {
                 let wait = Duration::from_secs(1 << attempt); // 1s, 2s, 4s, 8s, 16s
-                eprintln!("API 返回 {status}，第 {}/{} 次重试，等待 {wait:?}...", attempt + 1, max_retries);
+                eprintln!("[API] 返回 {status}，第 {}/{} 次重试，等待 {wait:?}...", attempt + 1, max_retries);
                 sleep(wait).await;
                 continue;
             }
 
-            return Err(anyhow!("Anthropic API error {status}: {body}"));
+            return Err(anyhow!("Anthropic API 错误 {status}: {body}"));
         }
 
         unreachable!()
