@@ -60,6 +60,20 @@ impl ApiMessage {
         }
     }
 
+    /// 创建一条纯文本的助手消息
+    ///
+    /// # 参数
+    /// - `text`: 助手回复的文本内容
+    ///
+    /// # 使用场景
+    /// 在需要快速构造一条纯文本助手消息时使用
+    pub fn assistant_text(text: &str) -> Self {
+        Self {
+            role: "assistant".to_owned(),
+            content: Value::String(text.to_owned()),
+        }
+    }
+
     /// 从 Claude API 返回的内容块列表创建一条助手消息
     ///
     /// # 参数
