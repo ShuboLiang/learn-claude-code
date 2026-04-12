@@ -1,4 +1,4 @@
-use std::io::{self, BufRead, Write as IoWrite};
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -7,12 +7,28 @@ use anyhow::Context;
 use async_recursion::async_recursion;
 use dotenvy::dotenv;
 use serde_json::{Value, json};
+use tokio::sync::mpsc;
 
 use crate::AgentResult;
 use crate::anthropic::{AnthropicClient, ApiMessage, MessagesRequest, ResponseContentBlock};
 use crate::skillhub;
 use crate::skills::SkillLoader;
 use crate::tools::AgentToolbox;
+
+/// Agent 执行过程中产生的事件，通过 channel 发送给消费者（CLI 终端或 HTTP SSE）
+#[derive(Clone, Debug)]
+pub enum AgentEvent {
+    /// AI 回复的文本片段
+    TextDelta(String),
+    /// 即将调用工具
+    ToolCall { name: String, input: serde_json::Value },
+    /// 工具执行结果
+    ToolResult { name: String, output: String },
+    /// 本轮对话结束
+    TurnEnd,
+    /// Agent 完成全部任务
+    Done,
+}
 
 /// 每次调用 API 时请求的最大 token 数量
 const MAX_TOKENS: u32 = 8_000;
@@ -136,6 +152,7 @@ impl AgentApp {
         &self,
         history: &mut Vec<ApiMessage>,
         user_input: &str,
+        event_tx: mpsc::Sender<AgentEvent>,
     ) -> AgentResult<String> {
         let mut logger = ConversationLogger::create();
 
@@ -151,6 +168,7 @@ impl AgentApp {
                 system_prompt,
                 AgentRunConfig::parent(),
                 &mut logger,
+                &event_tx,
             )
             .await;
 
@@ -191,6 +209,7 @@ impl AgentApp {
         system_prompt: String,
         config: AgentRunConfig,
         logger: &mut ConversationLogger,
+        event_tx: &mpsc::Sender<AgentEvent>,
     ) -> AgentResult<String> {
         let mut toolbox = AgentToolbox::new(
             self.workspace_root.clone(),
@@ -219,6 +238,7 @@ impl AgentApp {
             messages.push(ApiMessage::assistant_blocks(&response.content)?);
 
             if stop_reason != "tool_use" {
+                let _ = event_tx.send(AgentEvent::TurnEnd).await;
                 return Ok(response.final_text());
             }
 
@@ -240,24 +260,24 @@ impl AgentApp {
                                 .and_then(Value::as_str)
                                 .unwrap_or_default()
                                 .to_owned();
-                            let description = input
+                            let _description = input
                                 .get("description")
                                 .and_then(Value::as_str)
                                 .unwrap_or("subtask");
-                            println!("> task ({description}): {}", preview(&prompt));
-                            self.run_subagent(prompt, logger).await?
+                            let _ = event_tx.send(AgentEvent::ToolCall { name: "task".to_owned(), input: input.clone() }).await;
+                            self.run_subagent(prompt, logger, event_tx).await?
                         }
                     } else {
                         match toolbox.dispatch(name, input).await {
                             Ok(dispatch) => {
                                 used_todo |= dispatch.used_todo;
-                                println!("> {name}:");
-                                println!("{}", preview(&dispatch.output));
+                                let _ = event_tx.send(AgentEvent::ToolCall { name: name.clone(), input: input.clone() }).await;
+                                let _ = event_tx.send(AgentEvent::ToolResult { name: name.clone(), output: preview(&dispatch.output) }).await;
                                 dispatch.output
                             }
                             Err(e) => {
                                 let msg = format!("Error: {e}");
-                                println!("> {name}: {msg}");
+                                let _ = event_tx.send(AgentEvent::ToolResult { name: name.clone(), output: msg.clone() }).await;
                                 msg
                             }
                         }
@@ -281,6 +301,7 @@ impl AgentApp {
             messages.push(ApiMessage::user_blocks(results));
         }
 
+        let _ = event_tx.send(AgentEvent::TurnEnd).await;
         Ok("已达到工具调用轮数安全上限，自动停止。".to_owned())
     }
 
@@ -299,7 +320,7 @@ impl AgentApp {
     /// # 运作原理
     /// 创建一个新的消息列表（只包含任务 prompt），以子代理系统提示和 `child` 配置
     /// 调用 `run_agent_loop`，子代理不能再用 `task` 工具（防止递归嵌套）
-    async fn run_subagent(&self, prompt: String, logger: &mut ConversationLogger) -> AgentResult<String> {
+    async fn run_subagent(&self, prompt: String, logger: &mut ConversationLogger, event_tx: &mpsc::Sender<AgentEvent>) -> AgentResult<String> {
         let system_prompt = self.subagent_system_prompt();
         logger.log(&format!("=== 子代理系统提示词 ===\n{system_prompt}"));
         let mut messages = vec![ApiMessage::user_text(prompt)];
@@ -308,6 +329,7 @@ impl AgentApp {
             system_prompt,
             AgentRunConfig::child(),
             logger,
+            event_tx,
         )
         .await
     }
@@ -361,57 +383,6 @@ impl AgentApp {
             self.workspace_root.display()
         )
     }
-}
-
-/// 启动交互式 REPL（读取-求值-打印循环），是程序的运行入口
-///
-/// # 返回值
-/// 正常退出返回 `Ok(())`，出错返回错误信息
-///
-/// # 使用场景
-/// 被 `main.rs` 和 `lib.rs` 的 `run_repl()` 调用，是整个 Agent 程序的主入口
-///
-/// # 运作原理
-/// 1. 调用 `AgentApp::from_env()` 初始化 Agent
-/// 2. 进入循环：打印 `agent >>` 提示符 → 读取用户输入 → 调用 `handle_user_turn`
-/// 3. 输入 `q`/`quit`/`exit` 或 EOF（Ctrl+C/Ctrl+D）时退出
-pub async fn run_repl() -> AgentResult<()> {
-    let app = AgentApp::from_env().await?;
-    let mut history = Vec::new();
-    let stdin = io::stdin();
-    let mut stdin_lock = stdin.lock();
-
-    loop {
-        print!("agent >> ");
-        io::stdout().flush().ok();
-
-        let mut buf = Vec::new();
-        let read = stdin_lock.read_until(b'\n', &mut buf)?;
-        let line = String::from_utf8_lossy(&buf).into_owned();
-        if read == 0 {
-            break;
-        }
-
-        let query = line.trim();
-        if query.is_empty() || matches!(query, "q" | "quit" | "exit") {
-            break;
-        }
-
-        match app.handle_user_turn(&mut history, query).await {
-            Ok(text) => {
-                if !text.trim().is_empty() {
-                    termimad::print_text(&text);
-                }
-                println!();
-            }
-            Err(error) => {
-                eprintln!("Error: {error}");
-                println!();
-            }
-        }
-    }
-
-    Ok(())
 }
 
 /// 构造一个工具执行结果的 JSON 块，用于回传给 Claude API
