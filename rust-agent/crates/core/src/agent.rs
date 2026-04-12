@@ -1,4 +1,4 @@
-use std::io::{self, Write as IoWrite};
+use std::io::{self, BufRead, Write as IoWrite};
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -379,13 +379,15 @@ pub async fn run_repl() -> AgentResult<()> {
     let app = AgentApp::from_env().await?;
     let mut history = Vec::new();
     let stdin = io::stdin();
+    let mut stdin_lock = stdin.lock();
 
     loop {
         print!("agent >> ");
         io::stdout().flush().ok();
 
-        let mut line = String::new();
-        let read = stdin.read_line(&mut line)?;
+        let mut buf = Vec::new();
+        let read = stdin_lock.read_until(b'\n', &mut buf)?;
+        let line = String::from_utf8_lossy(&buf).into_owned();
         if read == 0 {
             break;
         }
