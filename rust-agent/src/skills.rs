@@ -109,7 +109,7 @@ impl SkillLoader {
     /// 在 `AgentApp::system_prompt()` 中调用，将可用技能列表展示给 Claude
     pub fn descriptions_for_system_prompt(&self) -> String {
         if self.skills.is_empty() {
-            return "(no skills available)".to_owned();
+            return "（没有可用的技能）".to_owned();
         }
 
         self.skills
@@ -179,7 +179,7 @@ impl SkillLoader {
         match self.skills.get(name) {
             Some(skill) => format!("<skill name=\"{name}\">\n{}\n</skill>", skill.body),
             None => format!(
-                "Error: Unknown skill '{name}'. Available: {}",
+                "错误：未知技能 '{name}'。可用技能：{}",
                 self.skills.keys().cloned().collect::<Vec<_>>().join(", ")
             ),
         }

@@ -142,10 +142,13 @@ impl AgentApp {
         history.push(ApiMessage::user_text(user_input));
         logger.log(&format!("=== 用户 ===\n{user_input}"));
 
+        let system_prompt = self.system_prompt();
+        logger.log(&format!("=== 系统提示词 ===\n{system_prompt}"));
+
         let result = self
             .run_agent_loop(
                 history,
-                self.system_prompt(),
+                system_prompt,
                 AgentRunConfig::parent(),
                 &mut logger,
             )
@@ -224,7 +227,7 @@ impl AgentApp {
 
                     let output = if name == "task" {
                         if !config.allow_task {
-                            "Error: task tool unavailable in subagent".to_owned()
+                            "错误：task 工具在子代理中不可用".to_owned()
                         } else {
                             let prompt = input
                                 .get("prompt")
@@ -265,14 +268,14 @@ impl AgentApp {
             if config.use_todo_reminder && rounds_since_todo >= 3 {
                 results.push(json!({
                     "type": "text",
-                    "text": "<reminder>Update your todos.</reminder>"
+                    "text": "<reminder>请更新你的待办事项。</reminder>"
                 }));
             }
 
             messages.push(ApiMessage::user_blocks(results));
         }
 
-        Ok("Stopped after hitting the tool round safety limit.".to_owned())
+        Ok("已达到工具调用轮数安全上限，自动停止。".to_owned())
     }
 
     /// 启动一个子代理来执行独立的子任务
@@ -291,10 +294,12 @@ impl AgentApp {
     /// 创建一个新的消息列表（只包含任务 prompt），以子代理系统提示和 `child` 配置
     /// 调用 `run_agent_loop`，子代理不能再用 `task` 工具（防止递归嵌套）
     async fn run_subagent(&self, prompt: String, logger: &mut ConversationLogger) -> AgentResult<String> {
+        let system_prompt = self.subagent_system_prompt();
+        logger.log(&format!("=== 子代理系统提示词 ===\n{system_prompt}"));
         let mut messages = vec![ApiMessage::user_text(prompt)];
         self.run_agent_loop(
             &mut messages,
-            self.subagent_system_prompt(),
+            system_prompt,
             AgentRunConfig::child(),
             logger,
         )
@@ -313,24 +318,25 @@ impl AgentApp {
     /// 拼接固定模板字符串，填入工作区路径和技能描述列表
     fn system_prompt(&self) -> String {
         let platform = if cfg!(windows) {
-            "Windows (PowerShell). Use PowerShell syntax for shell commands: use `Get-ChildItem` instead of `ls`, `Get-Content` instead of `cat`, `-Command` instead of `-lc`, `;` instead of `&&`"
+            "Windows (PowerShell)。使用 PowerShell 语法：用 Get-ChildItem 代替 ls，Get-Content 代替 cat，-Command 代替 -lc，; 代替 &&"
         } else {
             "Unix (bash)"
         };
         let skills_desc = self.skills.read().unwrap().descriptions_for_system_prompt();
         format!(
-            "You are a coding agent at {}.\nPlatform: {platform}\nUse tools to solve tasks. Prefer acting over long explanations.\n\n\
-            MANDATORY skill workflow — you MUST follow these steps in order for EVERY task:\n\
-            1. Check if an installed skill covers this task. If yes, call load_skill.\n\
-            2. If no installed skill matches, you MUST call search_skillhub before doing anything else.\n\
-            3. If search_skillhub returns a relevant skill, you MUST call install_skill to install it.\n\
-            4. Only after steps 1-3 (and no skill found) may you proceed with bash or other tools.\n\
-            5. NEVER skip to bash/curl/other tools without first checking SkillHub.\n\
-            6. NEVER claim inability before completing the skill workflow above.\n\n\
-            Other tools:\n\
-            - Use the todo tool to plan multi-step work.\n\
-            - Use the task tool to delegate subtasks with fresh context.\n\n\
-            Skills available:\n{}",
+            "你是一个编程助手，工作目录：{}。\n平台：{platform}\n优先使用工具解决问题，避免冗长解释。\n\n\
+            任务执行流程 — 每个任务必须按以下顺序执行：\n\
+            0. 先了解项目：读取目录结构和关键文件，理解项目上下文。\n\
+            1. 检查已安装的技能是否覆盖当前任务。如果有，调用 load_skill。\n\
+            2. 如果没有匹配的已安装技能，必须调用 search_skillhub 搜索。\n\
+            3. 如果 search_skillhub 返回了相关技能，调用 install_skill 安装它。\n\
+            4. 只有在步骤 0-3 完成（且未找到技能）后，才能使用 bash 或其他工具执行具体操作。\n\
+            5. 绝对不能跳过技能检查直接使用 bash/curl 等工具。\n\
+            6. 在完成技能流程之前，绝对不能声称无法完成任务。\n\n\
+            其他工具：\n\
+            - 使用 todo 工具规划多步骤工作。\n\
+            - 使用 task 工具委派子任务（子任务拥有独立上下文）。\n\n\
+            可用技能：\n{}",
             self.workspace_root.display(),
             skills_desc
         )
@@ -345,7 +351,7 @@ impl AgentApp {
     /// 在 `run_subagent` 中调用，传给 `run_agent_loop` 作为系统提示
     fn subagent_system_prompt(&self) -> String {
         format!(
-            "You are a coding subagent at {}.\nComplete the given task, use tools as needed, then return a concise summary. Do not call the task tool.",
+            "你是一个编程子代理，工作目录：{}。\n完成给定任务，按需使用工具，然后返回简洁的摘要。不能调用 task 工具。",
             self.workspace_root.display()
         )
     }

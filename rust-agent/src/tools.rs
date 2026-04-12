@@ -72,53 +72,53 @@ impl AgentToolbox {
         let mut tools = vec![
             json!({
                 "name": "bash",
-                "description": "Run a shell command.",
+                "description": "执行 shell 命令。",
                 "input_schema": {
                     "type": "object",
-                    "properties": { "command": { "type": "string" } },
+                    "properties": { "command": { "type": "string", "description": "要执行的 shell 命令" } },
                     "required": ["command"]
                 }
             }),
             json!({
                 "name": "read_file",
-                "description": "Read file contents.",
+                "description": "读取文件内容。",
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "path": { "type": "string" },
-                        "limit": { "type": "integer" }
+                        "path": { "type": "string", "description": "文件路径" },
+                        "limit": { "type": "integer", "description": "读取行数限制" }
                     },
                     "required": ["path"]
                 }
             }),
             json!({
                 "name": "write_file",
-                "description": "Write content to file.",
+                "description": "将内容写入文件。",
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "path": { "type": "string" },
-                        "content": { "type": "string" }
+                        "path": { "type": "string", "description": "目标文件路径" },
+                        "content": { "type": "string", "description": "要写入的内容" }
                     },
                     "required": ["path", "content"]
                 }
             }),
             json!({
                 "name": "edit_file",
-                "description": "Replace exact text in file.",
+                "description": "在文件中精确替换一段文本（首次匹配）。",
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "path": { "type": "string" },
-                        "old_text": { "type": "string" },
-                        "new_text": { "type": "string" }
+                        "path": { "type": "string", "description": "文件路径" },
+                        "old_text": { "type": "string", "description": "要被替换的原始文本" },
+                        "new_text": { "type": "string", "description": "替换后的新文本" }
                     },
                     "required": ["path", "old_text", "new_text"]
                 }
             }),
             json!({
                 "name": "todo",
-                "description": "Update task list. Track progress on multi-step tasks.",
+                "description": "更新任务列表。用于规划和跟踪多步骤任务的进度。",
                 "input_schema": {
                     "type": "object",
                     "properties": {
@@ -127,11 +127,12 @@ impl AgentToolbox {
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "id": { "type": "string" },
-                                    "text": { "type": "string" },
+                                    "id": { "type": "string", "description": "任务唯一标识" },
+                                    "text": { "type": "string", "description": "任务描述" },
                                     "status": {
                                         "type": "string",
-                                        "enum": ["pending", "in_progress", "completed"]
+                                        "enum": ["pending", "in_progress", "completed"],
+                                        "description": "任务状态：待处理、进行中、已完成"
                                     }
                                 },
                                 "required": ["id", "text", "status"]
@@ -143,25 +144,25 @@ impl AgentToolbox {
             }),
             json!({
                 "name": "load_skill",
-                "description": "Load specialized knowledge by name.",
+                "description": "按名称加载已安装的技能知识。",
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "name": { "type": "string", "description": "Skill name to load" }
+                        "name": { "type": "string", "description": "要加载的技能名称" }
                     },
                     "required": ["name"]
                 }
             }),
             json!({
                 "name": "search_skillhub",
-                "description": "Search SkillHub skill store for available skills. Use when you need to find skills that are not locally installed.",
+                "description": "搜索 SkillHub 技能商店中的可用技能。当本地没有安装所需技能时使用。",
                 "input_schema": {
                     "type": "object",
                     "properties": {
                         "queries": {
                             "type": "array",
                             "items": { "type": "string" },
-                            "description": "Search keywords. Each keyword will be searched separately and results merged."
+                            "description": "搜索关键词列表。每个关键词会单独搜索后合并结果。"
                         }
                     },
                     "required": ["queries"]
@@ -169,11 +170,11 @@ impl AgentToolbox {
             }),
             json!({
                 "name": "install_skill",
-                "description": "Install a skill from SkillHub to the current workspace. After installation, the skill will be available for use.",
+                "description": "从 SkillHub 安装一个技能。每次调用只安装一个技能，不要批量安装。安装后技能即可使用。",
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "name": { "type": "string", "description": "Skill name to install" }
+                        "name": { "type": "string", "description": "要安装的技能名称" }
                     },
                     "required": ["name"]
                 }
@@ -183,12 +184,12 @@ impl AgentToolbox {
         if allow_task {
             tools.push(json!({
                 "name": "task",
-                "description": "Spawn a subagent with fresh context. It shares the filesystem but not conversation history.",
+                "description": "启动一个拥有独立上下文的子代理来执行子任务。子代理共享文件系统，但不共享对话历史。",
                 "input_schema": {
                     "type": "object",
                     "properties": {
-                        "prompt": { "type": "string" },
-                        "description": { "type": "string" }
+                        "prompt": { "type": "string", "description": "子代理的任务描述" },
+                        "description": { "type": "string", "description": "任务的简要标题" }
                     },
                     "required": ["prompt"]
                 }
@@ -249,7 +250,7 @@ impl AgentToolbox {
                 let queries = input
                     .get("queries")
                     .and_then(Value::as_array)
-                    .ok_or_else(|| anyhow!("Missing array field 'queries'"))?;
+                    .ok_or_else(|| anyhow!("缺少数组字段 'queries'"))?;
                 let mut results = Vec::new();
                 for q in queries {
                     if let Some(keyword) = q.as_str() {
@@ -260,7 +261,7 @@ impl AgentToolbox {
                     }
                 }
                 if results.is_empty() {
-                    "(未提供搜索关键词)".to_owned()
+                    "（未提供搜索关键词）".to_owned()
                 } else {
                     results.join("\n\n")
                 }
@@ -275,11 +276,9 @@ impl AgentToolbox {
                 }
                 // 直接返回技能内容，省去额外一轮 load_skill 调用
                 let skill_content = self.skills.read().unwrap().load_skill_content(skill_name);
-                // 列出技能目录的文件结构
-                let tree = list_skill_tree(skill_name, &self.skill_dirs);
-                format!("{result}\n\n{tree}\n\n{skill_content}")
+                format!("{result}\n\n{skill_content}")
             }
-            other => bail!("Unknown tool: {other}"),
+            other => bail!("未知工具：{other}"),
         };
 
         Ok(ToolDispatchResult {
@@ -310,7 +309,7 @@ impl AgentToolbox {
     async fn run_bash(&self, command: &str) -> AgentResult<String> {
         let dangerous = ["rm -rf /", "sudo", "shutdown", "reboot", "> /dev/"];
         if dangerous.iter().any(|blocked| command.contains(blocked)) {
-            return Ok("Error: Dangerous command blocked".to_owned());
+            return Ok("错误：危险命令已被拦截".to_owned());
         }
 
         let mut process = if cfg!(windows) {
@@ -330,7 +329,7 @@ impl AgentToolbox {
         let output = timeout(Duration::from_secs(120), process.output()).await;
         let output = match output {
             Ok(result) => result.context("Failed to execute shell command")?,
-            Err(_) => return Ok("Error: Timeout (120s)".to_owned()),
+            Err(_) => return Ok("错误：命令执行超时（120秒）".to_owned()),
         };
 
         let mut combined = String::new();
@@ -338,7 +337,7 @@ impl AgentToolbox {
         combined.push_str(&decode_command_output(&output.stderr));
         let trimmed = combined.trim();
         if trimmed.is_empty() {
-            Ok("(no output)".to_owned())
+            Ok("(无输出)".to_owned())
         } else {
             Ok(trimmed.chars().take(50_000).collect())
         }
@@ -392,7 +391,7 @@ impl AgentToolbox {
         }
         std::fs::write(&resolved, content)
             .with_context(|| format!("Failed to write {}", resolved.display()))?;
-        Ok(format!("Wrote {} bytes", content.len()))
+        Ok(format!("已写入 {} 字节", content.len()))
     }
 
     /// 在文件中精确替换一段文本（首次出现的位置）
@@ -415,12 +414,12 @@ impl AgentToolbox {
         let content = std::fs::read_to_string(&resolved)
             .with_context(|| format!("Failed to read {}", resolved.display()))?;
         if !content.contains(old_text) {
-            return Ok(format!("Error: Text not found in {path}"));
+            return Ok(format!("错误：在 {path} 中未找到指定文本"));
         }
         let updated = content.replacen(old_text, new_text, 1);
         std::fs::write(&resolved, updated)
             .with_context(|| format!("Failed to write {}", resolved.display()))?;
-        Ok(format!("Edited {path}"))
+        Ok(format!("已编辑 {path}"))
     }
 }
 
@@ -439,7 +438,7 @@ fn required_string<'a>(input: &'a Value, key: &str) -> AgentResult<&'a str> {
     input
         .get(key)
         .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("Missing string field '{key}'"))
+        .ok_or_else(|| anyhow!("缺少字符串字段 '{key}'"))
 }
 
 /// 从 JSON 对象中提取可选的 u64 字段值
@@ -458,7 +457,7 @@ fn optional_u64(input: &Value, key: &str) -> AgentResult<Option<u64>> {
         Some(value) => value
             .as_u64()
             .map(Some)
-            .ok_or_else(|| anyhow!("Field '{key}' must be an integer")),
+            .ok_or_else(|| anyhow!("字段 '{key}' 必须是整数")),
         None => Ok(None),
     }
 }
@@ -477,7 +476,7 @@ fn parse_todo_items(input: &Value) -> AgentResult<Vec<TodoItemInput>> {
     let items = input
         .get("items")
         .and_then(Value::as_array)
-        .ok_or_else(|| anyhow!("Missing array field 'items'"))?;
+        .ok_or_else(|| anyhow!("缺少数组字段 'items'"))?;
 
     items
         .iter()
