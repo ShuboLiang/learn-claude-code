@@ -107,13 +107,23 @@ fn strip_unc_prefix(path: PathBuf) -> PathBuf {
     }
 }
 #[cfg(test)]
-mod test {
-    use std::path::Path;
+mod tests {
+    use super::*;
 
+    /// 验证合法路径能被正确解析
     #[test]
-    fn test_path() {
-        let path = Path::new("c:\\hp");
-        let path = path.canonicalize().unwrap();
-        println!("{}", path.display())
+    fn resolve_workspace_path_accepts_valid_path() {
+        let root = std::env::current_dir().unwrap();
+        let result = resolve_workspace_path(&root, "foo/bar.txt");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), root.join("foo").join("bar.txt"));
+    }
+
+    /// 验证逃逸路径被拒绝
+    #[test]
+    fn resolve_workspace_path_rejects_escape() {
+        let root = std::env::current_dir().unwrap();
+        let err = resolve_workspace_path(&root, "../../etc/passwd").unwrap_err();
+        assert!(err.to_string().contains("Path escapes workspace"));
     }
 }
