@@ -475,7 +475,7 @@ impl AgentToolbox {
     /// - `path`: 可选的搜索基准目录，默认为工作区根目录
     ///
     /// # 返回值
-    /// 匹配的文件路径列表（相对于工作区根目录），按修改时间排序（最新的在前）
+    /// 匹配的文件路径列表（相对于工作区根目录），最多 250 条
     fn glob_search(&self, pattern: &str, path: Option<&str>) -> AgentResult<String> {
         let base = match path {
             Some(p) => resolve_workspace_path(&self.workspace_root, p)?,
@@ -489,47 +489,34 @@ impl AgentToolbox {
         let full_pattern = base.join(pattern);
         let full_pattern_str = full_pattern.to_string_lossy();
 
-        let paths: Vec<_> = glob::glob(&full_pattern_str)
+        let mut results = Vec::new();
+        for entry in glob::glob(&full_pattern_str)
             .with_context(|| format!("无效的 glob 模式: {pattern}"))?
             .filter_map(Result::ok)
-            .filter(|p| p.is_file())
-            .collect();
+        {
+            // 跳过不应该搜索的目录中的文件
+            if should_skip_path(&entry, Self::SKIP_DIRS) {
+                continue;
+            }
+            if !entry.is_file() {
+                continue;
+            }
 
-        if paths.is_empty() {
+            if let Ok(rel) = entry.strip_prefix(&self.workspace_root) {
+                results.push(rel.to_string_lossy().into_owned());
+            }
+
+            // 收集够就停止，避免遍历整个目录树
+            if results.len() >= 250 {
+                break;
+            }
+        }
+
+        if results.is_empty() {
             return Ok("（无匹配文件）".to_owned());
         }
 
-        // 按修改时间降序排列
-        let mut paths = paths;
-        paths.sort_by(|a, b| {
-            let time_a = std::fs::metadata(a).and_then(|m| m.modified()).ok();
-            let time_b = std::fs::metadata(b).and_then(|m| m.modified()).ok();
-            time_b.cmp(&time_a)
-        });
-
-        let results: Vec<String> = paths
-            .iter()
-            .filter_map(|p| {
-                p.strip_prefix(&self.workspace_root)
-                    .ok()
-                    .map(|rel| rel.to_string_lossy().into_owned())
-            })
-            .collect();
-
-        let count = results.len();
-        let output = results
-            .into_iter()
-            .take(250)
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let suffix = if count > 250 {
-            format!("\n... （共 {count} 个匹配，仅显示前 250 个）")
-        } else {
-            String::new()
-        };
-
-        Ok(format!("{output}{suffix}"))
+        Ok(results.join("\n"))
     }
 
     /// 在文件内容中搜索匹配正则表达式的行
@@ -698,6 +685,13 @@ impl AgentToolbox {
     ///
     /// # 返回值
     /// 需要搜索的文件绝对路径列表
+    /// 应该跳过的大目录列表
+    const SKIP_DIRS: &[&str] = &[
+        "target", "node_modules", ".git", ".svn", ".hg",
+        "__pycache__", ".next", ".nuxt", "dist", "build",
+        ".cache", ".venv", "venv",
+    ];
+
     fn collect_search_files(
         &self,
         base: &Path,
@@ -714,6 +708,7 @@ impl AgentToolbox {
         let files: Vec<PathBuf> = glob::glob(&full_pattern_str)
             .with_context(|| format!("无效的 glob 模式: {pattern}"))?
             .filter_map(Result::ok)
+            .filter(|p| !should_skip_path(p, Self::SKIP_DIRS))
             .filter(|p| p.is_file())
             .collect();
 
@@ -818,6 +813,22 @@ fn parse_todo_items(input: &Value) -> AgentResult<Vec<TodoItemInput>> {
 /// 在 `read_file` 中使用，防止过大的文件内容撑爆 API 的上下文窗口
 fn truncate(text: &str) -> String {
     text.chars().take(50_000).collect()
+}
+
+/// 判断路径是否应该被跳过（属于无关的大目录）
+///
+/// # 参数
+/// - `path`: 待检查的文件路径
+/// - `skip_dir_names`: 需要跳过的目录名列表
+///
+/// # 返回值
+/// 如果路径中包含任何应跳过的目录名则返回 true
+fn should_skip_path(path: &Path, skip_dir_names: &[&str]) -> bool {
+    path.components().any(|comp| {
+        comp.as_os_str()
+            .to_str()
+            .is_some_and(|name| skip_dir_names.contains(&name))
+    })
 }
 
 /// 为 PowerShell 命令包装 UTF-8 编码环境设置
