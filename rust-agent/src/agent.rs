@@ -398,7 +398,7 @@ pub async fn run_repl() -> AgentResult<()> {
         match app.handle_user_turn(&mut history, query).await {
             Ok(text) => {
                 if !text.trim().is_empty() {
-                    println!("{text}");
+                    termimad::print_text(&text);
                 }
                 println!();
             }
