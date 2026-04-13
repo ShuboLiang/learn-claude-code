@@ -1,4 +1,5 @@
-use std::io::{self, BufRead, Write};
+use rustyline::error::ReadlineError;
+use rustyline::DefaultEditor;
 
 use rust_agent_core::agent::{AgentApp, AgentEvent};
 use rust_agent_core::mpsc;
@@ -15,24 +16,20 @@ use rust_agent_core::mpsc;
 async fn main() -> anyhow::Result<()> {
     let app = AgentApp::from_env().await?;
     let mut history = Vec::new();
-    let stdin = io::stdin();
-    let mut stdin_lock = stdin.lock();
+    let mut rl = DefaultEditor::new()?;
 
     loop {
-        print!("agent >> ");
-        io::stdout().flush().ok();
-
-        let mut buf = Vec::new();
-        let read = stdin_lock.read_until(b'\n', &mut buf)?;
-        let line = String::from_utf8_lossy(&buf).into_owned();
-        if read == 0 {
-            break;
-        }
+        let line = match rl.readline("agent >> ") {
+            Ok(line) => line,
+            Err(ReadlineError::Eof | ReadlineError::Interrupted) => break,
+            Err(e) => return Err(e.into()),
+        };
 
         let query = line.trim();
         if query.is_empty() || matches!(query, "q" | "quit" | "exit") {
             break;
         }
+        rl.add_history_entry(query)?;
 
         let (event_tx, mut event_rx) = mpsc::channel(64);
         let (result_tx, result_rx) = tokio::sync::oneshot::channel();
