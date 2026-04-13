@@ -55,10 +55,33 @@ async fn main() -> anyhow::Result<()> {
                 AgentEvent::TextDelta(_) => {
                     // 流式文本暂不处理，最终结果用 termimad 渲染
                 }
-                AgentEvent::ToolCall { name, .. } => println!("> {}", name),
-                AgentEvent::ToolResult { name, output } => {
-                    println!("> {}:", name);
-                    println!("{}", output);
+                AgentEvent::ToolCall { name, input } => {
+                    // 提取关键参数显示
+                    let detail = match name.as_str() {
+                        "bash" => input.get("command").and_then(|v| v.as_str()).unwrap_or("").to_owned(),
+                        "read_file" => input.get("path").and_then(|v| v.as_str()).unwrap_or("").to_owned(),
+                        "write_file" => format!("{} ({} 字节)", input.get("path").and_then(|v| v.as_str()).unwrap_or(""), input.get("content").map(|v| v.as_str().map(|s| s.len()).unwrap_or(0)).unwrap_or(0)),
+                        "edit_file" => input.get("path").and_then(|v| v.as_str()).unwrap_or("").to_owned(),
+                        "glob" => input.get("pattern").and_then(|v| v.as_str()).unwrap_or("").to_owned(),
+                        "grep" => {
+                            let mut parts = vec![input.get("pattern").and_then(|v| v.as_str()).unwrap_or("").to_owned()];
+                            if let Some(p) = input.get("path").and_then(|v| v.as_str()) { parts.push(p.to_owned()); }
+                            parts.join(" in ")
+                        }
+                        "todo" => {
+                            let items = input.get("items").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+                            format!("{items} 项")
+                        }
+                        "task" => input.get("description").and_then(|v| v.as_str()).unwrap_or("").to_owned(),
+                        _ => input.to_string(),
+                    };
+                    println!("┌─ {name}: `{detail}`");
+                }
+                AgentEvent::ToolResult { name: _, output } => {
+                    for line in output.lines() {
+                        println!("│  {line}");
+                    }
+                    println!("└─");
                 }
                 AgentEvent::TurnEnd => {}
                 AgentEvent::Done => {}
