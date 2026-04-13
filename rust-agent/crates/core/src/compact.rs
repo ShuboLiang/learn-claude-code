@@ -19,13 +19,38 @@ use crate::AgentResult;
 pub const TOKEN_THRESHOLD: usize = 50_000;
 
 /// micro_compact 保留的最近工具结果数量
-const KEEP_RECENT: usize = 3;
+const KEEP_RECENT: usize = 5;
+
+/// 压缩后保留的摘要长度（字符数）
+const SUMMARY_LEN: usize = 300;
 
 /// transcript 保存目录名
 const TRANSCRIPT_DIR_NAME: &str = ".transcripts";
 
 /// 需要保留完整结果的工具名称（参考材料类，压缩后需要重新读取）
 const PRESERVE_RESULT_TOOLS: &[&str] = &["read_file"];
+
+/// 按行截断文本，累计不超过 max_chars 字符
+///
+/// 从前往后逐行累加，一旦超过阈值就停止，不切断行。
+/// 如果内容全部保留也不添加省略标记。
+fn truncate_by_lines(text: &str, max_chars: usize) -> String {
+    let mut result = String::new();
+    for line in text.lines() {
+        let line_len = line.len() + 1; // +1 for newline
+        if result.len() + line_len > max_chars {
+            break;
+        }
+        if !result.is_empty() {
+            result.push('\n');
+        }
+        result.push_str(line);
+    }
+    if result.len() < text.len() {
+        result.push_str("\n...");
+    }
+    result
+}
 
 /// 估算消息列表的 token 数（粗略估算：约 4 字符/token）
 pub fn estimate_tokens(messages: &[ApiMessage]) -> usize {
@@ -104,7 +129,16 @@ pub fn micro_compact(messages: &mut [ApiMessage]) {
                     continue;
                 }
 
-                part["content"] = Value::String(format!("[Previous: used {tool_name}]"));
+                // 按行截断保留摘要，不丢失关键信息
+                let original = part
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let summary = truncate_by_lines(original, SUMMARY_LEN);
+                let original_chars = original.chars().count();
+                part["content"] = Value::String(format!(
+                    "[已压缩: {tool_name}, 原文 {original_chars} 字符]\n{summary}"
+                ));
             }
         }
     }
@@ -202,7 +236,7 @@ mod tests {
 
     #[test]
     fn micro_compact_preserves_recent_results() {
-        // 只有 2 个工具结果，不超过 KEEP_RECENT(3)，不应压缩
+        // 只有 2 个工具结果，不超过 KEEP_RECENT(5)，不应压缩
         let mut messages = vec![
             make_assistant_with_tool_use("id1", "bash"),
             make_user_with_tool_result("id1", &"x".repeat(200)),
@@ -223,7 +257,7 @@ mod tests {
 
     #[test]
     fn micro_compact_replaces_old_results() {
-        // 5 个工具结果，保留最后 3 个，前 2 个应被替换
+        // 7 个工具结果，保留最后 5 个，前 2 个应被压缩
         let mut messages = vec![
             make_assistant_with_tool_use("id1", "bash"),
             make_user_with_tool_result("id1", &"a".repeat(200)),
@@ -235,20 +269,25 @@ mod tests {
             make_user_with_tool_result("id4", &"d".repeat(200)),
             make_assistant_with_tool_use("id5", "bash"),
             make_user_with_tool_result("id5", &"e".repeat(200)),
+            make_assistant_with_tool_use("id6", "bash"),
+            make_user_with_tool_result("id6", &"f".repeat(200)),
+            make_assistant_with_tool_use("id7", "bash"),
+            make_user_with_tool_result("id7", &"g".repeat(200)),
         ];
 
         micro_compact(&mut messages);
 
-        // 前 2 个应被替换为占位符
+        // 前 2 个应被压缩为摘要（包含工具名和原文摘要）
         if let Value::Array(ref parts) = messages[1].content {
             let content = parts[0].get("content").unwrap().as_str().unwrap();
-            assert!(content.starts_with("[Previous: used bash]"));
+            assert!(content.contains("[已压缩: bash"));
+            assert!(content.contains("原文"));
         }
         if let Value::Array(ref parts) = messages[3].content {
             let content = parts[0].get("content").unwrap().as_str().unwrap();
-            assert!(content.starts_with("[Previous: used bash]"));
+            assert!(content.contains("[已压缩: bash"));
         }
-        // 后 3 个应保持不变
+        // 后 5 个应保持不变
         if let Value::Array(ref parts) = messages[5].content {
             let content = parts[0].get("content").unwrap().as_str().unwrap();
             assert!(content.starts_with("c"));

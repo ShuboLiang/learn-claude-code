@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use async_recursion::async_recursion;
@@ -14,6 +14,7 @@ use crate::anthropic::{AnthropicClient, ApiMessage, MessagesRequest, ResponseCon
 use crate::compact;
 use crate::skillhub;
 use crate::skills::SkillLoader;
+use crate::tool_result_storage;
 use crate::tools::AgentToolbox;
 
 /// Agent 执行过程中产生的事件，通过 channel 发送给消费者（CLI 终端或 HTTP SSE）
@@ -218,10 +219,17 @@ impl AgentApp {
             self.skill_dirs.clone(),
         );
         let mut rounds_since_todo = 0usize;
+        let mut last_micro_compact = Instant::now();
+        let micro_compact_interval = Duration::from_secs(60 * 60); // 1 小时
 
         for _ in 0..MAX_TOOL_ROUNDS {
-            // 第一层 + 第二层：每次 API 调用前执行压缩
-            compact::micro_compact(messages);
+            // 第一层：micro_compact — 距上次压缩超过 1 小时才执行
+            if last_micro_compact.elapsed() >= micro_compact_interval {
+                println!("[micro_compact 已触发]");
+                compact::micro_compact(messages);
+                last_micro_compact = Instant::now();
+            }
+            // 第二层：auto_compact — token 超阈值时触发
             if compact::estimate_tokens(messages) > compact::TOKEN_THRESHOLD {
                 println!("[auto_compact 已触发]");
                 *messages = compact::auto_compact(
@@ -305,7 +313,10 @@ impl AgentApp {
                     // 记录工具结果日志
                     logger.log(&format!("=== 工具结果: {name} ===\n{output}"));
 
-                    results.push(tool_result_block(id, output));
+                    // 大结果持久化到磁盘，消息中只保留预览
+                    let processed_output = tool_result_storage::maybe_persist(id, &output);
+
+                    results.push(tool_result_block(id, processed_output));
                 }
             }
 
@@ -394,9 +405,13 @@ impl AgentApp {
             4. 只有在步骤 0-3 完成（且未找到技能）后，才能使用 bash 或其他工具执行具体操作。\n\
             5. 绝对不能跳过技能检查直接使用 bash/curl 等工具。\n\
             6. 在完成技能流程之前，绝对不能声称无法完成任务。\n\n\
+            输出规则：\n\
+            - 研究类任务：收集完资料后必须输出完整内容，不能只说整理完毕。\n\
+            - 长篇内容（>500字）应写入文件并告知用户文件路径。\n\
+            - 如果工具结果被持久化到磁盘（包含 <persisted-output> 标签），可以随时用 read_file 读取完整内容。\n\n\
             其他工具：\n\
             - 使用 todo 工具规划多步骤工作。\n\
-            - 使用 task 工具委派子任务（子任务拥有独立上下文）。\n\n\
+            - 使用 task 工具委派子任务（子代理拥有独立上下文）。\n\n\
             可用技能：\n{}",
             self.workspace_root.display(),
             skills_desc

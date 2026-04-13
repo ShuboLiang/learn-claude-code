@@ -263,7 +263,9 @@ impl AgentToolbox {
             "load_skill" => {
                 let skill_name = required_string(input, "name")?;
                 let content = self.skills.read().unwrap().load_skill_content(skill_name);
-                let tree = skill_ops::list_skill_tree(skill_name, &self.skill_dirs);
+                let tree = self.skills.read().unwrap().get_skill_dir(skill_name)
+                    .map(|dir| skill_ops::list_skill_tree(&dir))
+                    .unwrap_or_default();
                 if tree.is_empty() {
                     content
                 } else {

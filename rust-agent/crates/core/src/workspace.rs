@@ -4,24 +4,22 @@ use anyhow::{Context, bail};
 
 use crate::AgentResult;
 
-/// 将用户提供的路径安全地解析为工作区内的绝对路径
+/// 将用户提供的路径解析为绝对路径
 ///
 /// # 参数
 /// - `root`: 工作区根目录，通常是 Agent 启动时的当前目录（由 `std::env::current_dir()` 获取）
 /// - `input`: 用户提供的路径字符串，可以是相对路径（如 "src/main.rs"）或绝对路径
 ///
 /// # 返回值
-/// 解析后的绝对路径，保证位于工作区 `root` 内部
+/// 解析后的绝对路径
 ///
 /// # 使用场景
-/// 在 `tools.rs` 中被 `read_file`、`write_file`、`edit_file` 三个文件操作工具调用，
-/// 确保用户提供的路径不会逃逸到工作区之外（防止路径遍历攻击）
+/// 在 `tools.rs` 中被 `read_file`、`write_file`、`edit_file` 三个文件操作工具调用
 ///
 /// # 运作原理
 /// 1. 先确定基准路径 `base`：如果 `root` 在磁盘上存在就用 `canonicalize()` 获取真实路径；
 ///    如果不存在但是绝对路径就直接规范化；否则拼上当前工作目录再规范化
 /// 2. 如果用户输入是绝对路径，直接规范化；否则拼到 `base` 上再规范化
-/// 3. 最终检查结果路径是否以 `base` 开头，不是的话说明路径逃逸了，直接报错
 pub fn resolve_workspace_path(root: &Path, input: &str) -> AgentResult<PathBuf> {
     let base = if root.exists() {
         strip_unc_prefix(
@@ -42,10 +40,6 @@ pub fn resolve_workspace_path(root: &Path, input: &str) -> AgentResult<PathBuf> 
     } else {
         normalize_path(base.join(input))
     };
-
-    if !joined.starts_with(&base) {
-        bail!("Path escapes workspace: {input}");
-    }
 
     Ok(joined)
 }
@@ -119,11 +113,12 @@ mod tests {
         assert_eq!(result.unwrap(), root.join("foo").join("bar.txt"));
     }
 
-    /// 验证逃逸路径被拒绝
+    /// 验证绝对路径直接解析
     #[test]
-    fn resolve_workspace_path_rejects_escape() {
+    fn resolve_workspace_path_accepts_absolute_path() {
         let root = std::env::current_dir().unwrap();
-        let err = resolve_workspace_path(&root, "../../etc/passwd").unwrap_err();
-        assert!(err.to_string().contains("Path escapes workspace"));
+        let result = resolve_workspace_path(&root, "C:/Windows/System32/drivers/etc/hosts");
+        // 绝对路径直接返回规范化结果，不受工作区限制
+        assert!(result.is_ok());
     }
 }

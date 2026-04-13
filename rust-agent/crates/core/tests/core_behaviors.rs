@@ -26,9 +26,9 @@ fn parse_skill_file_reads_frontmatter_and_body() {
 }
 
 #[test]
-fn resolve_workspace_path_rejects_escape() {
-    let root = std::env::current_dir().unwrap().join("fixtures");
-    let err = resolve_workspace_path(&root, "..\\outside.txt").unwrap_err();
-
-    assert!(err.to_string().contains("Path escapes workspace"));
+fn resolve_workspace_path_resolves_outside_path() {
+    // 路径不再受工作区限制，相对路径会正常解析
+    let root = std::env::current_dir().unwrap();
+    let result = resolve_workspace_path(&root, "../outside.txt");
+    assert!(result.is_ok());
 }

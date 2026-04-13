@@ -4,6 +4,7 @@ pub mod compact;
 pub mod skillhub;
 pub mod skills;
 pub mod todo;
+pub mod tool_result_storage;
 pub mod tools;
 pub mod workspace;
 
