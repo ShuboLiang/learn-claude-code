@@ -212,6 +212,16 @@ impl AgentToolbox {
                     "required": ["name"]
                 }
             }),
+            json!({
+                "name": "compact",
+                "description": "触发手动对话压缩。当上下文过长时使用，将对话历史压缩为摘要。",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "focus": { "type": "string", "description": "摘要中需要重点保留的内容" }
+                    }
+                }
+            }),
         ];
 
         if allow_task {

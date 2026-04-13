@@ -11,6 +11,7 @@ use tokio::sync::mpsc;
 
 use crate::AgentResult;
 use crate::anthropic::{AnthropicClient, ApiMessage, MessagesRequest, ResponseContentBlock};
+use crate::compact;
 use crate::skillhub;
 use crate::skills::SkillLoader;
 use crate::tools::AgentToolbox;
@@ -219,6 +220,19 @@ impl AgentApp {
         let mut rounds_since_todo = 0usize;
 
         for _ in 0..MAX_TOOL_ROUNDS {
+            // 第一层 + 第二层：每次 API 调用前执行压缩
+            compact::micro_compact(messages);
+            if compact::estimate_tokens(messages) > compact::TOKEN_THRESHOLD {
+                println!("[auto_compact 已触发]");
+                *messages = compact::auto_compact(
+                    &self.client,
+                    &self.model,
+                    &self.workspace_root,
+                    &*messages,
+                )
+                .await?;
+            }
+
             let tools = toolbox.tool_schemas(config.allow_task);
             let request = MessagesRequest {
                 model: &self.model,
@@ -244,6 +258,7 @@ impl AgentApp {
 
             let mut results = Vec::new();
             let mut used_todo = false;
+            let mut manual_compact = false;
 
             for block in &response.content {
                 if let ResponseContentBlock::ToolUse { id, name, input } = block {
@@ -267,6 +282,10 @@ impl AgentApp {
                             let _ = event_tx.send(AgentEvent::ToolCall { name: "task".to_owned(), input: input.clone() }).await;
                             self.run_subagent(prompt, logger, event_tx).await?
                         }
+                    } else if name == "compact" {
+                        manual_compact = true;
+                        let _ = event_tx.send(AgentEvent::ToolCall { name: "compact".to_owned(), input: input.clone() }).await;
+                        "正在压缩...".to_owned()
                     } else {
                         match toolbox.dispatch(name, input).await {
                             Ok(dispatch) => {
@@ -299,6 +318,20 @@ impl AgentApp {
             }
 
             messages.push(ApiMessage::user_blocks(results));
+
+            // 第三层：手动压缩（AI 主动调用 compact 工具）
+            if manual_compact {
+                println!("[手动压缩]");
+                *messages = compact::auto_compact(
+                    &self.client,
+                    &self.model,
+                    &self.workspace_root,
+                    &*messages,
+                )
+                .await?;
+                let _ = event_tx.send(AgentEvent::TurnEnd).await;
+                return Ok("对话已手动压缩。".to_owned());
+            }
         }
 
         let _ = event_tx.send(AgentEvent::TurnEnd).await;
@@ -378,8 +411,11 @@ impl AgentApp {
     /// # 使用场景
     /// 在 `run_subagent` 中调用，传给 `run_agent_loop` 作为系统提示
     fn subagent_system_prompt(&self) -> String {
+        let skills_desc = self.skills.read().unwrap().descriptions_for_system_prompt();
         format!(
-            "你是一个编程子代理，工作目录：{}。\n完成给定任务，按需使用工具，然后返回简洁的摘要。不能调用 task 工具。",
+            "你是一个编程子代理，工作目录：{}。\n完成给定任务，按需使用工具，然后返回简洁的摘要。不能调用 task 工具。\n\n\
+            已安装的技能：\n{skills_desc}\n\n\
+            如果已安装的技能覆盖当前任务，直接调用 load_skill 加载；否则跳过技能流程，直接执行。",
             self.workspace_root.display()
         )
     }
