@@ -1,3 +1,7 @@
+//! SkillHub CLI 交互模块
+//!
+//! 负责检查、安装和搜索 SkillHub 技能商店中的技能。
+
 use std::path::Path;
 use std::process::Stdio;
 
@@ -11,14 +15,6 @@ const INSTALL_URL: &str =
     "https://skillhub-1388575217.cos.ap-guangzhou.myqcloud.com/install/install.sh";
 
 /// 检查 SkillHub CLI 是否已安装，未安装则自动安装（仅 CLI）
-///
-/// # 返回值
-/// `true` 表示 CLI 可用，`false` 表示不可用（如 Windows 平台暂不支持自动安装）
-///
-/// # 运作原理
-/// 1. 执行 `skillhub --version` 检查 CLI 是否可用
-/// 2. 如果不可用且在 Unix 平台，通过 curl 下载安装脚本并执行（带 `--cli-only` 参数）
-/// 3. Windows 平台暂不支持自动安装，打印提示信息
 pub async fn ensure_cli_installed() -> bool {
     if is_cli_available().await {
         return true;
@@ -57,9 +53,6 @@ pub async fn ensure_cli_installed() -> bool {
 }
 
 /// 检查 SkillHub CLI 是否可用
-///
-/// # 运作原理
-/// 执行 `skillhub --version`，如果输出以 "skillhub" 开头则判定为已安装
 async fn is_cli_available() -> bool {
     match Command::new("skillhub")
         .arg("--version")
@@ -78,27 +71,12 @@ async fn is_cli_available() -> bool {
 }
 
 /// 搜索 SkillHub 技能商店中的技能
-///
-/// # 参数
-/// - `query`: 搜索关键词
-///
-/// # 返回值
-/// 搜索结果文本
 pub async fn search(query: &str) -> AgentResult<String> {
     run_skillhub_command(&["search", query]).await
 }
 
-/// 从 SkillHub 安装指定技能到 workspace 的 skills 目录
-///
-/// # 参数
-/// - `name`: 技能名称
-/// - `workspace_root`: workspace 根目录路径
-///
-/// # 返回值
-/// 安装结果文本
+/// 从 SkillHub 安装指定技能到用户目录
 pub async fn install(name: &str, _workspace_root: &Path) -> AgentResult<String> {
-    // 安装到用户目录 ~/.rust-agent/
-    // skillhub CLI 会在 cwd 下创建 skills/<name>/ 子目录
     let target_dir = dirs::home_dir()
         .map(|p| p.join(".rust-agent"))
         .context("无法获取用户主目录")?;

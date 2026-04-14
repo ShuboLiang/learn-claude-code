@@ -12,7 +12,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Context;
 use serde_json::Value;
 
-use crate::anthropic::{AnthropicClient, ApiMessage, MessagesRequest};
+use crate::api::AnthropicClient;
+use crate::api::types::{ApiMessage, MessagesRequest};
 use crate::AgentResult;
 
 /// auto_compact 触发的 token 估算阈值
@@ -211,7 +212,7 @@ pub async fn auto_compact(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::anthropic::ApiMessage;
+    use crate::api::types::ApiMessage;
     use serde_json::{Value, json};
 
     /// 构造一个包含工具结果的助手消息（序列化后的 JSON 格式）
@@ -236,7 +237,6 @@ mod tests {
 
     #[test]
     fn micro_compact_preserves_recent_results() {
-        // 只有 2 个工具结果，不超过 KEEP_RECENT(5)，不应压缩
         let mut messages = vec![
             make_assistant_with_tool_use("id1", "bash"),
             make_user_with_tool_result("id1", &"x".repeat(200)),
@@ -246,7 +246,6 @@ mod tests {
 
         micro_compact(&mut messages);
 
-        // 两个结果都不应被替换
         if let Value::Array(ref parts) = messages[1].content {
             assert!(parts[0].get("content").unwrap().as_str().unwrap().starts_with("x"));
         }
@@ -257,7 +256,6 @@ mod tests {
 
     #[test]
     fn micro_compact_replaces_old_results() {
-        // 7 个工具结果，保留最后 5 个，前 2 个应被压缩
         let mut messages = vec![
             make_assistant_with_tool_use("id1", "bash"),
             make_user_with_tool_result("id1", &"a".repeat(200)),
@@ -277,7 +275,6 @@ mod tests {
 
         micro_compact(&mut messages);
 
-        // 前 2 个应被压缩为摘要（包含工具名和原文摘要）
         if let Value::Array(ref parts) = messages[1].content {
             let content = parts[0].get("content").unwrap().as_str().unwrap();
             assert!(content.contains("[已压缩: bash"));
@@ -287,7 +284,6 @@ mod tests {
             let content = parts[0].get("content").unwrap().as_str().unwrap();
             assert!(content.contains("[已压缩: bash"));
         }
-        // 后 5 个应保持不变
         if let Value::Array(ref parts) = messages[5].content {
             let content = parts[0].get("content").unwrap().as_str().unwrap();
             assert!(content.starts_with("c"));
@@ -296,7 +292,6 @@ mod tests {
 
     #[test]
     fn micro_compact_preserves_read_file_results() {
-        // read_file 的结果即使超过 KEEP_RECENT 也不应被压缩
         let mut messages = vec![
             make_assistant_with_tool_use("id1", "read_file"),
             make_user_with_tool_result("id1", &"file content here".repeat(20)),
@@ -312,7 +307,6 @@ mod tests {
 
         micro_compact(&mut messages);
 
-        // read_file 结果应保持不变
         if let Value::Array(ref parts) = messages[1].content {
             let content = parts[0].get("content").unwrap().as_str().unwrap();
             assert!(content.starts_with("file content here"));
@@ -321,10 +315,9 @@ mod tests {
 
     #[test]
     fn micro_compact_skips_short_content() {
-        // 短内容（<=100 字符）不应被压缩
         let mut messages = vec![
             make_assistant_with_tool_use("id1", "bash"),
-            make_user_with_tool_result("id1", "short"), // 只有 5 字符
+            make_user_with_tool_result("id1", "short"),
             make_assistant_with_tool_use("id2", "bash"),
             make_user_with_tool_result("id2", &"x".repeat(200)),
             make_assistant_with_tool_use("id3", "bash"),
@@ -337,7 +330,6 @@ mod tests {
 
         micro_compact(&mut messages);
 
-        // 短内容应保持不变
         if let Value::Array(ref parts) = messages[1].content {
             let content = parts[0].get("content").unwrap().as_str().unwrap();
             assert_eq!(content, "short");
@@ -348,7 +340,6 @@ mod tests {
     fn estimate_tokens_is_reasonable() {
         let messages = vec![ApiMessage::user_text("hello world")];
         let tokens = estimate_tokens(&messages);
-        // 粗略验证：JSON 序列化后约 30 字符，/4 ≈ 7 token
         assert!(tokens > 0 && tokens < 100);
     }
 }

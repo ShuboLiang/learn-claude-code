@@ -1,7 +1,6 @@
-use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use async_recursion::async_recursion;
@@ -10,11 +9,14 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::AgentResult;
-use crate::anthropic::{AnthropicClient, ApiMessage, MessagesRequest, ResponseContentBlock};
-use crate::compact;
-use crate::skillhub;
+use crate::api::AnthropicClient;
+use crate::api::types::{ApiMessage, MessagesRequest, ResponseContentBlock};
+use crate::infra::compact;
+use crate::infra::logging::ConversationLogger;
+use crate::infra::storage;
+use crate::infra::utils::preview_text;
+use crate::skills::hub as skillhub;
 use crate::skills::SkillLoader;
-use crate::tool_result_storage;
 use crate::tools::AgentToolbox;
 
 /// Agent 执行过程中产生的事件，通过 channel 发送给消费者（CLI 终端或 HTTP SSE）
@@ -64,9 +66,6 @@ struct AgentRunConfig {
 
 impl AgentRunConfig {
     /// 创建父代理（顶层 Agent）的运行配置
-    ///
-    /// # 返回值
-    /// 允许 task 工具、启用 todo 提醒的配置
     fn parent() -> Self {
         Self {
             allow_task: true,
@@ -75,9 +74,6 @@ impl AgentRunConfig {
     }
 
     /// 创建子代理（subagent）的运行配置
-    ///
-    /// # 返回值
-    /// 禁止 task 工具（子代理不能再派生子代理）、启用 todo 提醒的配置
     fn child() -> Self {
         Self {
             allow_task: false,
@@ -88,24 +84,6 @@ impl AgentRunConfig {
 
 impl AgentApp {
     /// 从环境变量和 .env 文件中初始化 Agent 应用
-    ///
-    /// # 读取的环境变量
-    /// - `ANTHROPIC_API_KEY`: API 密钥（通过 `AnthropicClient::from_env()` 读取）
-    /// - `ANTHROPIC_BASE_URL`: API 基础 URL（可选，通过 `AnthropicClient::from_env()` 读取）
-    /// - `MODEL_ID`: 要使用的模型 ID
-    ///
-    /// # 返回值
-    /// 初始化完成的 `AgentApp` 实例
-    ///
-    /// # 使用场景
-    /// 在 `run_repl()` 启动时调用一次，是整个 Agent 的入口初始化
-    ///
-    /// # 运作原理
-    /// 1. 加载 `.env` 文件中的环境变量
-    /// 2. 获取当前工作目录作为工作区根路径
-    /// 3. 初始化 Anthropic API 客户端
-    /// 4. 读取 `MODEL_ID` 环境变量
-    /// 5. 从用户目录的 `.skills` 文件夹和工作区下的 `skills/` 目录加载所有技能文件
     pub async fn from_env() -> AgentResult<Self> {
         let _ = dotenv();
         let workspace_root =
@@ -137,19 +115,6 @@ impl AgentApp {
     }
 
     /// 处理用户的一次对话输入，返回 Agent 的最终回复文本
-    ///
-    /// # 参数
-    /// - `history`: 对话历史消息列表，函数会将新的用户消息和 Agent 回复追加进去
-    /// - `user_input`: 用户输入的文本内容
-    ///
-    /// # 返回值
-    /// Agent 最终输出的文本（可能是直接回答，也可能是多轮工具调用后的结果）
-    ///
-    /// # 使用场景
-    /// 在 `run_repl()` 的主循环中，每读取一行用户输入就调用一次
-    ///
-    /// # 运作原理
-    /// 将用户消息包装成 `ApiMessage` 追加到历史中，然后启动 Agent 循环
     pub async fn handle_user_turn(
         &self,
         history: &mut Vec<ApiMessage>,
@@ -161,7 +126,7 @@ impl AgentApp {
         history.push(ApiMessage::user_text(user_input));
         logger.log(&format!("=== 用户 ===\n{user_input}"));
 
-        let system_prompt = self.system_prompt();
+        let system_prompt = build_system_prompt(&self.workspace_root, &self.skills.read().unwrap().descriptions_for_system_prompt());
         logger.log(&format!("=== 系统提示词 ===\n{system_prompt}"));
 
         let result = self
@@ -183,27 +148,6 @@ impl AgentApp {
     }
 
     /// Agent 的核心循环：反复调用 Claude API → 执行工具 → 回传结果，直到得到最终文本回复
-    ///
-    /// # 参数
-    /// - `messages`: 对话消息列表（包含系统提示、用户消息、助手回复、工具结果等）
-    /// - `system_prompt`: 系统提示词，告诉 Claude 它的身份和可用技能
-    /// - `config`: 运行配置，控制是否允许 task 工具和 todo 提醒
-    ///
-    /// # 返回值
-    /// Agent 最终的文本回复
-    ///
-    /// # 使用场景
-    /// 被 `handle_user_turn` 和 `run_subagent` 调用，是 Agent 的核心执行引擎
-    ///
-    /// # 运作原理
-    /// 最多循环 `MAX_TOOL_ROUNDS`（30）轮：
-    /// 1. 构建请求（包含模型、系统提示、历史消息、工具定义）
-    /// 2. 调用 Claude API 获取回复
-    /// 3. 如果回复的 stop_reason 不是 "tool_use"，说明 Claude 给出了最终文本，直接返回
-    /// 4. 如果是 "tool_use"，说明 Claude 想调用工具，遍历所有 ToolUse 块执行对应工具
-    /// 5. 特殊处理 `task` 工具：调用 `run_subagent` 启动子代理
-    /// 6. 将工具执行结果回传给 Claude，继续下一轮
-    /// 7. 如果连续 3 轮没有更新 todo，自动插入提醒
     #[async_recursion]
     async fn run_agent_loop(
         &self,
@@ -252,7 +196,7 @@ impl AgentApp {
             let response = match self.client.create_message(&request).await {
                 Ok(resp) => resp,
                 Err(e) => {
-                    eprintln!("[Agent] create_message 失败！错误: {e}");
+                    eprintln!("[Agent] create_message 失败！错误: {e:#}");
                     return Err(e);
                 }
             };
@@ -270,8 +214,7 @@ impl AgentApp {
 
             for block in &response.content {
                 if let ResponseContentBlock::ToolUse { id, name, input } = block {
-                    // 记录工具调用日志
-                    let input_preview = preview(&input.to_string());
+                    let input_preview = preview_text(&input.to_string(), 200);
                     logger.log(&format!("=== 工具调用: {name} ===\n输入: {input_preview}"));
 
                     let output = if name == "task" {
@@ -299,7 +242,7 @@ impl AgentApp {
                             Ok(dispatch) => {
                                 used_todo |= dispatch.used_todo;
                                 let _ = event_tx.send(AgentEvent::ToolCall { name: name.clone(), input: input.clone() }).await;
-                                let _ = event_tx.send(AgentEvent::ToolResult { name: name.clone(), output: preview(&dispatch.output) }).await;
+                                let _ = event_tx.send(AgentEvent::ToolResult { name: name.clone(), output: preview_text(&dispatch.output, 200) }).await;
                                 dispatch.output
                             }
                             Err(e) => {
@@ -310,11 +253,10 @@ impl AgentApp {
                         }
                     };
 
-                    // 记录工具结果日志
                     logger.log(&format!("=== 工具结果: {name} ===\n{output}"));
 
                     // 大结果持久化到磁盘，消息中只保留预览
-                    let processed_output = tool_result_storage::maybe_persist(id, &output);
+                    let processed_output = storage::maybe_persist(id, &output);
 
                     results.push(tool_result_block(id, processed_output));
                 }
@@ -350,22 +292,8 @@ impl AgentApp {
     }
 
     /// 启动一个子代理来执行独立的子任务
-    ///
-    /// # 参数
-    /// - `prompt`: 子代理的任务描述
-    ///
-    /// # 返回值
-    /// 子代理完成后的最终文本回复
-    ///
-    /// # 使用场景
-    /// 在 `run_agent_loop` 中，当 Claude 调用 `task` 工具时触发。
-    /// 子代理拥有独立的对话上下文（不共享父代理的历史），但共享同一个工作区
-    ///
-    /// # 运作原理
-    /// 创建一个新的消息列表（只包含任务 prompt），以子代理系统提示和 `child` 配置
-    /// 调用 `run_agent_loop`，子代理不能再用 `task` 工具（防止递归嵌套）
     async fn run_subagent(&self, prompt: String, logger: &mut ConversationLogger, event_tx: &mpsc::Sender<AgentEvent>) -> AgentResult<String> {
-        let system_prompt = self.subagent_system_prompt();
+        let system_prompt = build_subagent_prompt(&self.workspace_root, &self.skills.read().unwrap().descriptions_for_system_prompt());
         logger.log(&format!("=== 子代理系统提示词 ===\n{system_prompt}"));
         let mut messages = vec![ApiMessage::user_text(prompt)];
         self.run_agent_loop(
@@ -377,77 +305,9 @@ impl AgentApp {
         )
         .await
     }
-
-    /// 生成父代理（顶层 Agent）的系统提示词
-    ///
-    /// # 返回值
-    /// 包含工作区路径、行为指引和可用技能列表的完整系统提示
-    ///
-    /// # 使用场景
-    /// 在 `handle_user_turn` 中调用，传给 `run_agent_loop` 作为系统提示
-    ///
-    /// # 运作原理
-    /// 拼接固定模板字符串，填入工作区路径和技能描述列表
-    fn system_prompt(&self) -> String {
-        let platform = if cfg!(windows) {
-            "Windows (PowerShell)。使用 PowerShell 语法：用 Get-ChildItem 代替 ls，Get-Content 代替 cat，-Command 代替 -lc，; 代替 &&"
-        } else {
-            "Unix (bash)"
-        };
-        let skills_desc = self.skills.read().unwrap().descriptions_for_system_prompt();
-        format!(
-            "你是一个编程助手，工作目录：{}。\n平台：{platform}\n优先使用工具解决问题，避免冗长解释。\n\n\
-            任务执行流程 — 每个任务必须按以下顺序执行：\n\
-            0. 先了解项目：读取目录结构和关键文件，理解项目上下文。\n\
-            1. 检查已安装的技能是否覆盖当前任务。如果有，调用 load_skill。\n\
-            2. 如果没有匹配的已安装技能，必须调用 search_skillhub 搜索。\n\
-            3. 如果 search_skillhub 返回了相关技能，调用 install_skill 安装它。\n\
-            4. 只有在步骤 0-3 完成（且未找到技能）后，才能使用 bash 或其他工具执行具体操作。\n\
-            5. 绝对不能跳过技能检查直接使用 bash/curl 等工具。\n\
-            6. 在完成技能流程之前，绝对不能声称无法完成任务。\n\n\
-            输出规则：\n\
-            - 研究类任务：收集完资料后必须输出完整内容，不能只说整理完毕。\n\
-            - 长篇内容（>500字）应写入文件并告知用户文件路径。\n\
-            - 如果工具结果被持久化到磁盘（包含 <persisted-output> 标签），可以随时用 read_file 读取完整内容。\n\n\
-            其他工具：\n\
-            - 使用 todo 工具规划多步骤工作。\n\
-            - 使用 task 工具委派子任务（子代理拥有独立上下文）。\n\n\
-            可用技能：\n{}",
-            self.workspace_root.display(),
-            skills_desc
-        )
-    }
-
-    /// 生成子代理的系统提示词
-    ///
-    /// # 返回值
-    /// 简短的任务执行提示，告知子代理完成任务后返回摘要，且不能调用 task 工具
-    ///
-    /// # 使用场景
-    /// 在 `run_subagent` 中调用，传给 `run_agent_loop` 作为系统提示
-    fn subagent_system_prompt(&self) -> String {
-        let skills_desc = self.skills.read().unwrap().descriptions_for_system_prompt();
-        format!(
-            "你是一个编程子代理，工作目录：{}。\n完成给定任务，按需使用工具，然后返回简洁的摘要。不能调用 task 工具。\n\n\
-            已安装的技能：\n{skills_desc}\n\n\
-            如果已安装的技能覆盖当前任务，直接调用 load_skill 加载；否则跳过技能流程，直接执行。",
-            self.workspace_root.display()
-        )
-    }
 }
 
 /// 构造一个工具执行结果的 JSON 块，用于回传给 Claude API
-///
-/// # 参数
-/// - `tool_use_id`: Claude 请求中工具调用的唯一标识（用于匹配请求和结果）
-/// - `content`: 工具执行后返回的文本内容
-///
-/// # 返回值
-/// 格式为 `{"type": "tool_result", "tool_use_id": "...", "content": "..."}` 的 JSON 值
-///
-/// # 使用场景
-/// 在 `run_agent_loop` 中，每执行完一个工具调用后，用此函数将结果包装成 Claude API
-/// 要求的格式，追加到消息历史中
 fn tool_result_block(tool_use_id: &str, content: String) -> Value {
     json!({
         "type": "tool_result",
@@ -456,66 +316,42 @@ fn tool_result_block(tool_use_id: &str, content: String) -> Value {
     })
 }
 
-/// 截取文本的前 200 个字符，超出部分用 "..." 省略
-///
-/// # 参数
-/// - `text`: 待截取的文本
-///
-/// # 返回值
-/// 如果不超过 200 字符则原样返回，否则截断并加 "..."
-///
-/// # 使用场景
-/// 在 `run_agent_loop` 中打印工具执行结果和子代理任务描述时使用，
-/// 避免在终端中打印过长的内容
-fn preview(text: &str) -> String {
-    const LIMIT: usize = 200;
-    if text.chars().count() <= LIMIT {
-        return text.to_owned();
-    }
-    let head = text.chars().take(LIMIT).collect::<String>();
-    format!("{head}...")
+/// 生成父代理（顶层 Agent）的系统提示词
+fn build_system_prompt(workspace_root: &std::path::Path, skills_desc: &str) -> String {
+    let platform = if cfg!(windows) {
+        "Windows (PowerShell)。使用 PowerShell 语法：用 Get-ChildItem 代替 ls，Get-Content 代替 cat，-Command 代替 -lc，; 代替 &&"
+    } else {
+        "Unix (bash)"
+    };
+    format!(
+        "你是一个编程助手，工作目录：{}。\n平台：{platform}\n优先使用工具解决问题，避免冗长解释。\n\n\
+        任务执行流程 — 每个任务必须按以下顺序执行：\n\
+        0. 先了解项目：读取目录结构和关键文件，理解项目上下文。\n\
+        1. 检查已安装的技能是否覆盖当前任务。如果有，调用 load_skill。\n\
+        2. 如果没有匹配的已安装技能，必须调用 search_skillhub 搜索。\n\
+        3. 如果 search_skillhub 返回了相关技能，调用 install_skill 安装它。\n\
+        4. 只有在步骤 0-3 完成（且未找到技能）后，才能使用 bash 或其他工具执行具体操作。\n\
+        5. 绝对不能跳过技能检查直接使用 bash/curl 等工具。\n\
+        6. 在完成技能流程之前，绝对不能声称无法完成任务。\n\n\
+        输出规则：\n\
+        - 研究类任务：收集完资料后必须输出完整内容，不能只说整理完毕。\n\
+        - 长篇内容（>500字）应写入文件并告知用户文件路径。\n\
+        - 如果工具结果被持久化到磁盘（包含 <persisted-output> 标签），可以随时用 read_file 读取完整内容。\n\n\
+        其他工具：\n\
+        - 使用 todo 工具规划多步骤工作。\n\
+        - 使用 task 工具委派子任务（子代理拥有独立上下文）。\n\n\
+        可用技能：\n{}",
+        workspace_root.display(),
+        skills_desc
+    )
 }
 
-/// 对话日志记录器，实时写入文件
-///
-/// 每条日志写入后立即 flush，确保即使程序崩溃也能保留已记录的内容
-struct ConversationLogger {
-    file: Option<std::fs::File>,
-}
-
-impl ConversationLogger {
-    /// 创建新的日志记录器，在 `~/.rust-agent/logs/` 下创建以时间戳命名的日志文件
-    fn create() -> Self {
-        let log_dir = match dirs::home_dir() {
-            Some(home) => home.join(".rust-agent").join("logs"),
-            None => return Self { file: None },
-        };
-
-        if let Err(e) = std::fs::create_dir_all(&log_dir) {
-            eprintln!("创建日志目录失败: {e}");
-            return Self { file: None };
-        }
-
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default();
-        let datetime = chrono::DateTime::from_timestamp(now.as_secs() as i64, 0)
-            .map(|dt| dt.format("%Y-%m-%d_%H-%M-%S").to_string())
-            .unwrap_or_else(|| format!("{}", now.as_secs()));
-
-        let filename = log_dir.join(format!("{datetime}.log"));
-        let file = std::fs::File::create(&filename)
-            .map_err(|e| eprintln!("创建日志文件失败: {e}"))
-            .ok();
-
-        Self { file }
-    }
-
-    /// 写入一条日志，立即 flush 到磁盘
-    fn log(&mut self, entry: &str) {
-        if let Some(file) = &mut self.file {
-            let _ = writeln!(file, "{entry}\n---");
-            let _ = file.flush();
-        }
-    }
+/// 生成子代理的系统提示词
+fn build_subagent_prompt(workspace_root: &std::path::Path, skills_desc: &str) -> String {
+    format!(
+        "你是一个编程子代理，工作目录：{}。\n完成给定任务，按需使用工具，然后返回简洁的摘要。不能调用 task 工具。\n\n\
+        已安装的技能：\n{skills_desc}\n\n\
+        如果已安装的技能覆盖当前任务，直接调用 load_skill 加载；否则跳过技能流程，直接执行。",
+        workspace_root.display()
+    )
 }

@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 
 use crate::AgentResult;
-use crate::workspace::resolve_workspace_path;
+use crate::infra::workspace::resolve_workspace_path;
+use crate::infra::utils::truncate_text;
 
 /// 需要跳过的大目录列表
 const SKIP_DIRS: &[&str] = &[
@@ -201,7 +202,7 @@ impl super::AgentToolbox {
             String::new()
         };
 
-        Ok(truncate(&format!("{output}{suffix}")))
+        Ok(truncate_text(&format!("{output}{suffix}"), 50_000))
     }
 }
 
@@ -236,9 +237,4 @@ fn should_skip_path(path: &Path, skip_dir_names: &[&str]) -> bool {
             .to_str()
             .is_some_and(|name| skip_dir_names.contains(&name))
     })
-}
-
-/// 将文本截断到 50000 字符
-fn truncate(text: &str) -> String {
-    text.chars().take(50_000).collect()
 }

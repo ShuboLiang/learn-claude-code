@@ -1,3 +1,9 @@
+//! 技能加载与管理模块
+//!
+//! 从磁盘目录扫描并加载 SKILL.md 技能文件，支持多目录合并和热更新。
+
+pub mod hub;
+
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -48,22 +54,6 @@ pub struct SkillLoader {
 
 impl SkillLoader {
     /// 从指定目录递归扫描并加载所有 SKILL.md 技能文件
-    ///
-    /// # 参数
-    /// - `skills_dir`: 技能文件的根目录路径（通常是工作区下的 `skills/` 目录）
-    ///
-    /// # 返回值
-    /// 加载完成的 `SkillLoader` 实例
-    ///
-    /// # 使用场景
-    /// 在 `AgentApp::from_env()` 初始化时调用，从项目的 `skills/` 目录加载所有技能
-    ///
-    /// # 运作原理
-    /// 1. 如果目录不存在，直接返回空的加载器
-    /// 2. 递归遍历目录，找出所有名为 `SKILL.md` 的文件
-    /// 3. 读取并解析每个文件（提取 YAML frontmatter 和正文）
-    /// 4. 用文件夹名作为 fallback 名称（如果 frontmatter 没指定 name）
-    /// 5. 存入 BTreeMap（按技能名排序）
     pub fn load_from_dir(skills_dir: &Path) -> AgentResult<Self> {
         let mut skills = BTreeMap::new();
         if !skills_dir.exists() {
@@ -101,12 +91,6 @@ impl SkillLoader {
     }
 
     /// 生成所有技能的描述文本，用于注入到系统提示词中
-    ///
-    /// # 返回值
-    /// 每行一个技能，格式为 `  - 技能名: 描述 [标签]`；如果没有技能则返回提示文本
-    ///
-    /// # 使用场景
-    /// 在 `AgentApp::system_prompt()` 中调用，将可用技能列表展示给 Claude
     pub fn descriptions_for_system_prompt(&self) -> String {
         if self.skills.is_empty() {
             return "（没有可用的技能）".to_owned();
@@ -132,16 +116,11 @@ impl SkillLoader {
     }
 
     /// 合并另一个 SkillLoader 的技能到当前实例中
-    ///
-    /// 同名技能会被另一个加载器中的技能覆盖（即后加载的优先）
-    ///
-    /// # 使用场景
-    /// 当需要从多个目录（用户目录 + 项目目录）加载技能时，分别加载后合并
     pub fn merge(&mut self, other: SkillLoader) {
         self.skills.extend(other.skills);
     }
 
-    /// 从多个目录依次加载技能并合并，同名技能后被加载的覆盖先加载的
+    /// 从多个目录依次加载技能并合并
     pub fn load_from_dirs(dirs: &[&Path]) -> AgentResult<Self> {
         let mut loader = Self::default();
         for dir in dirs {
@@ -152,29 +131,11 @@ impl SkillLoader {
     }
 
     /// 重新从原始目录加载所有技能文件
-    ///
-    /// # 参数
-    /// - `dirs`: 要扫描的目录列表
-    ///
-    /// # 返回值
-    /// 新加载的 `SkillLoader` 实例
-    ///
-    /// # 使用场景
-    /// 在 `install_skill` 安装完成后调用，生成包含新技能的加载器
     pub fn reload_from_dirs(dirs: &[&Path]) -> AgentResult<Self> {
         Self::load_from_dirs(dirs)
     }
 
     /// 按名称加载指定技能的完整内容，用 XML 标签包裹后返回
-    ///
-    /// # 参数
-    /// - `name`: 技能名称
-    ///
-    /// # 返回值
-    /// 用 `<skill name="...">` 标签包裹的技能正文；如果找不到则返回错误提示
-    ///
-    /// # 使用场景
-    /// 在 `dispatch` 处理 `load_skill` 工具时调用，将技能知识注入到对话中
     pub fn load_skill_content(&self, name: &str) -> String {
         match self.skills.get(name) {
             Some(skill) => format!("<skill name=\"{name}\">\n{}\n</skill>", skill.body),
@@ -192,21 +153,6 @@ impl SkillLoader {
 }
 
 /// 解析 SKILL.md 文件的原始内容，分离 YAML frontmatter 和正文
-///
-/// # 参数
-/// - `raw`: 文件的原始文本内容
-///
-/// # 返回值
-/// 解析后的 `ParsedSkillFile`（元数据 + 正文）
-///
-/// # 使用场景
-/// 在 `SkillLoader::load_from_dir` 中读取每个 SKILL.md 文件后调用
-///
-/// # 运作原理
-/// 支持三种格式：
-/// 1. 以 `---\n` 开头且包含 `\n---\n` 分隔符：标准 frontmatter 格式，解析 YAML 获取元数据
-/// 2. 以 `---\n` 开头但没有闭合分隔符：视为无 frontmatter，全部作为正文
-/// 3. 不以 `---\n` 开头：全部作为正文，元数据为空
 pub fn parse_skill_file(raw: &str) -> AgentResult<ParsedSkillFile> {
     if !raw.starts_with("---\n") {
         return Ok(ParsedSkillFile {

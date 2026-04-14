@@ -1,6 +1,6 @@
 use std::path::{Component, Path, PathBuf};
 
-use anyhow::{Context, bail};
+use anyhow::Context;
 
 use crate::AgentResult;
 

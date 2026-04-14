@@ -3,7 +3,7 @@ use std::sync::Arc;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use rust_agent_core::agent::AgentApp;
-use rust_agent_core::anthropic::ApiMessage;
+use rust_agent_core::api::types::ApiMessage;
 
 /// 会话数据，持有独立的 Agent 实例和消息历史
 #[derive(Clone)]

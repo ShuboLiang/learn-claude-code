@@ -1,7 +1,8 @@
 use anyhow::Context;
 
 use crate::AgentResult;
-use crate::workspace::resolve_workspace_path;
+use crate::infra::workspace::resolve_workspace_path;
+use crate::infra::utils::truncate_text;
 
 impl super::AgentToolbox {
     /// 读取指定文件的内容
@@ -20,7 +21,7 @@ impl super::AgentToolbox {
                 lines.push(format!("... ({remaining} more lines)"));
             }
         }
-        Ok(truncate(&lines.join("\n")))
+        Ok(truncate_text(&lines.join("\n"), 50_000))
     }
 
     /// 将内容写入指定文件
@@ -50,9 +51,4 @@ impl super::AgentToolbox {
             .with_context(|| format!("Failed to write {}", resolved.display()))?;
         Ok(format!("已编辑 {path}"))
     }
-}
-
-/// 将文本截断到 50000 字符
-fn truncate(text: &str) -> String {
-    text.chars().take(50_000).collect()
 }
