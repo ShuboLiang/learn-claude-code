@@ -125,6 +125,11 @@ impl AgentApp {
         &self.quotas
     }
 
+    /// 列出所有已安装技能的摘要信息
+    pub fn list_skills(&self) -> Vec<crate::skills::SkillSummary> {
+        self.skills.read().unwrap().list_skills()
+    }
+
     /// 处理用户的一次对话输入，返回 Agent 的最终回复文本
     pub async fn handle_user_turn(
         &self,

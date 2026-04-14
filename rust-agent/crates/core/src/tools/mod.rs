@@ -91,6 +91,28 @@ impl AgentToolbox {
                 let mut manager = self.todo.lock().await;
                 manager.update(items)?
             }
+            "list_skills" => {
+                let skills = self.skills.read().unwrap().list_skills();
+                if skills.is_empty() {
+                    "（没有已安装的技能）".to_owned()
+                } else {
+                    let mut lines = vec![format!("已安装的技能（{} 个）：", skills.len())];
+                    for s in &skills {
+                        let desc = if s.description.is_empty() {
+                            String::new()
+                        } else {
+                            format!(": {}", s.description)
+                        };
+                        let tags = if s.tags.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" [{}]", s.tags)
+                        };
+                        lines.push(format!("  - {}{desc}{tags}", s.name));
+                    }
+                    lines.join("\n")
+                }
+            }
             "load_skill" => {
                 let skill_name = required_string(input, "name")?;
                 let content = self.skills.read().unwrap().load_skill_content(skill_name);

@@ -34,6 +34,19 @@ pub struct ParsedSkillFile {
     pub body: String,
 }
 
+/// 技能摘要信息，用于列表展示
+#[derive(Clone, Debug)]
+pub struct SkillSummary {
+    /// 技能名称
+    pub name: String,
+    /// 技能描述
+    pub description: String,
+    /// 技能标签
+    pub tags: String,
+    /// 技能文件路径
+    pub path: PathBuf,
+}
+
 /// 完整的技能定义，包含元数据、正文和文件路径
 #[derive(Clone, Debug)]
 pub struct SkillDefinition {
@@ -144,6 +157,19 @@ impl SkillLoader {
                 self.skills.keys().cloned().collect::<Vec<_>>().join(", ")
             ),
         }
+    }
+
+    /// 列出所有已安装技能的摘要信息
+    pub fn list_skills(&self) -> Vec<SkillSummary> {
+        self.skills
+            .iter()
+            .map(|(name, skill)| SkillSummary {
+                name: name.clone(),
+                description: skill.metadata.description.clone().unwrap_or_default(),
+                tags: skill.metadata.tags.clone().unwrap_or_default(),
+                path: skill.path.clone(),
+            })
+            .collect()
     }
 
     /// 按名称获取技能的目录路径（即 SKILL.md 所在的父目录）

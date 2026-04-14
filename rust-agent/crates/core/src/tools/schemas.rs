@@ -150,6 +150,14 @@ pub fn tool_schemas(allow_task: bool) -> Vec<Value> {
             }
         }),
         json!({
+            "name": "list_skills",
+            "description": "列出所有已安装技能的摘要信息（名称、描述、标签）。无需参数。",
+            "input_schema": {
+                "type": "object",
+                "properties": {}
+            }
+        }),
+        json!({
             "name": "compact",
             "description": "触发手动对话压缩。当上下文过长时使用，将对话历史压缩为摘要。",
             "input_schema": {

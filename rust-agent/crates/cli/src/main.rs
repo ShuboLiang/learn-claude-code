@@ -33,6 +33,33 @@ async fn main() -> anyhow::Result<()> {
         if query.is_empty() || matches!(query, "q" | "quit" | "exit") {
             break;
         }
+
+        // 拦截 /skills 命令，直接在 CLI 层展示，不走 LLM
+        if query == "/skills" {
+            rl.add_history_entry(query)?;
+            let skills = app.list_skills();
+            if skills.is_empty() {
+                println!("（没有已安装的技能）");
+            } else {
+                println!("已安装的技能（{} 个）：", skills.len());
+                for s in &skills {
+                    let desc = if s.description.is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {}", s.description)
+                    };
+                    let tags = if s.tags.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" [{}]", s.tags)
+                    };
+                    println!("  - {}{desc}{tags}", s.name);
+                }
+            }
+            println!();
+            continue;
+        }
+
         rl.add_history_entry(query)?;
 
         let (event_tx, mut event_rx) = mpsc::channel(64);
