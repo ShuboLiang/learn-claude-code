@@ -32,7 +32,7 @@ impl super::AgentToolbox {
         };
 
         process.current_dir(&self.workspace_root);
-        let output = timeout(Duration::from_secs(120), process.output()).await;
+        let output = timeout(Duration::from_secs(20), process.output()).await;
         let output = match output {
             Ok(result) => result.context("Failed to execute shell command")?,
             Err(_) => return Ok("错误：命令执行超时（120秒）".to_owned()),

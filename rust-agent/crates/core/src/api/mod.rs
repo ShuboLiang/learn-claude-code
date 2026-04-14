@@ -1,14 +1,12 @@
 //! LLM Provider 抽象层
 //!
 //! 定义统一的 LLM 接口，支持 Anthropic 和 OpenAI 两种后端。
-//! 优先从 `~/.rust-agent/config.json` 的 profile 加载配置，
-//! 未配置时回退到环境变量。
+//! 从 `~/.rust-agent/config.json` 的 profile 加载配置。
 
 pub mod anthropic;
 pub mod openai;
 pub mod types;
 
-use anyhow::Context;
 use crate::AgentResult;
 pub use types::{ApiMessage, ProviderRequest, ProviderResponse, ResponseContentBlock};
 
@@ -73,77 +71,44 @@ pub struct ProviderInfo {
 /// 1. `~/.rust-agent/config.json` 中的 profile（通过 `LLM_PROFILE` 环境变量选择）
 /// 2. 环境变量（`LLM_PROVIDER` + `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` 等）
 pub fn create_provider() -> AgentResult<ProviderInfo> {
-    // 优先尝试从配置文件加载
-    if let Some(config) = crate::infra::config::AppConfig::load()? {
-        let profile = config.current_profile()?;
+    let config = crate::infra::config::AppConfig::load()?;
+    let profile = config.current_profile()?;
 
-        // 从 profile 配置中构建配额规则
-        let quotas: Vec<crate::infra::usage::QuotaRule> = profile
-            .quotas
-            .iter()
-            .map(|q| crate::infra::usage::QuotaRule::from_config(&q.window, q.max_calls))
-            .collect();
+    // 从 profile 配置中构建配额规则
+    let quotas: Vec<crate::infra::usage::QuotaRule> = profile
+        .quotas
+        .iter()
+        .map(|q| crate::infra::usage::QuotaRule::from_config(&q.window, q.max_calls))
+        .collect();
 
-        if quotas.is_empty() {
-            println!("[配置] 使用 profile: {} ({} / {}) - 无配额限制", profile.name, profile.provider, profile.model);
-        } else {
-            let quota_descs: Vec<String> = quotas.iter().map(|q| q.description()).collect();
-            println!("[配置] 使用 profile: {} ({} / {}) - 配额: {}", profile.name, profile.provider, profile.model, quota_descs.join(", "));
-        }
-
-        let provider = match profile.provider.to_lowercase().as_str() {
-            "openai" => {
-                let client = openai::OpenAIClient::new(
-                    &profile.api_key,
-                    &profile.base_url,
-                )?;
-                LlmProvider::OpenAI(client)
-            }
-            _ => {
-                let client = anthropic::AnthropicClient::new(
-                    &profile.api_key,
-                    &profile.base_url,
-                )?;
-                LlmProvider::Anthropic(client)
-            }
-        };
-
-        return Ok(ProviderInfo {
-            provider,
-            model: profile.model.clone(),
-            max_tokens: profile.max_tokens,
-            quotas,
-        });
+    if quotas.is_empty() {
+        println!("[配置] 使用 profile: {} ({} / {}) - 无配额限制", profile.name, profile.provider, profile.model);
+    } else {
+        let quota_descs: Vec<String> = quotas.iter().map(|q| q.description()).collect();
+        println!("[配置] 使用 profile: {} ({} / {}) - 配额: {}", profile.name, profile.provider, profile.model, quota_descs.join(", "));
     }
 
-    // 回退到环境变量（无配额）
-    create_provider_from_env()
-}
-
-/// 从环境变量创建 LLM Provider（回退方案）
-fn create_provider_from_env() -> AgentResult<ProviderInfo> {
-    let provider_type = std::env::var("LLM_PROVIDER").unwrap_or_else(|_| "anthropic".to_owned());
-    let model = std::env::var("MODEL_ID").context("Missing MODEL_ID in environment or .env")?;
-    let max_tokens: u32 = std::env::var("MAX_TOKENS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(16384);
-
-    let provider = match provider_type.to_lowercase().as_str() {
+    let provider = match profile.provider.to_lowercase().as_str() {
         "openai" => {
-            let client = openai::OpenAIClient::from_env()?;
+            let client = openai::OpenAIClient::new(
+                &profile.api_key,
+                &profile.base_url,
+            )?;
             LlmProvider::OpenAI(client)
         }
         _ => {
-            let client = anthropic::AnthropicClient::from_env()?;
+            let client = anthropic::AnthropicClient::new(
+                &profile.api_key,
+                &profile.base_url,
+            )?;
             LlmProvider::Anthropic(client)
         }
     };
 
     Ok(ProviderInfo {
         provider,
-        model,
-        max_tokens,
-        quotas: vec![],
+        model: profile.model.clone(),
+        max_tokens: config.effective_max_tokens(profile),
+        quotas,
     })
 }
