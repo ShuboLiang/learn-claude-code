@@ -3,7 +3,17 @@
     "allow": [
       "Bash(wc:*)",
       "mcp__context7__resolve-library-id",
-      "mcp__context7__query-docs"
+      "mcp__context7__query-docs",
+      "Bash(grep -rn \"stream did not contain valid UTF-8\" ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/hyper-*/src/ ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/h2-*/src/)",
+      "Bash(cp src/agent.rs crates/core/src/agent.rs)",
+      "Bash(cp src/anthropic.rs crates/core/src/anthropic.rs)",
+      "Bash(cp src/tools.rs crates/core/src/tools.rs)",
+      "Bash(cp src/skills.rs crates/core/src/skills.rs)",
+      "Bash(cp src/skillhub.rs crates/core/src/skillhub.rs)",
+      "Bash(cargo build:*)",
+      "Bash(find /c/Users/cutes/Desktop/learn-claude-code/rust-agent -type f \\\\\\( -name \"*.py\" -o -name \"*.sh\" -o -name \"*.js\" -o -name \"*.ts\" \\\\\\) -exec head -1 {} \\\\;)",
+      "Bash(cargo check:*)",
+      "Bash(cargo test:*)"
     ]
   }
 }

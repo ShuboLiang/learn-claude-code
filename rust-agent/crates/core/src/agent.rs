@@ -15,8 +15,8 @@ use crate::infra::compact;
 use crate::infra::logging::ConversationLogger;
 use crate::infra::storage;
 use crate::infra::utils::preview_text;
-use crate::skills::hub as skillhub;
 use crate::skills::SkillLoader;
+use crate::skills::hub as skillhub;
 use crate::tools::AgentToolbox;
 
 /// Agent 执行过程中产生的事件，通过 channel 发送给消费者（CLI 终端或 HTTP SSE）
@@ -25,7 +25,10 @@ pub enum AgentEvent {
     /// AI 回复的文本片段
     TextDelta(String),
     /// 即将调用工具
-    ToolCall { name: String, input: serde_json::Value },
+    ToolCall {
+        name: String,
+        input: serde_json::Value,
+    },
     /// 工具执行结果
     ToolResult { name: String, output: String },
     /// 本轮对话结束
@@ -35,7 +38,7 @@ pub enum AgentEvent {
 }
 
 /// 每次调用 API 时请求的最大 token 数量
-const MAX_TOKENS: u32 = 8_000;
+const MAX_TOKENS: u32 = 1280000;
 
 /// Agent 工具调用轮数的安全上限，防止无限循环
 const MAX_TOOL_ROUNDS: usize = 30;
@@ -126,7 +129,10 @@ impl AgentApp {
         history.push(ApiMessage::user_text(user_input));
         logger.log(&format!("=== 用户 ===\n{user_input}"));
 
-        let system_prompt = build_system_prompt(&self.workspace_root, &self.skills.read().unwrap().descriptions_for_system_prompt());
+        let system_prompt = build_system_prompt(
+            &self.workspace_root,
+            &self.skills.read().unwrap().descriptions_for_system_prompt(),
+        );
         logger.log(&format!("=== 系统提示词 ===\n{system_prompt}"));
 
         let result = self
@@ -230,24 +236,49 @@ impl AgentApp {
                                 .get("description")
                                 .and_then(Value::as_str)
                                 .unwrap_or("subtask");
-                            let _ = event_tx.send(AgentEvent::ToolCall { name: "task".to_owned(), input: input.clone() }).await;
+                            let _ = event_tx
+                                .send(AgentEvent::ToolCall {
+                                    name: "task".to_owned(),
+                                    input: input.clone(),
+                                })
+                                .await;
                             self.run_subagent(prompt, logger, event_tx).await?
                         }
                     } else if name == "compact" {
                         manual_compact = true;
-                        let _ = event_tx.send(AgentEvent::ToolCall { name: "compact".to_owned(), input: input.clone() }).await;
+                        let _ = event_tx
+                            .send(AgentEvent::ToolCall {
+                                name: "compact".to_owned(),
+                                input: input.clone(),
+                            })
+                            .await;
                         "正在压缩...".to_owned()
                     } else {
                         match toolbox.dispatch(name, input).await {
                             Ok(dispatch) => {
                                 used_todo |= dispatch.used_todo;
-                                let _ = event_tx.send(AgentEvent::ToolCall { name: name.clone(), input: input.clone() }).await;
-                                let _ = event_tx.send(AgentEvent::ToolResult { name: name.clone(), output: preview_text(&dispatch.output, 200) }).await;
+                                let _ = event_tx
+                                    .send(AgentEvent::ToolCall {
+                                        name: name.clone(),
+                                        input: input.clone(),
+                                    })
+                                    .await;
+                                let _ = event_tx
+                                    .send(AgentEvent::ToolResult {
+                                        name: name.clone(),
+                                        output: preview_text(&dispatch.output, 200),
+                                    })
+                                    .await;
                                 dispatch.output
                             }
                             Err(e) => {
                                 let msg = format!("Error: {e}");
-                                let _ = event_tx.send(AgentEvent::ToolResult { name: name.clone(), output: msg.clone() }).await;
+                                let _ = event_tx
+                                    .send(AgentEvent::ToolResult {
+                                        name: name.clone(),
+                                        output: msg.clone(),
+                                    })
+                                    .await;
                                 msg
                             }
                         }
@@ -292,8 +323,16 @@ impl AgentApp {
     }
 
     /// 启动一个子代理来执行独立的子任务
-    async fn run_subagent(&self, prompt: String, logger: &mut ConversationLogger, event_tx: &mpsc::Sender<AgentEvent>) -> AgentResult<String> {
-        let system_prompt = build_subagent_prompt(&self.workspace_root, &self.skills.read().unwrap().descriptions_for_system_prompt());
+    async fn run_subagent(
+        &self,
+        prompt: String,
+        logger: &mut ConversationLogger,
+        event_tx: &mpsc::Sender<AgentEvent>,
+    ) -> AgentResult<String> {
+        let system_prompt = build_subagent_prompt(
+            &self.workspace_root,
+            &self.skills.read().unwrap().descriptions_for_system_prompt(),
+        );
         logger.log(&format!("=== 子代理系统提示词 ===\n{system_prompt}"));
         let mut messages = vec![ApiMessage::user_text(prompt)];
         self.run_agent_loop(
