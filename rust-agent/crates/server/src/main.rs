@@ -4,6 +4,7 @@ use tower_http::cors::CorsLayer;
 mod routes;
 mod session;
 mod sse;
+mod openai_compat;
 
 use session::SessionStore;
 

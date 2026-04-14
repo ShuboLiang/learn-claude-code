@@ -12,7 +12,7 @@ pub use tokio::sync::mpsc;
 
 // ── 公共 API 统一导出 ──
 pub use agent::{AgentApp, AgentEvent};
-pub use api::AnthropicClient;
-pub use api::types::{ApiMessage, MessagesRequest, MessagesResponse, ResponseContentBlock};
+pub use api::{LlmProvider, ProviderInfo};
+pub use api::types::{ApiMessage, ProviderRequest, ProviderResponse, ResponseContentBlock};
 pub use skills::SkillLoader;
 pub use infra::todo::TodoManager;

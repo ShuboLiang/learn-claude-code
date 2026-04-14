@@ -1,6 +1,6 @@
-//! Claude API 数据类型定义
+//! LLM API 数据类型定义
 //!
-//! 定义与 Claude Messages API 交互所需的所有请求/响应类型。
+//! 定义与 LLM Provider 交互所需的统一请求/响应类型，以及内部消息表示。
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -50,9 +50,9 @@ impl ApiMessage {
     }
 }
 
-/// 发送给 Claude Messages API 的请求体
+/// 发送给 Claude Messages API 的请求体（仅 Anthropic provider 内部使用）
 #[derive(Clone, Debug, Serialize)]
-pub struct MessagesRequest<'a> {
+pub(crate) struct MessagesRequest<'a> {
     /// 模型 ID（如 "claude-sonnet-4-20250514"）
     pub model: &'a str,
     /// 系统提示词
@@ -65,9 +65,9 @@ pub struct MessagesRequest<'a> {
     pub max_tokens: u32,
 }
 
-/// Claude Messages API 的响应体
+/// Claude Messages API 的响应体（仅 Anthropic provider 内部使用）
 #[derive(Clone, Debug, Deserialize)]
-pub struct MessagesResponse {
+pub(crate) struct MessagesResponse {
     /// Claude 回复的内容块列表（包含文本和/或工具调用）
     pub content: Vec<ResponseContentBlock>,
     /// 停止原因："tool_use"（需要调用工具）、"end_turn"（正常结束）等
@@ -94,12 +94,31 @@ pub enum ResponseContentBlock {
     },
 }
 
-impl MessagesResponse {
-    /// 获取停止原因，如果没有则返回空字符串
-    pub fn stop_reason(&self) -> &str {
-        self.stop_reason.as_deref().unwrap_or("")
-    }
+/// 发送给 LLM Provider 的统一请求
+#[derive(Clone, Debug)]
+pub struct ProviderRequest<'a> {
+    /// 模型 ID（如 "claude-sonnet-4-20250514" 或 "gpt-4o"）
+    pub model: &'a str,
+    /// 系统提示词
+    pub system: &'a str,
+    /// 对话历史消息（内部统一格式）
+    pub messages: &'a [ApiMessage],
+    /// 可用工具定义列表（JSON）
+    pub tools: &'a [Value],
+    /// 最大生成 token 数
+    pub max_tokens: u32,
+}
 
+/// LLM Provider 返回的统一响应
+#[derive(Clone, Debug)]
+pub struct ProviderResponse {
+    /// 回复的内容块列表（文本和/或工具调用）
+    pub content: Vec<ResponseContentBlock>,
+    /// 停止原因："end_turn"（正常结束）或 "tool_calls"（需要调用工具）
+    pub stop_reason: String,
+}
+
+impl ProviderResponse {
     /// 提取回复中的所有文本内容，忽略工具调用块
     pub fn final_text(&self) -> String {
         self.content

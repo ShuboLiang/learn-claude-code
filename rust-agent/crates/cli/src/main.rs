@@ -15,6 +15,10 @@ use rust_agent_core::mpsc;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let app = AgentApp::from_env().await?;
+
+    // 启动时显示用量状态
+    rust_agent_core::infra::usage::UsageTracker::display_with_quotas(app.quotas());
+
     let mut history = Vec::new();
     let mut rl = DefaultEditor::new()?;
 
@@ -103,6 +107,9 @@ async fn main() -> anyhow::Result<()> {
                 println!();
             }
         }
+
+        // 每轮对话结束后刷新用量显示
+        rust_agent_core::infra::usage::UsageTracker::display_with_quotas(app.quotas());
     }
 
     Ok(())

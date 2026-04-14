@@ -12,8 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::Context;
 use serde_json::Value;
 
-use crate::api::AnthropicClient;
-use crate::api::types::{ApiMessage, MessagesRequest};
+use crate::api::types::{ApiMessage, ProviderRequest};
 use crate::AgentResult;
 
 /// auto_compact 触发的 token 估算阈值
@@ -150,8 +149,9 @@ pub fn micro_compact(messages: &mut [ApiMessage]) {
 /// 将完整对话保存到磁盘（.transcripts/ 目录），然后调用 LLM 生成摘要，
 /// 用一条包含摘要的消息替换所有历史消息。
 pub async fn auto_compact(
-    client: &AnthropicClient,
+    client: &crate::api::LlmProvider,
     model: &str,
+    quotas: &[crate::infra::usage::QuotaRule],
     workspace_root: &Path,
     messages: &[ApiMessage],
 ) -> AgentResult<Vec<ApiMessage>> {
@@ -192,7 +192,7 @@ pub async fn auto_compact(
          请简洁但保留关键细节。\n\n{truncated}"
     ))];
 
-    let request = MessagesRequest {
+    let request = ProviderRequest {
         model,
         system: "你是一个对话摘要助手。请简洁地总结对话内容。",
         messages: &summary_messages,
@@ -200,7 +200,7 @@ pub async fn auto_compact(
         max_tokens: 2000,
     };
 
-    let response = client.create_message(&request).await?;
+    let response = client.create_message(&request, quotas).await?;
     let summary = response.final_text();
 
     Ok(vec![ApiMessage::user_text(format!(

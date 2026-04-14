@@ -10,7 +10,7 @@ use rust_agent_core::api::types::ApiMessage;
 pub struct Session {
     pub id: String,
     pub messages: Vec<ApiMessage>,
-    pub agent: AgentApp,
+    pub agent: Arc<AgentApp>,
     pub created_at: DateTime<Utc>,
     pub last_active: DateTime<Utc>,
 }
@@ -30,7 +30,7 @@ impl SessionStore {
     }
 
     /// 创建新会话，返回包含唯一 ID 的 Session
-    pub fn create(&self, agent: AgentApp) -> Session {
+    pub fn create(&self, agent: Arc<AgentApp>) -> Session {
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now();
         let session = Session {

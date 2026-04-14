@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::{
     extract::{Path, State},
     http::StatusCode,
@@ -13,6 +15,7 @@ use rust_agent_core::mpsc;
 
 use crate::session::SessionStore;
 use crate::sse::agent_event_to_sse;
+use crate::openai_compat;
 
 #[derive(Deserialize)]
 pub struct SendMessageRequest {
@@ -25,6 +28,7 @@ pub fn routes(store: SessionStore) -> Router {
         .route("/sessions", post(create_session))
         .route("/sessions/{id}", get(get_session).delete(delete_session))
         .route("/sessions/{id}/messages", post(send_message))
+        .route("/v1/chat/completions", post(openai_compat::chat_completions))
         .with_state(store)
 }
 
@@ -42,7 +46,7 @@ async fn create_session(
             ).into_response()
         }
     };
-    let session = store.create(agent);
+    let session = store.create(Arc::new(agent));
     Json(serde_json::json!({
         "id": session.id,
         "created_at": session.created_at.to_rfc3339(),

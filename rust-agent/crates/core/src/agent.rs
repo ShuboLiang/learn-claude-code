@@ -9,8 +9,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::AgentResult;
-use crate::api::AnthropicClient;
-use crate::api::types::{ApiMessage, MessagesRequest, ResponseContentBlock};
+use crate::api::types::{ApiMessage, ProviderRequest, ResponseContentBlock};
 use crate::infra::compact;
 use crate::infra::logging::ConversationLogger;
 use crate::infra::storage;
@@ -37,25 +36,26 @@ pub enum AgentEvent {
     Done,
 }
 
-/// 每次调用 API 时请求的最大 token 数量
-const MAX_TOKENS: u32 = 1280000;
-
 /// Agent 工具调用轮数的安全上限，防止无限循环
 const MAX_TOOL_ROUNDS: usize = 30;
 
 /// Agent 应用的主结构体，持有运行所需的全部核心资源
 #[derive(Clone, Debug)]
 pub struct AgentApp {
-    /// Anthropic API 客户端，负责与 Claude API 通信
-    client: AnthropicClient,
+    /// LLM Provider，负责与 LLM API 通信（支持 Anthropic/OpenAI 等）
+    client: crate::api::LlmProvider,
     /// 工作区根目录的绝对路径，所有文件操作以此为基准
     workspace_root: PathBuf,
     /// 技能加载器，用 RwLock 包装以支持安装后热更新
     skills: Arc<RwLock<SkillLoader>>,
     /// 技能加载目录列表（用户目录 + 工作区目录），用于安装后重新加载
     skill_dirs: Vec<PathBuf>,
-    /// 使用的模型 ID（如 "claude-sonnet-4-20250514"）
+    /// 使用的模型 ID（如 "claude-sonnet-4-20250514" 或 "gpt-4o"）
     model: String,
+    /// 每次调用 API 时请求的最大 token 数量
+    max_tokens: u32,
+    /// 当前 profile 的配额规则
+    quotas: Vec<crate::infra::usage::QuotaRule>,
 }
 
 /// Agent 运行配置，控制本次运行允许哪些能力
@@ -86,13 +86,14 @@ impl AgentRunConfig {
 }
 
 impl AgentApp {
-    /// 从环境变量和 .env 文件中初始化 Agent 应用
+    /// 从配置文件和环境变量初始化 Agent 应用
     pub async fn from_env() -> AgentResult<Self> {
         let _ = dotenv();
         let workspace_root =
             std::env::current_dir().context("Failed to determine current directory")?;
-        let client = AnthropicClient::from_env()?;
-        let model = std::env::var("MODEL_ID").context("Missing MODEL_ID in environment or .env")?;
+        let info = crate::api::create_provider()?;
+        let model = info.model;
+        let max_tokens = info.max_tokens;
 
         // 检查并安装 SkillHub CLI
         let skillhub_available = skillhub::ensure_cli_installed().await;
@@ -109,12 +110,19 @@ impl AgentApp {
         )?;
 
         Ok(Self {
-            client,
+            client: info.provider,
             workspace_root,
             skills: Arc::new(RwLock::new(skills)),
             skill_dirs,
             model,
+            max_tokens,
+            quotas: info.quotas,
         })
+    }
+
+    /// 获取当前 profile 的配额规则
+    pub fn quotas(&self) -> &[crate::infra::usage::QuotaRule] {
+        &self.quotas
     }
 
     /// 处理用户的一次对话输入，返回 Agent 的最终回复文本
@@ -185,6 +193,7 @@ impl AgentApp {
                 *messages = compact::auto_compact(
                     &self.client,
                     &self.model,
+                    &self.quotas,
                     &self.workspace_root,
                     &*messages,
                 )
@@ -192,24 +201,24 @@ impl AgentApp {
             }
 
             let tools = toolbox.tool_schemas(config.allow_task);
-            let request = MessagesRequest {
+            let request = ProviderRequest {
                 model: &self.model,
                 system: &system_prompt,
                 messages,
                 tools: &tools,
-                max_tokens: MAX_TOKENS,
+                max_tokens: self.max_tokens,
             };
-            let response = match self.client.create_message(&request).await {
+            let response = match self.client.create_message(&request, &self.quotas).await {
                 Ok(resp) => resp,
                 Err(e) => {
                     eprintln!("[Agent] create_message 失败！错误: {e:#}");
                     return Err(e);
                 }
             };
-            let stop_reason = response.stop_reason().to_owned();
+            let stop_reason = response.stop_reason.clone();
             messages.push(ApiMessage::assistant_blocks(&response.content)?);
 
-            if stop_reason != "tool_use" {
+            if stop_reason != "tool_calls" {
                 let _ = event_tx.send(AgentEvent::TurnEnd).await;
                 return Ok(response.final_text());
             }
@@ -309,6 +318,7 @@ impl AgentApp {
                 *messages = compact::auto_compact(
                     &self.client,
                     &self.model,
+                    &self.quotas,
                     &self.workspace_root,
                     &*messages,
                 )
