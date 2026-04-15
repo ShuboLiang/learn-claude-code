@@ -22,9 +22,9 @@ pub fn agent_event_to_sse(event: AgentEvent) -> Event {
             }
             Event::default().event("tool_result").data(data.to_string())
         }
-        AgentEvent::TurnEnd => Event::default()
+        AgentEvent::TurnEnd { api_calls } => Event::default()
             .event("turn_end")
-            .data("{}"),
+            .data(json!({ "api_calls": api_calls }).to_string()),
         AgentEvent::Done => Event::default()
             .event("done")
             .data("{}"),

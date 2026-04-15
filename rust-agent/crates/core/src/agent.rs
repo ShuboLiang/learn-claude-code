@@ -33,7 +33,7 @@ pub enum AgentEvent {
         output: String,
         parallel_index: Option<(usize, usize)>,
     },
-    TurnEnd,
+    TurnEnd { api_calls: usize },
     Done,
 }
 
@@ -173,6 +173,8 @@ impl AgentApp {
         let mut breaker = ToolCircuitBreaker::new();
         let micro_compact_interval = Duration::from_secs(60 * 60);
 
+        let mut api_call_count: usize = 0;
+
         for _ in 0..MAX_TOOL_ROUNDS {
             if last_micro_compact.elapsed() >= micro_compact_interval {
                 println!("[micro_compact 已触发]");
@@ -202,6 +204,7 @@ impl AgentApp {
                     return Err(e);
                 }
             };
+            api_call_count += 1;
             let stop_reason = response.stop_reason.clone();
             ctx.push(ApiMessage::assistant_blocks(&response.content)?);
 
@@ -211,7 +214,7 @@ impl AgentApp {
                 if !text.is_empty() {
                     let _ = event_tx.send(AgentEvent::TextDelta(text)).await;
                 }
-                let _ = event_tx.send(AgentEvent::TurnEnd).await;
+                let _ = event_tx.send(AgentEvent::TurnEnd { api_calls: api_call_count }).await;
                 return Ok(response.final_text());
             }
 
@@ -352,16 +355,16 @@ impl AgentApp {
                     Ok(new_messages) => ctx.replace(new_messages),
                     Err(e) => {
                         eprintln!("[手动压缩失败: {e:#}]");
-                        let _ = event_tx.send(AgentEvent::TurnEnd).await;
+                        let _ = event_tx.send(AgentEvent::TurnEnd { api_calls: api_call_count }).await;
                         return Err(e);
                     }
                 }
-                let _ = event_tx.send(AgentEvent::TurnEnd).await;
+                let _ = event_tx.send(AgentEvent::TurnEnd { api_calls: api_call_count }).await;
                 return Ok("对话已手动压缩。".to_owned());
             }
         }
 
-        let _ = event_tx.send(AgentEvent::TurnEnd).await;
+        let _ = event_tx.send(AgentEvent::TurnEnd { api_calls: api_call_count }).await;
         Ok("已达到工具调用轮数安全上限，自动停止。".to_owned())
     }
 

@@ -54,7 +54,18 @@ export default function App({ serverUrl }: { serverUrl: string }) {
           case 'tool_result':
             setMessages(prev => [...prev, { role: 'tool_result', content: event.data.output }]);
             break;
-          case 'turn_end':
+          case 'turn_end': {
+            const reply = currentReplyRef.current;
+            if (reply) {
+              setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
+              setCurrentReply('');
+            }
+            const apiCalls = event.data?.api_calls;
+            if (apiCalls) {
+              setMessages(prev => [...prev, { role: 'system', content: `── 完成，API 调用 ${apiCalls} 次 ──` }]);
+            }
+            break;
+          }
           case 'done': {
             const reply = currentReplyRef.current;
             if (reply) {

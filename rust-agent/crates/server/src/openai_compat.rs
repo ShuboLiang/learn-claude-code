@@ -212,7 +212,7 @@ pub async fn chat_completions(
                     }
                 }));
             }
-            rust_agent_core::agent::AgentEvent::TurnEnd => {
+            rust_agent_core::agent::AgentEvent::TurnEnd { api_calls: _ } => {
                 if !tool_calls_collected.is_empty() {
                     stop_reason = "tool_calls".to_owned();
                 }
