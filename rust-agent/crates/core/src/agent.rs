@@ -205,6 +205,11 @@ impl AgentApp {
             ctx.push(ApiMessage::assistant_blocks(&response.content)?);
 
             if stop_reason != "tool_calls" {
+                let text = response.final_text();
+                // 将文本响应通过 SSE 通道发送给客户端
+                if !text.is_empty() {
+                    let _ = event_tx.send(AgentEvent::TextDelta(text)).await;
+                }
                 let _ = event_tx.send(AgentEvent::TurnEnd).await;
                 return Ok(response.final_text());
             }

@@ -25,11 +25,18 @@ pub struct SendMessageRequest {
 /// 构建所有 API 路由
 pub fn routes(store: SessionStore) -> Router {
     Router::new()
+        .route("/", get(health_check))
         .route("/sessions", post(create_session))
         .route("/sessions/{id}", get(get_session).delete(delete_session))
         .route("/sessions/{id}/messages", post(send_message))
+        .route("/sessions/{id}/clear", post(clear_session))
         .route("/v1/chat/completions", post(openai_compat::chat_completions))
         .with_state(store)
+}
+
+/// GET / — 健康检查
+async fn health_check() -> Json<serde_json::Value> {
+    Json(serde_json::json!({ "status": "ok" }))
 }
 
 /// POST /sessions — 创建新会话
@@ -81,6 +88,23 @@ async fn delete_session(
 ) -> impl IntoResponse {
     if store.remove(&id) {
         StatusCode::NO_CONTENT.into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": { "code": "session_not_found", "message": "会话不存在" }
+            })),
+        ).into_response()
+    }
+}
+
+/// POST /sessions/:id/clear — 清空会话的对话上下文
+async fn clear_session(
+    State(store): State<SessionStore>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    if store.clear_context(&id) {
+        Json(serde_json::json!({ "status": "cleared" })).into_response()
     } else {
         (
             StatusCode::NOT_FOUND,

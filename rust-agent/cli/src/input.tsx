@@ -5,10 +5,11 @@ import TextInput from 'ink-text-input';
 interface InputProps {
   onSubmit: (text: string) => void;
   onQuit: (text: string) => void;
+  onClear: () => void;
   isLoading: boolean;
 }
 
-export default function Input({ onSubmit, onQuit, isLoading }: InputProps) {
+export default function Input({ onSubmit, onQuit, onClear, isLoading }: InputProps) {
   const [value, setValue] = useState('');
 
   const handleSubmit = (text: string) => {
@@ -16,6 +17,11 @@ export default function Input({ onSubmit, onQuit, isLoading }: InputProps) {
     const lower = text.trim().toLowerCase();
     if (lower === 'q' || lower === 'quit' || lower === 'exit') {
       onQuit(text);
+      return;
+    }
+    if (lower === '/clear') {
+      onClear();
+      setValue('');
       return;
     }
     setValue('');

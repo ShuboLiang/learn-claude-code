@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Box, Text, useApp } from 'ink';
-import { sendMessage, init, createSession } from './api';
+import { sendMessage, init, createSession, clearSession } from './api';
 import Chat from './chat';
 import Input from './input';
 
@@ -19,8 +19,12 @@ export default function App({ serverUrl }: { serverUrl: string }) {
   useEffect(() => {
     (async () => {
       init(serverUrl, '');
-      const id = await createSession();
-      setSessionId(id);
+      try {
+        const id = await createSession();
+        setSessionId(id);
+      } catch (err) {
+        setError(`会话创建失败: ${err}`);
+      }
     })();
   }, [serverUrl]);
 
@@ -48,6 +52,7 @@ export default function App({ serverUrl }: { serverUrl: string }) {
           case 'tool_result':
             setMessages(prev => [...prev, { role: 'tool_result', content: event.data.output }]);
             break;
+          case 'turn_end':
           case 'done': {
             const reply = currentReplyRef.current;
             if (reply) {
@@ -70,10 +75,16 @@ export default function App({ serverUrl }: { serverUrl: string }) {
     if (lower === 'q' || lower === 'quit' || lower === 'exit') exit();
   }, [exit]);
 
+  const handleClear = useCallback(() => {
+    setMessages(prev => [...prev, { role: 'system', content: '═══ 以上对话已被清除 ═══' }]);
+    setCurrentReply('');
+    clearSession().catch(() => {});
+  }, []);
+
   return (
     <Box flexDirection="column" height="100%">
       <Chat messages={messages} currentReply={currentReply} isLoading={isLoading} />
-      <Input onSubmit={handleSubmit} onQuit={handleQuit} isLoading={isLoading} />
+      <Input onSubmit={handleSubmit} onQuit={handleQuit} onClear={handleClear} isLoading={isLoading} />
       {error && <Box><Text color="red">Error: {error}</Text></Box>}
     </Box>
   );

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect } from 'react';
+import React from 'react';
 import { Box, Text, Static } from 'ink';
 
 interface Message {
@@ -12,35 +12,84 @@ interface ChatProps {
   isLoading: boolean;
 }
 
+// 解析 tool_call JSON，提取工具名和简短描述
+function formatToolCall(content: string): { name: string; desc: string } {
+  try {
+    const data = JSON.parse(content);
+    const name = data.name || 'unknown';
+    const input = data.input || {};
+    // 提取简短描述
+    const desc = input.command || input.path || input.query || input.content
+      ? String(input.command || input.path || input.query || input.content || '').slice(0, 60)
+      : JSON.stringify(input).slice(0, 60);
+    return { name, desc };
+  } catch {
+    return { name: 'tool', desc: content.slice(0, 60) };
+  }
+}
+
+// 渲染单条消息
+function renderMessage(msg: Message, index: number) {
+  switch (msg.role) {
+    case 'user':
+      return (
+        <Box key={`msg-${index}`}>
+          <Text color="cyan" bold>你: {msg.content}</Text>
+        </Box>
+      );
+    case 'assistant':
+      return (
+        <Box key={`msg-${index}`}>
+          <Text wrap="wrap">{msg.content}</Text>
+        </Box>
+      );
+    case 'tool_call': {
+      const { name, desc } = formatToolCall(msg.content);
+      return (
+        <Box key={`msg-${index}`} flexDirection="column">
+          <Text color="yellow">┌─ 🔧 {name}</Text>
+          <Text color="yellow" dimColor>│  {desc}</Text>
+        </Box>
+      );
+    }
+    case 'tool_result':
+      return (
+        <Box key={`msg-${index}`}>
+          <Text dimColor>└─ {msg.content.slice(0, 120)}</Text>
+        </Box>
+      );
+    case 'system':
+      return (
+        <Box key={`msg-${index}`}>
+          <Text dimColor>{msg.content}</Text>
+        </Box>
+      );
+    default:
+      return <Box key={`msg-${index}`} />;
+  }
+}
+
 export default function Chat({ messages, currentReply, isLoading }: ChatProps) {
-  const scrollRef = useRef(0);
-  useEffect(() => {
-    scrollRef.current = messages.length + (currentReply ? 1 : 0) + (isLoading ? 1 : 0);
-  }, [messages.length, currentReply, isLoading]);
-
-  // 构建完整消息列表（包含当前正在生成的回复）
-  const allMessages = [...messages];
-  if (currentReply) allMessages.push({ role: 'assistant', content: currentReply });
-  if (isLoading && !currentReply) allMessages.push({ role: 'assistant', content: '...' });
-
   return (
     <Box flexDirection="column" flexGrow={1}>
-      <Static items={allMessages}>
-        {(msg, index) => {
-          switch (msg.role) {
-            case 'user':
-              return <Box key={index}><Text color="cyan" bold>你: {msg.content}</Text></Box>;
-            case 'assistant':
-              return <Box key={index}><Text wrap="wrap">{msg.content}</Text></Box>;
-            case 'tool_call':
-              return <Box key={index}><Text color="yellow">┌─ {msg.content}</Text></Box>;
-            case 'tool_result':
-              return <Box key={index}><Text dimColor>│  {msg.content}</Text></Box>;
-            default:
-              return null;
-          }
-        }}
+      {/* 已完成的消息用 Static 永久渲染 */}
+      <Static items={messages}>
+        {(msg, index) => renderMessage(msg, index)}
       </Static>
+
+      {/* 当前正在生成的回复（实时内容，不在 Static 中） */}
+      {currentReply && (
+        <Box>
+          <Text wrap="wrap">{currentReply}</Text>
+        </Box>
+      )}
+
+      {/* 加载指示器（实时内容，不在 Static 中） */}
+      {isLoading && !currentReply && (
+        <Box>
+          <Text dimColor>思考中...</Text>
+        </Box>
+      )}
     </Box>
   );
 }

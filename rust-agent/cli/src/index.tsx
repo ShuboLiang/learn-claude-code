@@ -31,7 +31,7 @@ async function startServer(): Promise<{ port: number; process: import('child_pro
   // 等待 server 就绪（最多 10 秒）
   for (let i = 0; i < 100; i++) {
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/sessions`, { method: 'GET' });
+      const res = await fetch(`http://127.0.0.1:${port}/`, { method: 'GET' });
       if (res.ok) {
         console.error(`[server] 运行在端口 ${port}`);
         return { port, process: child };

@@ -52,4 +52,15 @@ impl SessionStore {
     pub fn remove(&self, id: &str) -> bool {
         self.sessions.remove(id).is_some()
     }
+
+    /// 清空会话的对话上下文
+    pub fn clear_context(&self, id: &str) -> bool {
+        if let Some(mut session) = self.sessions.get_mut(id) {
+            session.context = ContextService::new();
+            session.last_active = Utc::now();
+            true
+        } else {
+            false
+        }
+    }
 }
