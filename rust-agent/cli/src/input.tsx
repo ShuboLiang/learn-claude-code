@@ -23,7 +23,7 @@ export default function Input({ onSubmit, onQuit, isLoading }: InputProps) {
   };
 
   return (
-    <Box borderStyle="gray" paddingLeft={1}>
+    <Box borderStyle="single" paddingLeft={1}>
       <TextInput
         value={value}
         onChange={setValue}

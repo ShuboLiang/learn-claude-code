@@ -24,21 +24,23 @@ export default function Chat({ messages, currentReply, isLoading }: ChatProps) {
   if (isLoading && !currentReply) allMessages.push({ role: 'assistant', content: '...' });
 
   return (
-    <Box flexDirection="column" flexGrow={1} overflowY="hidden">
-      <Static items={allMessages.map((msg, i) => {
-        switch (msg.role) {
-          case 'user':
-            return <Box key={i}><Text color="cyan" bold>你: {msg.content}</Text></Box>;
-          case 'assistant':
-            return <Box key={i}><Text wrap="wrap">{msg.content}</Text></Box>;
-          case 'tool_call':
-            return <Box key={i}><Text color="yellow">┌─ {msg.content}</Text></Box>;
-          case 'tool_result':
-            return <Box key={i}><Text dimColor="gray">│  {msg.content}</Text></Box>;
-          default:
-            return null;
-        }
-      })} />
+    <Box flexDirection="column" flexGrow={1}>
+      <Static items={allMessages}>
+        {(msg, index) => {
+          switch (msg.role) {
+            case 'user':
+              return <Box key={index}><Text color="cyan" bold>你: {msg.content}</Text></Box>;
+            case 'assistant':
+              return <Box key={index}><Text wrap="wrap">{msg.content}</Text></Box>;
+            case 'tool_call':
+              return <Box key={index}><Text color="yellow">┌─ {msg.content}</Text></Box>;
+            case 'tool_result':
+              return <Box key={index}><Text dimColor>│  {msg.content}</Text></Box>;
+            default:
+              return null;
+          }
+        }}
+      </Static>
     </Box>
   );
 }

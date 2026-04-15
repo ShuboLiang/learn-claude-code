@@ -48,17 +48,19 @@ async function startServer(): Promise<{ port: number; process: import('child_pro
 async function main() {
   const { port, process: serverProcess } = await startServer();
 
-  const { exit } = render(<App serverUrl={`http://127.0.0.1:${port}`} />);
+  const instance = render(<App serverUrl={`http://127.0.0.1:${port}`} />);
 
   // 退出时清理子进程
   const cleanup = () => {
     serverProcess.kill();
+    instance.unmount();
     process.exit(0);
   };
   process.on('SIGINT', cleanup);
   process.on('SIGTERM', cleanup);
 
-  await new Promise(r => setTimeout(r, 100));
+  // 等待 Ink 退出
+  await instance.waitUntilExit();
 }
 
 main().catch(err => {
