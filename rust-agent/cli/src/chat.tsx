@@ -78,9 +78,11 @@ export default function Chat({ messages, currentReply, isLoading }: ChatProps) {
         {(msg, index) => renderMessage(msg, index)}
       </Static>
 
-      {/* 当前正在生成的回复（实时内容，不在 Static 中） */}
+      {/* 当前正在生成的回复（纯文本实时显示，避免 ANSI 码导致 Ink 高度计算偏差） */}
       {currentReply && (
-        <Markdown content={currentReply} />
+        <Box>
+          <Text wrap="wrap">{currentReply}</Text>
+        </Box>
       )}
 
       {/* 加载指示器（实时内容，不在 Static 中） */}

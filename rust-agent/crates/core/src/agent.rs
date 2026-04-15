@@ -55,14 +55,16 @@ pub struct AgentApp {
 struct AgentRunConfig {
     allow_task: bool,
     use_todo_reminder: bool,
+    /// 是否向客户端发送 SSE 事件（子 agent 静默执行，不输出到 CLI）
+    emit_events: bool,
 }
 
 impl AgentRunConfig {
     fn parent() -> Self {
-        Self { allow_task: true, use_todo_reminder: true }
+        Self { allow_task: true, use_todo_reminder: true, emit_events: true }
     }
     fn child() -> Self {
-        Self { allow_task: false, use_todo_reminder: true }
+        Self { allow_task: false, use_todo_reminder: true, emit_events: false }
     }
 }
 
@@ -210,11 +212,13 @@ impl AgentApp {
 
             if stop_reason != "tool_calls" {
                 let text = response.final_text();
-                // 将文本响应通过 SSE 通道发送给客户端
-                if !text.is_empty() {
-                    let _ = event_tx.send(AgentEvent::TextDelta(text)).await;
+                // 将文本响应通过 SSE 通道发送给客户端（子 agent 静默）
+                if config.emit_events {
+                    if !text.is_empty() {
+                        let _ = event_tx.send(AgentEvent::TextDelta(text)).await;
+                    }
+                    let _ = event_tx.send(AgentEvent::TurnEnd { api_calls: api_call_count }).await;
                 }
-                let _ = event_tx.send(AgentEvent::TurnEnd { api_calls: api_call_count }).await;
                 return Ok(response.final_text());
             }
 
@@ -256,27 +260,37 @@ impl AgentApp {
 
                 let output = if tc.name == "compact" {
                     manual_compact = true;
-                    let _ = event_tx.send(AgentEvent::ToolCall { name: tc.name.clone(), input: tc.input.clone(), parallel_index: None }).await;
+                    if config.emit_events {
+                        let _ = event_tx.send(AgentEvent::ToolCall { name: tc.name.clone(), input: tc.input.clone(), parallel_index: None }).await;
+                    }
                     "正在压缩...".to_owned()
                 } else if breaker.is_open(&tc.name) {
                     // 工具已熔断，直接返回提示信息，不执行
                     let count = breaker.failure_count(&tc.name);
                     let msg = ToolCircuitBreaker::blocked_message(&tc.name, count);
-                    let _ = event_tx.send(AgentEvent::ToolResult { name: tc.name.clone(), output: msg.clone(), parallel_index: None }).await;
+                    if config.emit_events {
+                        let _ = event_tx.send(AgentEvent::ToolResult { name: tc.name.clone(), output: msg.clone(), parallel_index: None }).await;
+                    }
                     msg
                 } else {
-                    let _ = event_tx.send(AgentEvent::ToolCall { name: tc.name.clone(), input: tc.input.clone(), parallel_index: None }).await;
+                    if config.emit_events {
+                        let _ = event_tx.send(AgentEvent::ToolCall { name: tc.name.clone(), input: tc.input.clone(), parallel_index: None }).await;
+                    }
                     match toolbox.dispatch(&tc.name, &tc.input).await {
                         Ok(dispatch) => {
                             breaker.record_success(&tc.name);
                             used_todo |= dispatch.used_todo;
-                            let _ = event_tx.send(AgentEvent::ToolResult { name: tc.name.clone(), output: preview_text(&dispatch.output, 200), parallel_index: None }).await;
+                            if config.emit_events {
+                                let _ = event_tx.send(AgentEvent::ToolResult { name: tc.name.clone(), output: preview_text(&dispatch.output, 200), parallel_index: None }).await;
+                            }
                             dispatch.output
                         }
                         Err(e) => {
                             breaker.record_failure(&tc.name);
                             let msg = format!("Error: {e}");
-                            let _ = event_tx.send(AgentEvent::ToolResult { name: tc.name.clone(), output: msg.clone(), parallel_index: None }).await;
+                            if config.emit_events {
+                                let _ = event_tx.send(AgentEvent::ToolResult { name: tc.name.clone(), output: msg.clone(), parallel_index: None }).await;
+                            }
                             msg
                         }
                     }
