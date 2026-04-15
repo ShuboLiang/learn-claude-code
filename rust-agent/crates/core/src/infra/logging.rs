@@ -30,7 +30,9 @@ impl ConversationLogger {
             .map(|dt| dt.format("%Y-%m-%d_%H-%M-%S").to_string())
             .unwrap_or_else(|| format!("{}", now.as_secs()));
 
-        let filename = log_dir.join(format!("{datetime}.log"));
+        // 添加纳秒后缀避免并行 subagent 日志文件名冲突
+        let unique_suffix = now.as_nanos() % 1_000_000;
+        let filename = log_dir.join(format!("{datetime}_{unique_suffix:06}.log"));
         let file = std::fs::File::create(&filename)
             .map_err(|e| eprintln!("创建日志文件失败: {e}"))
             .ok();
