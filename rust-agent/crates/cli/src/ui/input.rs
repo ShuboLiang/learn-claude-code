@@ -1,6 +1,5 @@
 use ratatui::{
     style::{Color, Style},
-    text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
     Frame,
 };
@@ -43,6 +42,7 @@ impl InputBox {
     }
 
     /// 是否为空
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.lines.iter().all(|l| l.is_empty())
     }
