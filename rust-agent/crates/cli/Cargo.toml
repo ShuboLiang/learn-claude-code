@@ -10,7 +10,8 @@ path = "src/main.rs"
 [dependencies]
 rust-agent-core = { path = "../core" }
 anyhow = "1.0"
-tokio = { version = "1.48", features = ["macros", "rt-multi-thread"] }
-termimad = "0.34"
+tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "sync"] }
+ratatui = "0.30"
+crossterm = "0.29"
+futures = "0.3"
 dotenvy = "0.15"
-rustyline = { version = "15", features = ["custom-bindings"] }
