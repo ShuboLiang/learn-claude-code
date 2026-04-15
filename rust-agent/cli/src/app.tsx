@@ -7,6 +7,7 @@ import Input from './input';
 export default function App({ serverUrl }: { serverUrl: string }) {
   const { exit } = useApp();
   const [sessionId, setSessionId] = useState('');
+  const [model, setModel] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [messages, setMessages] = useState<Array<{ role: string; content: string }>>([]);
@@ -20,8 +21,9 @@ export default function App({ serverUrl }: { serverUrl: string }) {
     (async () => {
       init(serverUrl, '');
       try {
-        const id = await createSession();
+        const { id, model } = await createSession();
         setSessionId(id);
+        setModel(model);
       } catch (err) {
         setError(`会话创建失败: ${err}`);
       }
@@ -84,7 +86,7 @@ export default function App({ serverUrl }: { serverUrl: string }) {
   return (
     <Box flexDirection="column" height="100%">
       <Chat messages={messages} currentReply={currentReply} isLoading={isLoading} />
-      <Input onSubmit={handleSubmit} onQuit={handleQuit} onClear={handleClear} isLoading={isLoading} />
+      <Input onSubmit={handleSubmit} onQuit={handleQuit} onClear={handleClear} isLoading={isLoading} model={model} />
       {error && <Box><Text color="red">Error: {error}</Text></Box>}
     </Box>
   );

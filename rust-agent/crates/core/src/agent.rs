@@ -136,6 +136,7 @@ impl AgentApp {
         let system_prompt = build_system_prompt(
             &self.workspace_root,
             &self.skills.read().unwrap().descriptions_for_system_prompt(),
+            &self.model,
         );
         logger.log(&format!("=== 系统提示词 ===\n{system_prompt}"));
 
@@ -385,14 +386,14 @@ fn tool_result_block(tool_use_id: &str, content: String) -> Value {
     json!({ "type": "tool_result", "tool_use_id": tool_use_id, "content": content })
 }
 
-fn build_system_prompt(workspace_root: &std::path::Path, skills_desc: &str) -> String {
+fn build_system_prompt(workspace_root: &std::path::Path, skills_desc: &str, model: &str) -> String {
     let platform = if cfg!(windows) {
         "Windows (PowerShell)。使用 PowerShell 语法：用 Get-ChildItem 代替 ls，Get-Content 代替 cat，-Command 代替 -lc，; 代替 &&"
     } else {
         "Unix (bash)"
     };
     format!(
-        "你是一个编程助手，工作目录：{}。\n平台：{platform}\n优先使用工具解决问题，避免冗长解释。\n\n\
+        "你是 {model}，一个编程助手，工作目录：{}。\n平台：{platform}\n优先使用工具解决问题，避免冗长解释。\n\n\
         任务执行流程 — 每个任务必须按以下顺序执行：\n\
         0. 先了解项目：读取目录结构和关键文件，理解项目上下文。\n\
         1. 检查已安装的技能是否覆盖当前任务。如果有，调用 load_skill。\n\

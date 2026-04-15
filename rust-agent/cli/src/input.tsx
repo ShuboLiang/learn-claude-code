@@ -7,9 +7,10 @@ interface InputProps {
   onQuit: (text: string) => void;
   onClear: () => void;
   isLoading: boolean;
+  model?: string;
 }
 
-export default function Input({ onSubmit, onQuit, onClear, isLoading }: InputProps) {
+export default function Input({ onSubmit, onQuit, onClear, isLoading, model }: InputProps) {
   const [value, setValue] = useState('');
 
   const handleSubmit = (text: string) => {
@@ -28,13 +29,19 @@ export default function Input({ onSubmit, onQuit, onClear, isLoading }: InputPro
     onSubmit(text);
   };
 
+  const placeholder = isLoading
+    ? '(等待响应中...)'
+    : model
+      ? `[${model}] 输入消息，Enter 提交...`
+      : '输入消息，Enter 提交...';
+
   return (
     <Box borderStyle="single" paddingLeft={1}>
       <TextInput
         value={value}
         onChange={setValue}
         onSubmit={handleSubmit}
-        placeholder={isLoading ? '(等待响应中...)' : '输入消息，Enter 提交...'}
+        placeholder={placeholder}
       />
     </Box>
   );

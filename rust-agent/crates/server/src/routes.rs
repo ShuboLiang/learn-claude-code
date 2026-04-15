@@ -53,9 +53,11 @@ async fn create_session(
             ).into_response()
         }
     };
+    let model = agent.model().to_owned();
     let session = store.create(Arc::new(agent));
     Json(serde_json::json!({
         "id": session.id,
+        "model": model,
         "created_at": session.created_at.to_rfc3339(),
     })).into_response()
 }

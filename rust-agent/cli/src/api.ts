@@ -14,7 +14,7 @@ export function init(baseUrl: string, sessionId: string) {
   config = { baseUrl, sessionId };
 }
 
-export async function createSession(): Promise<string> {
+export async function createSession(): Promise<{ id: string; model: string }> {
   const res = await fetch(`${getConfig().baseUrl}/sessions`, {
     method: "POST",
   });
@@ -28,7 +28,7 @@ export async function createSession(): Promise<string> {
   if (!data.id) throw new Error("创建会话失败: 服务器未返回会话 ID");
   // 更新 config 中的 sessionId，供后续 sendMessage 使用
   config!.sessionId = data.id;
-  return data.id;
+  return { id: data.id, model: data.model || "unknown" };
 }
 
 // SSE 事件类型
