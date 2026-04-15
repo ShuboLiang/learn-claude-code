@@ -158,6 +158,9 @@ impl AgentApp {
         );
         logger.log(&format!("=== 系统提示词 ===\n{system_prompt}"));
 
+        // 内部用 Arc 包装 event_tx，使 run_agent_loop 可跨 spawned task 共享
+        let event_tx = Arc::new(event_tx);
+
         let result = self
             .run_agent_loop(
                 history,
@@ -184,7 +187,7 @@ impl AgentApp {
         system_prompt: String,
         config: AgentRunConfig,
         logger: &mut ConversationLogger,
-        event_tx: &mpsc::Sender<AgentEvent>,
+        event_tx: &Arc<mpsc::Sender<AgentEvent>>,
     ) -> AgentResult<String> {
         let mut toolbox = AgentToolbox::new(
             self.workspace_root.clone(),
@@ -242,83 +245,188 @@ impl AgentApp {
             let mut used_todo = false;
             let mut manual_compact = false;
 
-            for block in &response.content {
-                if let ResponseContentBlock::ToolUse { id, name, input } = block {
-                    let input_preview = preview_text(&input.to_string(), 200);
-                    logger.log(&format!("=== 工具调用: {name} ===\n输入: {input_preview}"));
+            // 第一遍：收集所有 tool_calls
+            struct ToolCallInfo {
+                id: String,
+                name: String,
+                input: Value,
+            }
 
-                    let output = if name == "task" {
-                        if !config.allow_task {
-                            "错误：task 工具在子代理中不可用".to_owned()
-                        } else {
-                            let prompt = input
-                                .get("prompt")
-                                .and_then(Value::as_str)
-                                .unwrap_or_default()
-                                .to_owned();
-                            let _description = input
-                                .get("description")
-                                .and_then(Value::as_str)
-                                .unwrap_or("subtask");
+            let tool_calls: Vec<ToolCallInfo> = response
+                .content
+                .iter()
+                .filter_map(|block| {
+                    if let ResponseContentBlock::ToolUse { id, name, input } = block {
+                        Some(ToolCallInfo {
+                            id: id.clone(),
+                            name: name.clone(),
+                            input: input.clone(),
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            // 分离 task 和非 task 调用，保持原始顺序
+            let mut task_calls: Vec<ToolCallInfo> = Vec::new();
+            let mut other_calls: Vec<ToolCallInfo> = Vec::new();
+            for tc in tool_calls {
+                if tc.name == "task" {
+                    task_calls.push(tc);
+                } else {
+                    other_calls.push(tc);
+                }
+            }
+
+            // === 串行执行非 task 工具 ===
+            for tc in &other_calls {
+                let input_preview = preview_text(&tc.input.to_string(), 200);
+                logger.log(&format!("=== 工具调用: {} ===\n输入: {input_preview}", tc.name));
+
+                let output = if tc.name == "compact" {
+                    manual_compact = true;
+                    let _ = event_tx
+                        .send(AgentEvent::ToolCall {
+                            name: tc.name.clone(),
+                            input: tc.input.clone(),
+                            parallel_index: None,
+                        })
+                        .await;
+                    "正在压缩...".to_owned()
+                } else {
+                    match toolbox.dispatch(&tc.name, &tc.input).await {
+                        Ok(dispatch) => {
+                            used_todo |= dispatch.used_todo;
                             let _ = event_tx
                                 .send(AgentEvent::ToolCall {
-                                    name: "task".to_owned(),
-                                    input: input.clone(),
+                                    name: tc.name.clone(),
+                                    input: tc.input.clone(),
                                     parallel_index: None,
                                 })
                                 .await;
-                            self.run_subagent(prompt, logger, event_tx).await?
+                            let _ = event_tx
+                                .send(AgentEvent::ToolResult {
+                                    name: tc.name.clone(),
+                                    output: preview_text(&dispatch.output, 200),
+                                    parallel_index: None,
+                                })
+                                .await;
+                            dispatch.output
                         }
-                    } else if name == "compact" {
-                        manual_compact = true;
+                        Err(e) => {
+                            let msg = format!("Error: {e}");
+                            let _ = event_tx
+                                .send(AgentEvent::ToolResult {
+                                    name: tc.name.clone(),
+                                    output: msg.clone(),
+                                    parallel_index: None,
+                                })
+                                .await;
+                            msg
+                        }
+                    }
+                };
+
+                logger.log(&format!("=== 工具结果: {} ===\n{output}", tc.name));
+                let processed_output = storage::maybe_persist(&tc.id, &output);
+                results.push(tool_result_block(&tc.id, processed_output));
+            }
+
+            // === 并行执行 task 工具（subagent） ===
+            if !task_calls.is_empty() {
+                if !config.allow_task {
+                    // 子代理不允许使用 task
+                    for tc in &task_calls {
+                        results.push(tool_result_block(
+                            &tc.id,
+                            "错误：task 工具在子代理中不可用".to_owned(),
+                        ));
+                    }
+                } else {
+                    let total = task_calls.len().min(MAX_PARALLEL_TASKS);
+                    let actual_calls: Vec<_> = task_calls.into_iter().take(total).collect();
+                    let is_parallel = actual_calls.len() > 1;
+
+                    // 发送 ToolCall 事件
+                    for (idx, tc) in actual_calls.iter().enumerate() {
+                        let input_preview = preview_text(&tc.input.to_string(), 200);
+                        logger.log(&format!(
+                            "=== 工具调用: task (并行 {}/{}) ===\n输入: {input_preview}",
+                            idx + 1,
+                            actual_calls.len()
+                        ));
                         let _ = event_tx
                             .send(AgentEvent::ToolCall {
-                                name: "compact".to_owned(),
-                                input: input.clone(),
-                                parallel_index: None,
+                                name: "task".to_owned(),
+                                input: tc.input.clone(),
+                                parallel_index: if is_parallel {
+                                    Some((idx + 1, actual_calls.len()))
+                                } else {
+                                    None
+                                },
                             })
                             .await;
-                        "正在压缩...".to_owned()
-                    } else {
-                        match toolbox.dispatch(name, input).await {
-                            Ok(dispatch) => {
-                                used_todo |= dispatch.used_todo;
-                                let _ = event_tx
-                                    .send(AgentEvent::ToolCall {
-                                        name: name.clone(),
-                                        input: input.clone(),
-                                        parallel_index: None,
-                                    })
-                                    .await;
-                                let _ = event_tx
-                                    .send(AgentEvent::ToolResult {
-                                        name: name.clone(),
-                                        output: preview_text(&dispatch.output, 200),
-                                        parallel_index: None,
-                                    })
-                                    .await;
-                                dispatch.output
+                    }
+
+                    // 为每个 subagent 创建独立的 logger 并行运行
+                    let mut handles = Vec::new();
+                    for tc in &actual_calls {
+                        let prompt = tc
+                            .input
+                            .get("prompt")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned();
+                        let app = self.clone();
+                        let event_tx = Arc::clone(event_tx);
+                        handles.push(tokio::spawn(async move {
+                            let mut sub_logger = ConversationLogger::create();
+                            let result = app.run_subagent(prompt, &mut sub_logger, &event_tx).await;
+                            (result, sub_logger)
+                        }));
+                    }
+
+                    // 收集结果（按 spawn 顺序，tokio 保证 JoinHandle await 顺序）
+                    let mut sub_results: Vec<(String, ConversationLogger)> = Vec::new();
+                    for handle in handles {
+                        match handle.await {
+                            Ok((Ok(output), sub_logger)) => {
+                                sub_results.push((output, sub_logger));
+                            }
+                            Ok((Err(e), sub_logger)) => {
+                                let msg = format!("子代理执行失败: {e}");
+                                sub_results.push((msg, sub_logger));
                             }
                             Err(e) => {
-                                let msg = format!("Error: {e}");
-                                let _ = event_tx
-                                    .send(AgentEvent::ToolResult {
-                                        name: name.clone(),
-                                        output: msg.clone(),
-                                        parallel_index: None,
-                                    })
-                                    .await;
-                                msg
+                                let msg = format!("子代理任务异常: {e}");
+                                sub_results.push((msg, ConversationLogger::create()));
                             }
                         }
-                    };
+                    }
 
-                    logger.log(&format!("=== 工具结果: {name} ===\n{output}"));
-
-                    // 大结果持久化到磁盘，消息中只保留预览
-                    let processed_output = storage::maybe_persist(id, &output);
-
-                    results.push(tool_result_block(id, processed_output));
+                    // 发送 ToolResult 事件并构建 tool_result 块
+                    for (idx, (output, _sub_logger)) in sub_results.iter().enumerate() {
+                        let _ = event_tx
+                            .send(AgentEvent::ToolResult {
+                                name: "task".to_owned(),
+                                output: preview_text(output, 200),
+                                parallel_index: if is_parallel {
+                                    Some((idx + 1, actual_calls.len()))
+                                } else {
+                                    None
+                                },
+                            })
+                            .await;
+                        logger.log(&format!(
+                            "=== 工具结果: task (并行 {}/{}) ===\n{output}",
+                            idx + 1,
+                            actual_calls.len()
+                        ));
+                        let tc_id = &actual_calls[idx].id;
+                        let processed = storage::maybe_persist(tc_id, output);
+                        results.push(tool_result_block(tc_id, processed));
+                    }
                 }
             }
 
@@ -357,7 +465,7 @@ impl AgentApp {
         &self,
         prompt: String,
         logger: &mut ConversationLogger,
-        event_tx: &mpsc::Sender<AgentEvent>,
+        event_tx: &Arc<mpsc::Sender<AgentEvent>>,
     ) -> AgentResult<String> {
         let system_prompt = build_subagent_prompt(
             &self.workspace_root,
