@@ -201,7 +201,7 @@ pub async fn chat_completions(
             rust_agent_core::agent::AgentEvent::TextDelta(text) => {
                 final_text.push_str(&text);
             }
-            rust_agent_core::agent::AgentEvent::ToolCall { name, input } => {
+            rust_agent_core::agent::AgentEvent::ToolCall { name, input, parallel_index: _ } => {
                 tool_calls_collected.push(json!({
                     "id": format!("call_{}", short_id()),
                     "type": "function",

@@ -27,9 +27,16 @@ pub enum AgentEvent {
     ToolCall {
         name: String,
         input: serde_json::Value,
+        /// 并行执行时的序号标识，如 Some((1, 3)) 表示"并行第 1 个，共 3 个"
+        parallel_index: Option<(usize, usize)>,
     },
     /// 工具执行结果
-    ToolResult { name: String, output: String },
+    ToolResult {
+        name: String,
+        output: String,
+        /// 并行执行时的序号标识
+        parallel_index: Option<(usize, usize)>,
+    },
     /// 本轮对话结束
     TurnEnd,
     /// Agent 完成全部任务
@@ -38,6 +45,9 @@ pub enum AgentEvent {
 
 /// Agent 工具调用轮数的安全上限，防止无限循环
 const MAX_TOOL_ROUNDS: usize = 30;
+
+/// 单轮中允许并行执行的 subagent 最大数量，防止 API 过载
+const MAX_PARALLEL_TASKS: usize = 5;
 
 /// Agent 应用的主结构体，持有运行所需的全部核心资源
 #[derive(Clone, Debug)]
@@ -254,6 +264,7 @@ impl AgentApp {
                                 .send(AgentEvent::ToolCall {
                                     name: "task".to_owned(),
                                     input: input.clone(),
+                                    parallel_index: None,
                                 })
                                 .await;
                             self.run_subagent(prompt, logger, event_tx).await?
@@ -264,6 +275,7 @@ impl AgentApp {
                             .send(AgentEvent::ToolCall {
                                 name: "compact".to_owned(),
                                 input: input.clone(),
+                                parallel_index: None,
                             })
                             .await;
                         "正在压缩...".to_owned()
@@ -275,12 +287,14 @@ impl AgentApp {
                                     .send(AgentEvent::ToolCall {
                                         name: name.clone(),
                                         input: input.clone(),
+                                        parallel_index: None,
                                     })
                                     .await;
                                 let _ = event_tx
                                     .send(AgentEvent::ToolResult {
                                         name: name.clone(),
                                         output: preview_text(&dispatch.output, 200),
+                                        parallel_index: None,
                                     })
                                     .await;
                                 dispatch.output
@@ -291,6 +305,7 @@ impl AgentApp {
                                     .send(AgentEvent::ToolResult {
                                         name: name.clone(),
                                         output: msg.clone(),
+                                        parallel_index: None,
                                     })
                                     .await;
                                 msg

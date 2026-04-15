@@ -83,7 +83,7 @@ async fn main() -> anyhow::Result<()> {
                 AgentEvent::TextDelta(_) => {
                     // 流式文本暂不处理，最终结果用 termimad 渲染
                 }
-                AgentEvent::ToolCall { name, input } => {
+                AgentEvent::ToolCall { name, input, parallel_index } => {
                     // 提取关键参数显示
                     let detail = match name.as_str() {
                         "bash" => input.get("command").and_then(|v| v.as_str()).unwrap_or("").to_owned(),
@@ -103,11 +103,19 @@ async fn main() -> anyhow::Result<()> {
                         "task" => input.get("description").and_then(|v| v.as_str()).unwrap_or("").to_owned(),
                         _ => input.to_string(),
                     };
-                    println!("┌─ {name}: `{detail}`");
+                    let tag = match parallel_index {
+                        Some((idx, total)) => format!("[并行 {idx}/{total}] "),
+                        None => String::new(),
+                    };
+                    println!("┌─ {tag}{name}: `{detail}`");
                 }
-                AgentEvent::ToolResult { name: _, output } => {
+                AgentEvent::ToolResult { name: _, output, parallel_index } => {
+                    let tag = match parallel_index {
+                        Some((idx, total)) => format!("[并行 {idx}/{total}] "),
+                        None => String::new(),
+                    };
                     for line in output.lines() {
-                        println!("│  {line}");
+                        println!("│  {tag}{line}");
                     }
                     println!("└─");
                 }
