@@ -61,7 +61,7 @@ async fn get_session(
     match store.get(&id) {
         Some(session) => Json(serde_json::json!({
             "id": session.id,
-            "message_count": session.messages.len(),
+            "message_count": session.context.len(),
             "created_at": session.created_at.to_rfc3339(),
             "last_active": session.last_active.to_rfc3339(),
         })).into_response(),
@@ -113,14 +113,14 @@ async fn send_message(
 
     // 在后台启动 agent
     let agent = session.agent.clone();
-    let mut messages = session.messages.clone();
+    let mut ctx = session.context.clone();
     let content = body.content;
     let session_id = id;
     let store_clone = store.clone();
 
     tokio::spawn(async move {
-        let _ = agent.handle_user_turn(&mut messages, &content, event_tx).await;
-        store_clone.update(&session_id, messages);
+        let _ = agent.handle_user_turn(&mut ctx, &content, event_tx).await;
+        store_clone.update(&session_id, ctx);
     });
 
     // 将 AgentEvent 流转换为 SSE 流

@@ -13,6 +13,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use rust_agent_core::agent::AgentApp;
+use rust_agent_core::context::ContextService;
 use rust_agent_core::mpsc;
 
 use crate::session::SessionStore;
@@ -183,11 +184,11 @@ pub async fn chat_completions(
     }
 
     let (event_tx, mut event_rx) = mpsc::channel(64);
-    let mut messages = Vec::new();
+    let mut ctx = ContextService::new();
 
     tokio::spawn(async move {
         let _ = agent
-            .handle_user_turn(&mut messages, &user_input, event_tx)
+            .handle_user_turn(&mut ctx, &user_input, event_tx)
             .await;
     });
 

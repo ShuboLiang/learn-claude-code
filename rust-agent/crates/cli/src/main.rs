@@ -2,30 +2,22 @@ use rustyline::error::ReadlineError;
 use rustyline::{Cmd, Config, DefaultEditor, Event, KeyCode, KeyEvent, Modifiers};
 
 use rust_agent_core::agent::{AgentApp, AgentEvent};
+use rust_agent_core::command::{CommandDispatcher, UserCommand};
+use rust_agent_core::context::ContextService;
 use rust_agent_core::mpsc;
 
-/// 启动交互式 REPL 循环
-///
-/// 每轮循环：
-/// 1. 读取用户输入
-/// 2. 创建 event channel，在后台 tokio 任务中运行 agent
-/// 3. 前台渲染收到的事件（工具调用、工具结果）
-/// 4. 通过 oneshot channel 取回最终结果和更新后的 history
-/// 5. 用 termimad 渲染最终回复文本
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let app = AgentApp::from_env().await?;
 
-    // 启动时显示用量状态
     rust_agent_core::infra::usage::UsageTracker::display_with_quotas(app.quotas());
 
-    let mut history = Vec::new();
+    let mut ctx = ContextService::new();
     let config = Config::builder()
         .bracketed_paste(true)
         .build();
     let mut rl = DefaultEditor::with_config(config)?;
 
-    // Enter = 提交，Ctrl+Enter = 插入换行
     rl.bind_sequence(
         Event::from(KeyEvent(KeyCode::Enter, Modifiers::NONE)),
         Cmd::AcceptLine,
@@ -43,11 +35,14 @@ async fn main() -> anyhow::Result<()> {
         };
 
         let query = line.trim();
-        if query.is_empty() || matches!(query, "q" | "quit" | "exit") {
+        if query.is_empty() {
+            continue;
+        }
+        if matches!(query, "q" | "quit" | "exit") {
             break;
         }
 
-        // 拦截 /skills 命令，直接在 CLI 层展示，不走 LLM
+        // /skills 命令由 CLI 专有处理
         if query == "/skills" {
             rl.add_history_entry(query)?;
             let skills = app.list_skills();
@@ -56,16 +51,8 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 println!("已安装的技能（{} 个）：", skills.len());
                 for s in &skills {
-                    let desc = if s.description.is_empty() {
-                        String::new()
-                    } else {
-                        format!(": {}", s.description)
-                    };
-                    let tags = if s.tags.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" [{}]", s.tags)
-                    };
+                    let desc = if s.description.is_empty() { String::new() } else { format!(": {}", s.description) };
+                    let tags = if s.tags.is_empty() { String::new() } else { format!(" [{}]", s.tags) };
                     println!("  - {}{desc}{tags}", s.name);
                 }
             }
@@ -73,31 +60,45 @@ async fn main() -> anyhow::Result<()> {
             continue;
         }
 
+        // 通用命令分发（通过 CommandDispatcher）
+        if let Some(cmd) = CommandDispatcher::parse(query) {
+            rl.add_history_entry(query)?;
+            let result = CommandDispatcher::execute(
+                cmd,
+                &mut ctx,
+                Some(app.client()),
+                app.model(),
+                app.quotas(),
+                app.workspace_root(),
+            ).await;
+            if result.should_quit {
+                break;
+            }
+            println!("{}\n", result.output);
+            continue;
+        }
+
+        // 普通对话
         rl.add_history_entry(query)?;
 
         let (event_tx, mut event_rx) = mpsc::channel(64);
         let (result_tx, result_rx) = tokio::sync::oneshot::channel();
 
         let app_clone = app.clone();
-        let mut history_clone = history.clone();
         let input = query.to_owned();
+        let ctx_for_spawn = ctx.clone();
 
-        // Agent 在后台任务中运行，通过 event_tx 发送事件，通过 result_tx 返回结果
         tokio::spawn(async move {
-            let result = app_clone
-                .handle_user_turn(&mut history_clone, &input, event_tx)
-                .await;
-            let _ = result_tx.send((result, history_clone));
+            let mut ctx_clone = ctx_for_spawn;
+            let result = app_clone.handle_user_turn(&mut ctx_clone, &input, event_tx).await;
+            let _ = result_tx.send((result, ctx_clone));
         });
 
         // 前台渲染事件
         while let Some(event) = event_rx.recv().await {
             match event {
-                AgentEvent::TextDelta(_) => {
-                    // 流式文本暂不处理，最终结果用 termimad 渲染
-                }
+                AgentEvent::TextDelta(_) => {}
                 AgentEvent::ToolCall { name, input, parallel_index } => {
-                    // 提取关键参数显示
                     let detail = match name.as_str() {
                         "bash" => input.get("command").and_then(|v| v.as_str()).unwrap_or("").to_owned(),
                         "read_file" => input.get("path").and_then(|v| v.as_str()).unwrap_or("").to_owned(),
@@ -137,13 +138,12 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
-        // 获取最终结果和更新后的 history
         match result_rx.await {
-            Ok((Ok(text), updated_history)) => {
+            Ok((Ok(text), updated_ctx)) => {
                 if !text.trim().is_empty() {
                     termimad::print_text(&text);
                 }
-                history = updated_history;
+                ctx = updated_ctx;
                 println!();
             }
             Ok((Err(error), _)) => {
@@ -156,7 +156,6 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
-        // 每轮对话结束后刷新用量显示
         rust_agent_core::infra::usage::UsageTracker::display_with_quotas(app.quotas());
     }
 
