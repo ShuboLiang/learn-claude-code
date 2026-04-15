@@ -47,6 +47,21 @@ impl super::AgentToolbox {
         };
 
         process.current_dir(&self.workspace_root);
+
+        // 如果运行在 WSL 中，禁用 Windows 互操作（防止执行 Windows 命令如 curl.exe）
+        if !cfg!(windows) {
+            // 过滤掉 /mnt/c/... 路径，避免执行 Windows 程序
+            let filtered_path = std::env::var("PATH")
+                .map(|p| {
+                    p.split(':')
+                        .filter(|part| !part.starts_with("/mnt/c/"))
+                        .collect::<Vec<_>>()
+                        .join(":")
+                })
+                .unwrap_or_default();
+            process.env("PATH", filtered_path);
+        }
+
         let output = timeout(Duration::from_secs(120), process.output()).await;
         let output = match output {
             Ok(result) => result.context("Failed to execute shell command")?,

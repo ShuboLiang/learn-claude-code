@@ -5,9 +5,26 @@ import { spawn } from 'child_process';
 import net from 'net';
 import App from './app';
 
-const SERVER_BINARY = process.platform === 'win32'
-  ? '../target/debug/rust-agent-server.exe'
-  : '../target/debug/rust-agent-server';
+import { existsSync } from 'fs';
+import { dirname, resolve } from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+// 从 cli/src/ 解析到项目根目录的 target/
+const projectRoot = resolve(__dirname, '../..');
+
+function resolveServerBinary(): string {
+  const win = resolve(projectRoot, 'target/debug/rust-agent-server.exe');
+  const linux = resolve(projectRoot, 'target/debug/rust-agent-server');
+  // 优先按平台选择，不存在时尝试另一个（兼容 WSL 环境）
+  if (process.platform === 'win32') {
+    return existsSync(win) ? win : linux;
+  }
+  return existsSync(linux) ? linux : win;
+}
+
+const SERVER_BINARY = resolveServerBinary();
 
 // 查找空闲端口
 function findFreePort(): Promise<number> {
