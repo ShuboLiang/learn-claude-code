@@ -53,12 +53,17 @@ function renderMessage(msg: Message, index: number) {
         </Box>
       );
     }
-    case 'tool_result':
+    case 'tool_result': {
+      const maxShow = 5000;
+      const text = msg.content.length > maxShow
+        ? msg.content.slice(0, maxShow) + `\n... [还有 ${msg.content.length - maxShow} 字符未显示]`
+        : msg.content;
       return (
-        <Box key={`msg-${index}`}>
-          <Text dimColor>└─ {msg.content.slice(0, 120)}</Text>
+        <Box key={`msg-${index}`} flexDirection="column">
+          <Text dimColor>└─ {text}</Text>
         </Box>
       );
+    }
     case 'system':
       return (
         <Box key={`msg-${index}`}>

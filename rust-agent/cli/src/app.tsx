@@ -44,9 +44,10 @@ export default function App({ serverUrl }: { serverUrl: string }) {
             break;
           case 'tool_call': {
             const reply = currentReplyRef.current;
+            setCurrentReply('');
+            currentReplyRef.current = '';
             if (reply) {
               setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
-              setCurrentReply('');
             }
             setMessages(prev => [...prev, { role: 'tool_call', content: JSON.stringify(event.data) }]);
             break;
@@ -56,9 +57,10 @@ export default function App({ serverUrl }: { serverUrl: string }) {
             break;
           case 'turn_end': {
             const reply = currentReplyRef.current;
+            setCurrentReply('');
+            currentReplyRef.current = '';
             if (reply) {
               setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
-              setCurrentReply('');
             }
             const apiCalls = event.data?.api_calls;
             if (apiCalls) {
@@ -67,11 +69,8 @@ export default function App({ serverUrl }: { serverUrl: string }) {
             break;
           }
           case 'done': {
-            const reply = currentReplyRef.current;
-            if (reply) {
-              setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
-              setCurrentReply('');
-            }
+            setCurrentReply('');
+            currentReplyRef.current = '';
             break;
           }
         }

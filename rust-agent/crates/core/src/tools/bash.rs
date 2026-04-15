@@ -2,6 +2,7 @@ use anyhow::Context;
 use tokio::process::Command;
 use tokio::time::{Duration, timeout};
 
+use crate::infra::utils::truncate_text;
 use crate::AgentResult;
 
 impl super::AgentToolbox {
@@ -87,7 +88,7 @@ impl super::AgentToolbox {
         if trimmed.is_empty() {
             Ok("(无输出)".to_owned())
         } else {
-            Ok(trimmed.chars().take(50_000).collect())
+            Ok(truncate_text(trimmed, 50_000))
         }
     }
 }
