@@ -1,5 +1,6 @@
 import React from 'react';
 import { Box, Text, Static } from 'ink';
+import Markdown from './markdown';
 
 interface Message {
   role: string;
@@ -39,8 +40,8 @@ function renderMessage(msg: Message, index: number) {
       );
     case 'assistant':
       return (
-        <Box key={`msg-${index}`}>
-          <Text wrap="wrap">{msg.content}</Text>
+        <Box key={`msg-${index}`} flexDirection="column">
+          <Markdown content={msg.content} />
         </Box>
       );
     case 'tool_call': {
