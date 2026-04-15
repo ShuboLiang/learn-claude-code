@@ -1,5 +1,7 @@
 pub mod agent;
 pub mod api;
+pub mod command;
+pub mod context;
 pub mod infra;
 pub mod skills;
 pub mod tools;
@@ -16,3 +18,5 @@ pub use api::{LlmProvider, ProviderInfo};
 pub use api::types::{ApiMessage, ProviderRequest, ProviderResponse, ResponseContentBlock};
 pub use skills::SkillLoader;
 pub use infra::todo::TodoManager;
+pub use context::ContextService;
+pub use command::{CommandDispatcher, CommandResult, UserCommand};

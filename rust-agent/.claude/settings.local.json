@@ -13,7 +13,16 @@
       "Bash(cargo build:*)",
       "Bash(find /c/Users/cutes/Desktop/learn-claude-code/rust-agent -type f \\\\\\( -name \"*.py\" -o -name \"*.sh\" -o -name \"*.js\" -o -name \"*.ts\" \\\\\\) -exec head -1 {} \\\\;)",
       "Bash(cargo check:*)",
-      "Bash(cargo test:*)"
+      "Bash(cargo test:*)",
+      "Bash(lark-cli docs:*)",
+      "Bash(python3 -c \"print\\(repr\\('│    {}  {}/{} \\({}%\\)'\\)\\)\")",
+      "Bash(python -c \"print\\(repr\\('│    {}  {}/{} \\({}%\\)'\\)\\)\")",
+      "Bash(rustc:*)",
+      "Bash(PYTHONIOENCODING=utf-8 tvly search \"LangGraph parallel execution agent fan-out fan-in concurrent subagent\" --depth basic --max-results 5 --json -o /tmp/tavily1.json)",
+      "Read(//tmp/**)",
+      "Bash(PYTHONIOENCODING=utf-8 tvly search \"AI agent parallel vs sequential subagent decision routing orchestration 2025\" --depth basic --max-results 5 --json -o /tmp/tavily2.json)",
+      "Bash(PYTHONIOENCODING=utf-8 tvly search \"OpenAI Agents SDK parallel tool calls concurrent handoffs subagent\" --depth basic --max-results 5 --json -o /tmp/tavily3.json)",
+      "mcp__plugin_context7_context7__resolve-library-id"
     ]
   }
 }
