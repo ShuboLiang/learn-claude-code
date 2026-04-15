@@ -13,8 +13,20 @@ impl super::AgentToolbox {
     /// 4. 设置工作目录为工作区根目录，超时限制 120 秒
     /// 5. 合并 stdout 和 stderr，智能解码（UTF-8 / GBK），截断到 50000 字符
     pub(crate) async fn run_bash(&self, command: &str) -> AgentResult<String> {
-        let dangerous = ["rm -rf /", "sudo", "shutdown", "reboot", "> /dev/"];
-        if dangerous.iter().any(|blocked| command.contains(blocked)) {
+        // 危险命令检测：只匹配命令开头，避免误杀 URL 或参数中包含关键词的正常命令
+        let trimmed = command.trim();
+        let dangerous_prefixes = [
+            "rm -rf /",
+            "rm -rf ~",
+            "rm -rf .",
+            "sudo ",
+            "shutdown ",
+            "shutdown\n",
+            "reboot ",
+            "reboot\n",
+            "> /dev/",
+        ];
+        if dangerous_prefixes.iter().any(|prefix| trimmed.starts_with(prefix)) {
             return Ok("错误：危险命令已被拦截".to_owned());
         }
 
