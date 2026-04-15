@@ -1,5 +1,5 @@
 use rustyline::error::ReadlineError;
-use rustyline::DefaultEditor;
+use rustyline::{Cmd, Config, DefaultEditor, Event, KeyCode, KeyEvent, Modifiers};
 
 use rust_agent_core::agent::{AgentApp, AgentEvent};
 use rust_agent_core::mpsc;
@@ -20,7 +20,20 @@ async fn main() -> anyhow::Result<()> {
     rust_agent_core::infra::usage::UsageTracker::display_with_quotas(app.quotas());
 
     let mut history = Vec::new();
-    let mut rl = DefaultEditor::new()?;
+    let config = Config::builder()
+        .bracketed_paste(true)
+        .build();
+    let mut rl = DefaultEditor::with_config(config)?;
+
+    // Enter = 提交，Ctrl+Enter = 插入换行
+    rl.bind_sequence(
+        Event::from(KeyEvent(KeyCode::Enter, Modifiers::NONE)),
+        Cmd::AcceptLine,
+    );
+    rl.bind_sequence(
+        Event::from(KeyEvent(KeyCode::Enter, Modifiers::CTRL)),
+        Cmd::Newline,
+    );
 
     loop {
         let line = match rl.readline("agent >> ") {
