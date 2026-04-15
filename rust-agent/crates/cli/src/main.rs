@@ -2,7 +2,7 @@ use rustyline::error::ReadlineError;
 use rustyline::{Cmd, Config, DefaultEditor, Event, KeyCode, KeyEvent, Modifiers};
 
 use rust_agent_core::agent::{AgentApp, AgentEvent};
-use rust_agent_core::command::{CommandDispatcher, UserCommand};
+use rust_agent_core::command::CommandDispatcher;
 use rust_agent_core::context::ContextService;
 use rust_agent_core::mpsc;
 
