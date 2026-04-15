@@ -15,7 +15,7 @@ export default function Input({ onSubmit, onQuit, onClear, isLoading }: InputPro
   const handleSubmit = (text: string) => {
     if (!text.trim()) return;
     const lower = text.trim().toLowerCase();
-    if (lower === 'q' || lower === 'quit' || lower === 'exit') {
+    if (lower === 'q' || lower === 'quit' || lower === 'exit' || lower === '/exit') {
       onQuit(text);
       return;
     }

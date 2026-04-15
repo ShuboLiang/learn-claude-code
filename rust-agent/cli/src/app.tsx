@@ -72,7 +72,7 @@ export default function App({ serverUrl }: { serverUrl: string }) {
 
   const handleQuit = useCallback((input: string) => {
     const lower = input.trim().toLowerCase();
-    if (lower === 'q' || lower === 'quit' || lower === 'exit') exit();
+    if (lower === 'q' || lower === 'quit' || lower === 'exit' || lower === '/exit') exit();
   }, [exit]);
 
   const handleClear = useCallback(() => {

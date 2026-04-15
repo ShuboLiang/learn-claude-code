@@ -61,6 +61,9 @@ async function main() {
 
   // 等待 Ink 退出
   await instance.waitUntilExit();
+
+  // Ink 退出后（如用户输入 /exit），清理 server 子进程
+  cleanup();
 }
 
 main().catch(err => {
