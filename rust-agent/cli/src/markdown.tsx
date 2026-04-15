@@ -1,24 +1,22 @@
 import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import { marked } from 'marked';
-// @ts-ignore marked-terminal 没有 TypeScript 类型导出
-import TerminalRenderer from 'marked-terminal';
+// marked-terminal v7 导出 markedTerminal 函数
+// @ts-expect-error marked-terminal v7 的类型定义与 @types/marked-terminal v6 不匹配
+import { markedTerminal } from 'marked-terminal';
 
-// 初始化 marked-terminal 渲染器
-marked.setOptions({
-  // @ts-expect-error marked 的 renderer 类型与 TerminalRenderer 不完全兼容
-  renderer: new TerminalRenderer(),
-});
+// 使用 marked.use() 注册 marked-terminal 渲染扩展
+marked.use(markedTerminal());
 
 interface MarkdownProps {
   content: string;
 }
 
-// 将 Markdown 渲染为带 ANSI 转义码的文本
+// 将 Markdown 渲染为带 ANSI 转义码的终端格式化文本
 export default function Markdown({ content }: MarkdownProps) {
   const rendered = useMemo(() => {
     try {
-      return marked.parse(content, { async: false }) as string;
+      return marked.parse(content) as string;
     } catch {
       return content;
     }
