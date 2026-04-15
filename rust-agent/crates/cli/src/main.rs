@@ -22,23 +22,40 @@ async fn main() -> anyhow::Result<()> {
         Event::from(KeyEvent(KeyCode::Enter, Modifiers::NONE)),
         Cmd::AcceptLine,
     );
-    rl.bind_sequence(
-        Event::from(KeyEvent(KeyCode::Enter, Modifiers::CTRL)),
-        Cmd::Newline,
-    );
 
     loop {
-        let line = match rl.readline("agent >> ") {
-            Ok(line) => line,
-            Err(ReadlineError::Eof | ReadlineError::Interrupted) => break,
-            Err(e) => return Err(e.into()),
-        };
+        // 读取输入（支持 \ 换行：输入以 \ 结尾时继续读取下一行）
+        let mut lines: Vec<String> = Vec::new();
+        let mut eof = false;
 
-        let query = line.trim();
+        loop {
+            let prompt = if lines.is_empty() { "agent >> " } else { "      .. " };
+            match rl.readline(prompt) {
+                Ok(line) => {
+                    if line.ends_with('\\') {
+                        lines.push(line[..line.len() - 1].to_string());
+                    } else {
+                        lines.push(line);
+                        break;
+                    }
+                }
+                Err(ReadlineError::Eof | ReadlineError::Interrupted) => {
+                    eof = true;
+                    break;
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
+
+        if eof {
+            break;
+        }
+
+        let query = lines.join("\n").trim().to_owned();
         if query.is_empty() {
             continue;
         }
-        if matches!(query, "q" | "quit" | "exit") {
+        if matches!(query.as_str(), "q" | "quit" | "exit") {
             break;
         }
 
@@ -61,7 +78,7 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // 通用命令分发（通过 CommandDispatcher）
-        if let Some(cmd) = CommandDispatcher::parse(query) {
+        if let Some(cmd) = CommandDispatcher::parse(&query) {
             rl.add_history_entry(query)?;
             let result = CommandDispatcher::execute(
                 cmd,
@@ -79,13 +96,13 @@ async fn main() -> anyhow::Result<()> {
         }
 
         // 普通对话
-        rl.add_history_entry(query)?;
+        rl.add_history_entry(&query)?;
 
         let (event_tx, mut event_rx) = mpsc::channel(64);
         let (result_tx, result_rx) = tokio::sync::oneshot::channel();
 
         let app_clone = app.clone();
-        let input = query.to_owned();
+        let input = query;
         let ctx_for_spawn = ctx.clone();
 
         tokio::spawn(async move {
