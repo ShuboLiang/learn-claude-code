@@ -26,8 +26,11 @@ impl super::AgentToolbox {
             "reboot\n",
             "> /dev/",
         ];
-        if dangerous_prefixes.iter().any(|prefix| trimmed.starts_with(prefix)) {
-            return Ok("错误：危险命令已被拦截".to_owned());
+        if dangerous_prefixes
+            .iter()
+            .any(|prefix| trimmed.starts_with(prefix))
+        {
+            return Err(anyhow::anyhow!("危险命令已被拦截"));
         }
 
         let mut process = if cfg!(windows) {
@@ -44,16 +47,28 @@ impl super::AgentToolbox {
         };
 
         process.current_dir(&self.workspace_root);
-        let output = timeout(Duration::from_secs(20), process.output()).await;
+        let output = timeout(Duration::from_secs(120), process.output()).await;
         let output = match output {
             Ok(result) => result.context("Failed to execute shell command")?,
-            Err(_) => return Ok("错误：命令执行超时（120秒）".to_owned()),
+            Err(_) => return Err(anyhow::anyhow!("命令执行超时（120秒）")),
         };
 
         let mut combined = String::new();
         combined.push_str(&decode_command_output(&output.stdout));
         combined.push_str(&decode_command_output(&output.stderr));
         let trimmed = combined.trim();
+
+        // exit code 非零视为失败，让 circuit breaker 能捕获
+        if !output.status.success() {
+            let code = output.status.code().unwrap_or(-1);
+            let msg = if trimmed.is_empty() {
+                format!("命令执行失败 (exit {code})")
+            } else {
+                format!("命令执行失败 (exit {code}): {trimmed}")
+            };
+            return Err(anyhow::anyhow!("{msg}"));
+        }
+
         if trimmed.is_empty() {
             Ok("(无输出)".to_owned())
         } else {

@@ -12,6 +12,7 @@ use crate::AgentResult;
 use crate::api::types::{ApiMessage, ProviderRequest, ResponseContentBlock};
 use crate::context::compact;
 use crate::context::ContextService;
+use crate::infra::circuit_breaker::ToolCircuitBreaker;
 use crate::infra::logging::ConversationLogger;
 use crate::infra::storage;
 use crate::infra::utils::preview_text;
@@ -168,6 +169,7 @@ impl AgentApp {
         );
         let mut rounds_since_todo = 0usize;
         let mut last_micro_compact = Instant::now();
+        let mut breaker = ToolCircuitBreaker::new();
         let micro_compact_interval = Duration::from_secs(60 * 60);
 
         for _ in 0..MAX_TOOL_ROUNDS {
@@ -247,15 +249,23 @@ impl AgentApp {
                     manual_compact = true;
                     let _ = event_tx.send(AgentEvent::ToolCall { name: tc.name.clone(), input: tc.input.clone(), parallel_index: None }).await;
                     "正在压缩...".to_owned()
+                } else if breaker.is_open(&tc.name) {
+                    // 工具已熔断，直接返回提示信息，不执行
+                    let count = breaker.failure_count(&tc.name);
+                    let msg = ToolCircuitBreaker::blocked_message(&tc.name, count);
+                    let _ = event_tx.send(AgentEvent::ToolResult { name: tc.name.clone(), output: msg.clone(), parallel_index: None }).await;
+                    msg
                 } else {
+                    let _ = event_tx.send(AgentEvent::ToolCall { name: tc.name.clone(), input: tc.input.clone(), parallel_index: None }).await;
                     match toolbox.dispatch(&tc.name, &tc.input).await {
                         Ok(dispatch) => {
+                            breaker.record_success(&tc.name);
                             used_todo |= dispatch.used_todo;
-                            let _ = event_tx.send(AgentEvent::ToolCall { name: tc.name.clone(), input: tc.input.clone(), parallel_index: None }).await;
                             let _ = event_tx.send(AgentEvent::ToolResult { name: tc.name.clone(), output: preview_text(&dispatch.output, 200), parallel_index: None }).await;
                             dispatch.output
                         }
                         Err(e) => {
+                            breaker.record_failure(&tc.name);
                             let msg = format!("Error: {e}");
                             let _ = event_tx.send(AgentEvent::ToolResult { name: tc.name.clone(), output: msg.clone(), parallel_index: None }).await;
                             msg
