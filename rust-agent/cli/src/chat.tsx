@@ -1,6 +1,6 @@
-import React from 'react';
-import { Box, Text, Static } from 'ink';
-import Markdown from './markdown';
+import React from "react";
+import { Box, Text, Static } from "ink";
+import Markdown from "./markdown";
 
 interface Message {
   role: string;
@@ -17,54 +17,63 @@ interface ChatProps {
 function formatToolCall(content: string): { name: string; desc: string } {
   try {
     const data = JSON.parse(content);
-    const name = data.name || 'unknown';
+    const name = data.name || "unknown";
     const input = data.input || {};
     // 提取简短描述
-    const desc = input.command || input.path || input.query || input.content
-      ? String(input.command || input.path || input.query || input.content || '').slice(0, 60)
-      : JSON.stringify(input).slice(0, 60);
+    const desc =
+      input.command || input.path || input.query || input.content
+        ? String(
+            input.command || input.path || input.query || input.content || "",
+          )
+        : JSON.stringify(input);
     return { name, desc };
   } catch {
-    return { name: 'tool', desc: content.slice(0, 60) };
+    return { name: "tool", desc: content };
   }
 }
 
 // 渲染单条消息
 function renderMessage(msg: Message, index: number) {
   switch (msg.role) {
-    case 'user':
+    case "user":
       return (
         <Box key={`msg-${index}`}>
-          <Text color="cyan" bold>你: {msg.content}</Text>
+          <Text color="cyan" bold>
+            你: {msg.content}
+          </Text>
         </Box>
       );
-    case 'assistant':
+    case "assistant":
       return (
         <Box key={`msg-${index}`} flexDirection="column">
           <Markdown content={msg.content} />
         </Box>
       );
-    case 'tool_call': {
+    case "tool_call": {
       const { name, desc } = formatToolCall(msg.content);
       return (
         <Box key={`msg-${index}`} flexDirection="column">
           <Text color="yellow">┌─ 🔧 {name}</Text>
-          <Text color="yellow" dimColor>│  {desc}</Text>
+          <Text color="yellow" dimColor>
+            │ {desc}
+          </Text>
         </Box>
       );
     }
-    case 'tool_result': {
+    case "tool_result": {
       const maxShow = 5000;
-      const text = msg.content.length > maxShow
-        ? msg.content.slice(0, maxShow) + `\n... [还有 ${msg.content.length - maxShow} 字符未显示]`
-        : msg.content;
+      const text =
+        msg.content.length > maxShow
+          ? msg.content.slice(0, maxShow) +
+            `\n... [还有 ${msg.content.length - maxShow} 字符未显示]`
+          : msg.content;
       return (
         <Box key={`msg-${index}`} flexDirection="column">
           <Text dimColor>└─ {text}</Text>
         </Box>
       );
     }
-    case 'system':
+    case "system":
       return (
         <Box key={`msg-${index}`}>
           <Text dimColor>{msg.content}</Text>
