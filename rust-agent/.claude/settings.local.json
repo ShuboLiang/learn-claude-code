@@ -22,7 +22,10 @@
       "Read(//tmp/**)",
       "Bash(PYTHONIOENCODING=utf-8 tvly search \"AI agent parallel vs sequential subagent decision routing orchestration 2025\" --depth basic --max-results 5 --json -o /tmp/tavily2.json)",
       "Bash(PYTHONIOENCODING=utf-8 tvly search \"OpenAI Agents SDK parallel tool calls concurrent handoffs subagent\" --depth basic --max-results 5 --json -o /tmp/tavily3.json)",
-      "mcp__plugin_context7_context7__resolve-library-id"
+      "mcp__plugin_context7_context7__resolve-library-id",
+      "mcp__web-search-prime__web_search_prime",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)"
     ]
   }
 }
