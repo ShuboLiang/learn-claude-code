@@ -10,7 +10,7 @@
 
 use std::time::Duration;
 
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
@@ -128,8 +128,7 @@ impl OpenAIClient {
 
     /// 从环境变量创建 OpenAI API 客户端
     pub fn from_env() -> AgentResult<Self> {
-        let api_key = std::env::var("OPENAI_API_KEY")
-            .context("环境变量中缺少 OPENAI_API_KEY")?;
+        let api_key = std::env::var("OPENAI_API_KEY").context("环境变量中缺少 OPENAI_API_KEY")?;
         let base_url = std::env::var("OPENAI_BASE_URL")
             .unwrap_or_else(|_| "https://api.openai.com".to_owned());
         Self::build_client(&api_key, &base_url)
@@ -287,7 +286,8 @@ impl OpenAIClient {
                 Ok(bytes) => bytes,
                 Err(e) => {
                     if attempt < self.max_retries {
-                        let backoff = Self::calculate_backoff_from_retry_after(retry_after, attempt);
+                        let backoff =
+                            Self::calculate_backoff_from_retry_after(retry_after, attempt);
                         sleep(backoff).await;
                         continue;
                     }
@@ -299,8 +299,7 @@ impl OpenAIClient {
             let body = String::from_utf8_lossy(&body_bytes).into_owned();
 
             if status.is_success() {
-                return serde_json::from_str(&body)
-                    .context("解析 OpenAI 响应 JSON 失败");
+                return serde_json::from_str(&body).context("解析 OpenAI 响应 JSON 失败");
             }
 
             // 对可重试状态码进行重试（429, 5xx）
@@ -358,9 +357,9 @@ fn convert_messages(system: &str, messages: &[ApiMessage]) -> Vec<OpenAIMessage>
             "user" => {
                 // 检查用户消息中是否包含 tool_result 块，需要拆分为多条 tool 消息
                 if let Some(blocks) = msg.content.as_array() {
-                    let has_tool_result = blocks.iter().any(|b| {
-                        b.get("type").and_then(|v| v.as_str()) == Some("tool_result")
-                    });
+                    let has_tool_result = blocks
+                        .iter()
+                        .any(|b| b.get("type").and_then(|v| v.as_str()) == Some("tool_result"));
 
                     if has_tool_result {
                         // 将 tool_result 块转换为 OpenAI 的 tool 消息
@@ -385,7 +384,9 @@ fn convert_messages(system: &str, messages: &[ApiMessage]) -> Vec<OpenAIMessage>
                                 if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
                                     if !text.is_empty() {
                                         openai_messages.push(OpenAIMessage::User {
-                                            content: Some(serde_json::Value::String(text.to_owned())),
+                                            content: Some(serde_json::Value::String(
+                                                text.to_owned(),
+                                            )),
                                         });
                                     }
                                 }
@@ -474,7 +475,10 @@ fn convert_tools(tools: &[serde_json::Value]) -> Option<Vec<OpenAIToolOwned>> {
             // 内部格式：{ "name": "...", "description": "...", "input_schema": {...} }
             // OpenAI 格式：{ "type": "function", "function": { "name": "...", "description": "...", "parameters": {...} } }
             let name = tool.get("name").cloned().unwrap_or(serde_json::Value::Null);
-            let description = tool.get("description").cloned().unwrap_or(serde_json::Value::Null);
+            let description = tool
+                .get("description")
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
             let parameters = tool
                 .get("input_schema")
                 .or_else(|| tool.get("parameters"))
@@ -515,9 +519,7 @@ fn convert_response(response: OpenAIResponse) -> ProviderResponse {
         // 提取文本内容
         if let Some(text) = &choice.message.content {
             if !text.is_empty() {
-                content_blocks.push(ResponseContentBlock::Text {
-                    text: text.clone(),
-                });
+                content_blocks.push(ResponseContentBlock::Text { text: text.clone() });
             }
         }
 

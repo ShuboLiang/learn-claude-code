@@ -16,6 +16,11 @@ use tokio::time::sleep;
 use super::types::{MessagesRequest, MessagesResponse, ProviderRequest, ProviderResponse};
 use crate::AgentResult;
 
+fn parse_messages_response(body: &str) -> AgentResult<MessagesResponse> {
+    serde_json::from_str(body)
+        .with_context(|| format!("解析 Anthropic 响应 JSON 失败，响应体: {body}"))
+}
+
 /// Anthropic API 的协议版本号
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
@@ -205,7 +210,8 @@ impl AnthropicClient {
                 Ok(bytes) => bytes,
                 Err(e) => {
                     if attempt < self.max_retries {
-                        let backoff = Self::calculate_backoff_from_retry_after(retry_after, attempt);
+                        let backoff =
+                            Self::calculate_backoff_from_retry_after(retry_after, attempt);
                         sleep(backoff).await;
                         continue;
                     }
@@ -217,7 +223,7 @@ impl AnthropicClient {
             let body = String::from_utf8_lossy(&body_bytes).into_owned();
 
             if status.is_success() {
-                return serde_json::from_str(&body).context("解析 Anthropic 响应 JSON 失败");
+                return parse_messages_response(&body);
             }
 
             // 对可重试状态码进行重试（429, 529, 5xx）

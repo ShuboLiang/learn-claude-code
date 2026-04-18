@@ -25,7 +25,15 @@
       "mcp__plugin_context7_context7__resolve-library-id",
       "mcp__web-search-prime__web_search_prime",
       "Bash(git add:*)",
-      "Bash(git commit -m ':*)"
+      "Bash(git commit -m ':*)",
+      "Skill(rust-best-practices)",
+      "Bash(git checkout:*)",
+      "Read(//c/Users/cutes/Desktop/learn-claude-code/docs/superpowers/**)",
+      "Read(//c/Users/cutes/Desktop/learn-claude-code/docs/superpowers/plans/**)",
+      "Bash(git:*)",
+      "Read(//c/Users/cutes/Desktop/learn-claude-code/.claude/worktrees/agent-a081e94a/**)",
+      "Read(//c/Users/cutes/Desktop/learn-claude-code/.claude/worktrees/agent-a081e94a/crates/core/src/**)",
+      "Read(//c/Users/cutes/Desktop/learn-claude-code/.claude/worktrees/agent-a081e94a/docs/superpowers/plans/**)"
     ]
   }
 }
