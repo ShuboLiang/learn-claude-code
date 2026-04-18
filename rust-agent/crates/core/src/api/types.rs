@@ -74,7 +74,7 @@ pub(crate) struct MessagesResponse {
     pub stop_reason: Option<String>,
 }
 
-/// Claude API 返回的单个内容块，可以是文本或工具调用请求
+/// Claude API 返回的单个内容块，可以是文本、思考内容或工具调用请求
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ResponseContentBlock {
@@ -82,6 +82,11 @@ pub enum ResponseContentBlock {
     Text {
         /// 文本内容
         text: String,
+    },
+    /// 思考内容块，仅用于协议兼容，不直接展示给用户
+    Thinking {
+        /// 模型返回的思考内容
+        thinking: String,
     },
     /// 工具调用请求：Claude 想要调用某个工具
     ToolUse {
@@ -119,12 +124,13 @@ pub struct ProviderResponse {
 }
 
 impl ProviderResponse {
-    /// 提取回复中的所有文本内容，忽略工具调用块
+    /// 提取回复中的所有文本内容，忽略思考内容和工具调用块
     pub fn final_text(&self) -> String {
         self.content
             .iter()
             .filter_map(|block| match block {
                 ResponseContentBlock::Text { text } => Some(text.as_str()),
+                ResponseContentBlock::Thinking { .. } => None,
                 ResponseContentBlock::ToolUse { .. } => None,
             })
             .collect::<Vec<_>>()

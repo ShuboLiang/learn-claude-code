@@ -16,6 +16,11 @@ use tokio::time::sleep;
 use super::types::{MessagesRequest, MessagesResponse, ProviderRequest, ProviderResponse};
 use crate::AgentResult;
 
+fn parse_messages_response(body: &str) -> AgentResult<MessagesResponse> {
+    serde_json::from_str(body)
+        .with_context(|| format!("解析 Anthropic 响应 JSON 失败，body: {body}"))
+}
+
 /// Anthropic API 的协议版本号
 const ANTHROPIC_VERSION: &str = "2023-06-01";
 
@@ -217,7 +222,7 @@ impl AnthropicClient {
             let body = String::from_utf8_lossy(&body_bytes).into_owned();
 
             if status.is_success() {
-                return serde_json::from_str(&body).context("解析 Anthropic 响应 JSON 失败");
+                return parse_messages_response(&body);
             }
 
             // 对可重试状态码进行重试（429, 529, 5xx）
@@ -267,5 +272,60 @@ impl AnthropicClient {
             content: raw_response.content,
             stop_reason,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ResponseContentBlock;
+
+    #[test]
+    fn parse_messages_response_should_include_body_when_json_is_invalid() {
+        let err = parse_messages_response("not json").expect_err("无效 JSON 应返回错误");
+        let err_text = format!("{err:#}");
+
+        assert!(
+            err_text.contains("not json"),
+            "错误链应包含原始 body，实际为: {err_text}"
+        );
+        assert!(
+            err_text.contains("expected ident") || err_text.contains("expected value"),
+            "错误链应包含解析原因，实际为: {err_text}"
+        );
+    }
+
+    #[test]
+    fn parse_messages_response_should_accept_thinking_blocks_without_exposing_them_in_final_text() {
+        let body = r#"
+        {
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "I should inspect the weather tool first.",
+              "signature": "sig_test"
+            },
+            {
+              "type": "tool_use",
+              "id": "toolu_123",
+              "name": "get_weather",
+              "input": {"city": "Shanghai"}
+            }
+          ],
+          "stop_reason": "tool_use"
+        }
+        "#;
+
+        let response = parse_messages_response(body).expect("含 thinking 的响应应能被解析");
+        let provider_response = ProviderResponse {
+            content: response.content,
+            stop_reason: "tool_calls".to_owned(),
+        };
+
+        assert_eq!(provider_response.final_text(), "");
+        assert!(matches!(
+            provider_response.content.get(1),
+            Some(ResponseContentBlock::ToolUse { name, .. }) if name == "get_weather"
+        ));
     }
 }
