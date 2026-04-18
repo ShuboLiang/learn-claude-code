@@ -275,3 +275,58 @@ impl AnthropicClient {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ResponseContentBlock;
+
+    #[test]
+    fn parse_messages_response_should_include_body_when_json_is_invalid() {
+        let err = parse_messages_response("not json").expect_err("无效 JSON 应返回错误");
+        let err_text = format!("{err:#}");
+
+        assert!(
+            err_text.contains("not json"),
+            "错误链应包含原始 body，实际为: {err_text}"
+        );
+        assert!(
+            err_text.contains("expected ident") || err_text.contains("expected value"),
+            "错误链应包含解析原因，实际为: {err_text}"
+        );
+    }
+
+    #[test]
+    fn parse_messages_response_should_accept_thinking_blocks_without_exposing_them_in_final_text() {
+        let body = r#"
+        {
+          "content": [
+            {
+              "type": "thinking",
+              "thinking": "I should inspect the weather tool first.",
+              "signature": "sig_test"
+            },
+            {
+              "type": "tool_use",
+              "id": "toolu_123",
+              "name": "get_weather",
+              "input": {"city": "Shanghai"}
+            }
+          ],
+          "stop_reason": "tool_use"
+        }
+        "#;
+
+        let response = parse_messages_response(body).expect("含 thinking 的响应应能被解析");
+        let provider_response = ProviderResponse {
+            content: response.content,
+            stop_reason: "tool_calls".to_owned(),
+        };
+
+        assert_eq!(provider_response.final_text(), "");
+        assert!(matches!(
+            provider_response.content.get(1),
+            Some(ResponseContentBlock::ToolUse { name, .. }) if name == "get_weather"
+        ));
+    }
+}
