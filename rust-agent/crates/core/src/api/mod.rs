@@ -20,23 +20,15 @@ pub enum LlmProvider {
 }
 
 impl LlmProvider {
-    /// 发送消息并获取回复（统一入口，自动分发到对应后端，并统计用量）
+    /// 发送消息并获取回复（统一入口，自动分发到对应后端）
     pub async fn create_message(
         &self,
         request: &ProviderRequest<'_>,
-        quotas: &[crate::infra::usage::QuotaRule],
     ) -> AgentResult<ProviderResponse> {
-        let result = match self {
+        match self {
             LlmProvider::Anthropic(client) => client.create_message(request).await,
             LlmProvider::OpenAI(client) => client.create_message(request).await,
-        };
-
-        // 无论成功失败都统计调用次数
-        if let Ok(mut tracker) = crate::infra::usage::UsageTracker::load(quotas.to_vec()) {
-            let _ = tracker.record_call(&self.base_url(), &self.api_key());
         }
-
-        result
     }
 
     /// 获取当前 provider 的 API 基础 URL
@@ -56,13 +48,11 @@ impl LlmProvider {
     }
 }
 
-/// 创建 LLM Provider 的结果，包含 provider、模型 ID、配额规则
+/// 创建 LLM Provider 的结果，包含 provider、模型 ID
 pub struct ProviderInfo {
     pub provider: LlmProvider,
     pub model: String,
     pub max_tokens: u32,
-    /// 当前 profile 的配额规则
-    pub quotas: Vec<crate::infra::usage::QuotaRule>,
 }
 
 /// 根据配置创建 LLM Provider
@@ -74,19 +64,7 @@ pub fn create_provider() -> AgentResult<ProviderInfo> {
     let config = crate::infra::config::AppConfig::load()?;
     let profile = config.current_profile()?;
 
-    // 从 profile 配置中构建配额规则
-    let quotas: Vec<crate::infra::usage::QuotaRule> = profile
-        .quotas
-        .iter()
-        .map(|q| crate::infra::usage::QuotaRule::from_config(&q.window, q.max_calls))
-        .collect();
-
-    if quotas.is_empty() {
-        println!("[配置] 使用 profile: {} ({} / {}) - 无配额限制", profile.name, profile.provider, profile.model);
-    } else {
-        let quota_descs: Vec<String> = quotas.iter().map(|q| q.description()).collect();
-        println!("[配置] 使用 profile: {} ({} / {}) - 配额: {}", profile.name, profile.provider, profile.model, quota_descs.join(", "));
-    }
+    println!("[配置] 使用 profile: {} ({} / {})", profile.name, profile.provider, profile.model);
 
     let provider = match profile.provider.to_lowercase().as_str() {
         "openai" => {
@@ -109,6 +87,5 @@ pub fn create_provider() -> AgentResult<ProviderInfo> {
         provider,
         model: profile.model.clone(),
         max_tokens: config.effective_max_tokens(profile),
-        quotas,
     })
 }

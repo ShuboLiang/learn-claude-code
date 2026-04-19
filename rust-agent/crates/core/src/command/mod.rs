@@ -55,9 +55,8 @@ impl CommandDispatcher {
         ctx: &mut ContextService,
         client: Option<&crate::api::LlmProvider>,
         model: &str,
-        quotas: &[crate::infra::usage::QuotaRule],
         workspace_root: &std::path::Path,
     ) -> CommandResult {
-        handlers::handle(cmd, ctx, client, model, quotas, workspace_root).await
+        handlers::handle(cmd, ctx, client, model, workspace_root).await
     }
 }

@@ -108,10 +108,9 @@ impl ContextService {
         &self,
         client: &crate::api::LlmProvider,
         model: &str,
-        quotas: &[crate::infra::usage::QuotaRule],
         workspace_root: &Path,
     ) -> AgentResult<Vec<ApiMessage>> {
-        compact::auto_compact(client, model, quotas, workspace_root, &self.conversation).await
+        compact::auto_compact(client, model, workspace_root, &self.conversation).await
     }
 }
 

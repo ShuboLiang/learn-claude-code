@@ -6,6 +6,5 @@ pub mod config;
 pub mod logging;
 pub mod storage;
 pub mod todo;
-pub mod usage;
 pub mod utils;
 pub mod workspace;

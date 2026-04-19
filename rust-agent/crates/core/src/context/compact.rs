@@ -138,7 +138,6 @@ pub fn micro_compact(conv: &mut Conversation) {
 pub async fn auto_compact(
     client: &crate::api::LlmProvider,
     model: &str,
-    quotas: &[crate::infra::usage::QuotaRule],
     workspace_root: &Path,
     conv: &Conversation,
 ) -> AgentResult<Vec<ApiMessage>> {
@@ -185,7 +184,7 @@ pub async fn auto_compact(
         max_tokens: 2000,
     };
 
-    let response = client.create_message(&request, quotas).await?;
+    let response = client.create_message(&request).await?;
     let summary = response.final_text();
 
     Ok(vec![ApiMessage::user_text(format!(
