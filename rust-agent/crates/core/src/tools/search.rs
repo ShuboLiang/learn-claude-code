@@ -3,14 +3,24 @@ use std::path::{Path, PathBuf};
 use anyhow::Context;
 
 use crate::AgentResult;
-use crate::infra::workspace::resolve_workspace_path;
 use crate::infra::utils::truncate_text;
+use crate::infra::workspace::resolve_workspace_path;
 
 /// 需要跳过的大目录列表
 const SKIP_DIRS: &[&str] = &[
-    "target", "node_modules", ".git", ".svn", ".hg",
-    "__pycache__", ".next", ".nuxt", "dist", "build",
-    ".cache", ".venv", "venv",
+    "target",
+    "node_modules",
+    ".git",
+    ".svn",
+    ".hg",
+    "__pycache__",
+    ".next",
+    ".nuxt",
+    "dist",
+    "build",
+    ".cache",
+    ".venv",
+    "venv",
 ];
 
 impl super::AgentToolbox {
@@ -57,6 +67,7 @@ impl super::AgentToolbox {
     }
 
     /// 在文件内容中搜索匹配正则表达式的行
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn grep_search(
         &self,
         pattern: &str,
@@ -145,25 +156,26 @@ impl super::AgentToolbox {
                         show_ranges.sort();
                         let mut merged: Vec<(usize, usize)> = Vec::new();
                         for range in show_ranges {
-                            if let Some(last) = merged.last_mut() {
-                                if range.0 <= last.1 {
-                                    last.1 = last.1.max(range.1);
-                                    continue;
-                                }
+                            if let Some(last) = merged.last_mut()
+                                && range.0 <= last.1
+                            {
+                                last.1 = last.1.max(range.1);
+                                continue;
                             }
                             merged.push(range);
                         }
 
                         output_lines.push(format!("{}:", rel_path));
                         for (start, end) in merged {
-                            for i in start..end {
+                            for (i, line) in lines.iter().enumerate().skip(start).take(end - start)
+                            {
                                 let line_num = i + 1;
-                                let marker =
-                                    if matched_indices.contains(&i) { ">" } else { " " };
-                                output_lines.push(format!(
-                                    "{marker} {line_num:4} | {}",
-                                    lines[i]
-                                ));
+                                let marker = if matched_indices.contains(&i) {
+                                    ">"
+                                } else {
+                                    " "
+                                };
+                                output_lines.push(format!("{marker} {line_num:4} | {}", line));
                                 file_count += 1;
                                 if file_count >= limit {
                                     break;
@@ -195,7 +207,11 @@ impl super::AgentToolbox {
         }
 
         let total = output_lines.len();
-        let output = output_lines.into_iter().take(limit).collect::<Vec<_>>().join("\n");
+        let output = output_lines
+            .into_iter()
+            .take(limit)
+            .collect::<Vec<_>>()
+            .join("\n");
         let suffix = if total > limit {
             format!("\n... （共 {total} 条结果，仅显示前 {limit} 条）")
         } else {

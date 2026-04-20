@@ -109,7 +109,7 @@ impl AnthropicClient {
     /// - 5xx：服务器内部错误
     fn is_retryable_status(status: reqwest::StatusCode) -> bool {
         let code = status.as_u16();
-        code == 429 || code == 529 || (code >= 500 && code < 600)
+        code == 429 || code == 529 || (500..600).contains(&code)
     }
 
     /// 判断网络错误是否属于可重试的类型

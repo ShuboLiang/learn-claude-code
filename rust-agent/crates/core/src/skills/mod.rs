@@ -174,7 +174,9 @@ impl SkillLoader {
 
     /// 按名称获取技能的目录路径（即 SKILL.md 所在的父目录）
     pub fn get_skill_dir(&self, name: &str) -> Option<PathBuf> {
-        self.skills.get(name).and_then(|s| s.path.parent().map(|p| p.to_path_buf()))
+        self.skills
+            .get(name)
+            .and_then(|s| s.path.parent().map(|p| p.to_path_buf()))
     }
 }
 

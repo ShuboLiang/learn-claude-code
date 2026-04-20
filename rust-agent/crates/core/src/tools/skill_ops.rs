@@ -17,9 +17,7 @@ pub(crate) fn list_skill_tree(skill_dir: &Path) -> String {
         let depth = entry.depth();
         let indent = "  ".repeat(depth);
         let name = entry.file_name().to_string_lossy();
-        if depth == 0 {
-            lines.push(format!("{indent}{name}/"));
-        } else if entry.file_type().is_dir() {
+        if depth == 0 || entry.file_type().is_dir() {
             lines.push(format!("{indent}{name}/"));
         } else {
             lines.push(format!("{indent}{name}"));

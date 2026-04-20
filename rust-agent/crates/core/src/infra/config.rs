@@ -140,10 +140,10 @@ impl AppConfig {
         }
 
         // 2. 配置文件 default_profile
-        if !self.default_profile.is_empty() {
-            if let Some(profile) = self.find_profile(&self.default_profile) {
-                return Ok(profile);
-            }
+        if !self.default_profile.is_empty()
+            && let Some(profile) = self.find_profile(&self.default_profile)
+        {
+            return Ok(profile);
         }
 
         // 3. 第一个 profile

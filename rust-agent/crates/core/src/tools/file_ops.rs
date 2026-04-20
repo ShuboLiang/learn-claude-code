@@ -1,8 +1,8 @@
 use anyhow::Context;
 
 use crate::AgentResult;
-use crate::infra::workspace::resolve_workspace_path;
 use crate::infra::utils::truncate_text;
+use crate::infra::workspace::resolve_workspace_path;
 
 impl super::AgentToolbox {
     /// 读取指定文件的内容
@@ -14,12 +14,12 @@ impl super::AgentToolbox {
         let content = std::fs::read_to_string(&resolved)
             .with_context(|| format!("Failed to read {}", resolved.display()))?;
         let mut lines = content.lines().map(str::to_owned).collect::<Vec<_>>();
-        if let Some(limit) = limit {
-            if limit < lines.len() {
-                let remaining = lines.len() - limit;
-                lines.truncate(limit);
-                lines.push(format!("... ({remaining} more lines)"));
-            }
+        if let Some(limit) = limit
+            && limit < lines.len()
+        {
+            let remaining = lines.len() - limit;
+            lines.truncate(limit);
+            lines.push(format!("... ({remaining} more lines)"));
         }
         Ok(truncate_text(&lines.join("\n"), 50_000))
     }
@@ -39,7 +39,12 @@ impl super::AgentToolbox {
     }
 
     /// 在文件中精确替换一段文本（首次出现的位置）
-    pub(crate) fn edit_file(&self, path: &str, old_text: &str, new_text: &str) -> AgentResult<String> {
+    pub(crate) fn edit_file(
+        &self,
+        path: &str,
+        old_text: &str,
+        new_text: &str,
+    ) -> AgentResult<String> {
         let resolved = resolve_workspace_path(&self.workspace_root, path)?;
         let content = std::fs::read_to_string(&resolved)
             .with_context(|| format!("Failed to read {}", resolved.display()))?;

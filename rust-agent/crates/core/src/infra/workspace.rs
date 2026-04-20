@@ -94,8 +94,8 @@ fn normalize_path(path: PathBuf) -> PathBuf {
 /// 此函数将 UNC 前缀剥离，统一为普通路径格式。
 fn strip_unc_prefix(path: PathBuf) -> PathBuf {
     let s = path.to_str().unwrap_or("");
-    if s.starts_with(r"\\?\") {
-        PathBuf::from(&s[4..])
+    if let Some(stripped) = s.strip_prefix(r"\\?\") {
+        PathBuf::from(stripped)
     } else {
         path
     }

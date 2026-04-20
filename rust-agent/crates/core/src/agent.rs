@@ -10,8 +10,8 @@ use tokio::sync::mpsc;
 
 use crate::AgentResult;
 use crate::api::types::{ApiMessage, ProviderRequest, ResponseContentBlock};
-use crate::context::compact;
 use crate::context::ContextService;
+use crate::context::compact;
 use crate::infra::circuit_breaker::ToolCircuitBreaker;
 use crate::infra::logging::ConversationLogger;
 use crate::infra::storage;
@@ -33,7 +33,9 @@ pub enum AgentEvent {
         output: String,
         parallel_index: Option<(usize, usize)>,
     },
-    TurnEnd { api_calls: usize },
+    TurnEnd {
+        api_calls: usize,
+    },
     Done,
 }
 
@@ -60,10 +62,18 @@ struct AgentRunConfig {
 
 impl AgentRunConfig {
     fn parent() -> Self {
-        Self { allow_task: true, use_todo_reminder: true, emit_events: true }
+        Self {
+            allow_task: true,
+            use_todo_reminder: true,
+            emit_events: true,
+        }
     }
     fn child() -> Self {
-        Self { allow_task: false, use_todo_reminder: true, emit_events: false }
+        Self {
+            allow_task: false,
+            use_todo_reminder: true,
+            emit_events: false,
+        }
     }
 }
 
@@ -114,6 +124,20 @@ impl AgentApp {
         &self.workspace_root
     }
 
+    /// 获取工具 schema 列表（用于 A2A 协议 Agent Card 生成）
+    pub fn tool_schemas(&self) -> Vec<serde_json::Value> {
+        let toolbox = crate::tools::AgentToolbox::new(
+            self.workspace_root.clone(),
+            Arc::clone(&self.skills),
+            self.skill_dirs.clone(),
+        );
+        toolbox
+            .tool_schemas(true)
+            .iter()
+            .map(|v| (*v).clone())
+            .collect()
+    }
+
     pub fn list_skills(&self) -> Vec<crate::skills::SkillSummary> {
         self.skills.read().unwrap().list_skills()
     }
@@ -139,7 +163,13 @@ impl AgentApp {
         let event_tx = Arc::new(event_tx);
 
         let result = self
-            .run_agent_loop(ctx, system_prompt, AgentRunConfig::parent(), &mut logger, &event_tx)
+            .run_agent_loop(
+                ctx,
+                system_prompt,
+                AgentRunConfig::parent(),
+                &mut logger,
+                &event_tx,
+            )
             .await;
 
         match &result {
@@ -179,7 +209,10 @@ impl AgentApp {
             }
             if ctx.estimate_tokens() > compact::TOKEN_THRESHOLD {
                 println!("[auto_compact 已触发]");
-                match ctx.auto_compact(&self.client, &self.model, &self.workspace_root).await {
+                match ctx
+                    .auto_compact(&self.client, &self.model, &self.workspace_root)
+                    .await
+                {
                     Ok(new_messages) => ctx.replace(new_messages),
                     Err(e) => eprintln!("[auto_compact 失败: {e:#}]"),
                 }
@@ -211,7 +244,11 @@ impl AgentApp {
                     if !text.is_empty() {
                         let _ = event_tx.send(AgentEvent::TextDelta(text)).await;
                     }
-                    let _ = event_tx.send(AgentEvent::TurnEnd { api_calls: api_call_count }).await;
+                    let _ = event_tx
+                        .send(AgentEvent::TurnEnd {
+                            api_calls: api_call_count,
+                        })
+                        .await;
                 }
                 return Ok(response.final_text());
             }
@@ -231,7 +268,11 @@ impl AgentApp {
                 .iter()
                 .filter_map(|block| {
                     if let ResponseContentBlock::ToolUse { id, name, input } = block {
-                        Some(ToolCallInfo { id: id.clone(), name: name.clone(), input: input.clone() })
+                        Some(ToolCallInfo {
+                            id: id.clone(),
+                            name: name.clone(),
+                            input: input.clone(),
+                        })
                     } else {
                         None
                     }
@@ -250,12 +291,21 @@ impl AgentApp {
 
             for tc in &other_calls {
                 let input_preview = preview_text(&tc.input.to_string(), 200);
-                logger.log(&format!("=== 工具调用: {} ===\n输入: {input_preview}", tc.name));
+                logger.log(&format!(
+                    "=== 工具调用: {} ===\n输入: {input_preview}",
+                    tc.name
+                ));
 
                 let output = if tc.name == "compact" {
                     manual_compact = true;
                     if config.emit_events {
-                        let _ = event_tx.send(AgentEvent::ToolCall { name: tc.name.clone(), input: tc.input.clone(), parallel_index: None }).await;
+                        let _ = event_tx
+                            .send(AgentEvent::ToolCall {
+                                name: tc.name.clone(),
+                                input: tc.input.clone(),
+                                parallel_index: None,
+                            })
+                            .await;
                     }
                     "正在压缩...".to_owned()
                 } else if breaker.is_open(&tc.name) {
@@ -263,19 +313,37 @@ impl AgentApp {
                     let count = breaker.failure_count(&tc.name);
                     let msg = ToolCircuitBreaker::blocked_message(&tc.name, count);
                     if config.emit_events {
-                        let _ = event_tx.send(AgentEvent::ToolResult { name: tc.name.clone(), output: msg.clone(), parallel_index: None }).await;
+                        let _ = event_tx
+                            .send(AgentEvent::ToolResult {
+                                name: tc.name.clone(),
+                                output: msg.clone(),
+                                parallel_index: None,
+                            })
+                            .await;
                     }
                     msg
                 } else {
                     if config.emit_events {
-                        let _ = event_tx.send(AgentEvent::ToolCall { name: tc.name.clone(), input: tc.input.clone(), parallel_index: None }).await;
+                        let _ = event_tx
+                            .send(AgentEvent::ToolCall {
+                                name: tc.name.clone(),
+                                input: tc.input.clone(),
+                                parallel_index: None,
+                            })
+                            .await;
                     }
                     match toolbox.dispatch(&tc.name, &tc.input).await {
                         Ok(dispatch) => {
                             breaker.record_success(&tc.name);
                             used_todo |= dispatch.used_todo;
                             if config.emit_events {
-                                let _ = event_tx.send(AgentEvent::ToolResult { name: tc.name.clone(), output: preview_text(&dispatch.output, 200), parallel_index: None }).await;
+                                let _ = event_tx
+                                    .send(AgentEvent::ToolResult {
+                                        name: tc.name.clone(),
+                                        output: preview_text(&dispatch.output, 200),
+                                        parallel_index: None,
+                                    })
+                                    .await;
                             }
                             dispatch.output
                         }
@@ -283,7 +351,13 @@ impl AgentApp {
                             breaker.record_failure(&tc.name);
                             let msg = format!("Error: {e}");
                             if config.emit_events {
-                                let _ = event_tx.send(AgentEvent::ToolResult { name: tc.name.clone(), output: msg.clone(), parallel_index: None }).await;
+                                let _ = event_tx
+                                    .send(AgentEvent::ToolResult {
+                                        name: tc.name.clone(),
+                                        output: msg.clone(),
+                                        parallel_index: None,
+                                    })
+                                    .await;
                             }
                             msg
                         }
@@ -298,7 +372,10 @@ impl AgentApp {
             if !task_calls.is_empty() {
                 if !config.allow_task {
                     for tc in &task_calls {
-                        results.push(tool_result_block(&tc.id, "错误：task 工具在子代理中不可用".to_owned()));
+                        results.push(tool_result_block(
+                            &tc.id,
+                            "错误：task 工具在子代理中不可用".to_owned(),
+                        ));
                     }
                 } else {
                     let total = task_calls.len().min(MAX_PARALLEL_TASKS);
@@ -307,17 +384,32 @@ impl AgentApp {
 
                     for (idx, tc) in actual_calls.iter().enumerate() {
                         let input_preview = preview_text(&tc.input.to_string(), 200);
-                        logger.log(&format!("=== 工具调用: task (并行 {}/{}) ===\n输入: {input_preview}", idx + 1, actual_calls.len()));
-                        let _ = event_tx.send(AgentEvent::ToolCall {
-                            name: "task".to_owned(),
-                            input: tc.input.clone(),
-                            parallel_index: if is_parallel { Some((idx + 1, actual_calls.len())) } else { None },
-                        }).await;
+                        logger.log(&format!(
+                            "=== 工具调用: task (并行 {}/{}) ===\n输入: {input_preview}",
+                            idx + 1,
+                            actual_calls.len()
+                        ));
+                        let _ = event_tx
+                            .send(AgentEvent::ToolCall {
+                                name: "task".to_owned(),
+                                input: tc.input.clone(),
+                                parallel_index: if is_parallel {
+                                    Some((idx + 1, actual_calls.len()))
+                                } else {
+                                    None
+                                },
+                            })
+                            .await;
                     }
 
                     let mut handles = Vec::new();
                     for tc in &actual_calls {
-                        let prompt = tc.input.get("prompt").and_then(Value::as_str).unwrap_or_default().to_owned();
+                        let prompt = tc
+                            .input
+                            .get("prompt")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned();
                         let app = self.clone();
                         let event_tx = Arc::clone(event_tx);
                         handles.push(tokio::spawn(async move {
@@ -331,18 +423,33 @@ impl AgentApp {
                     for handle in handles {
                         match handle.await {
                             Ok((Ok(output), sub_logger)) => sub_results.push((output, sub_logger)),
-                            Ok((Err(e), sub_logger)) => sub_results.push((format!("子代理执行失败: {e}"), sub_logger)),
-                            Err(e) => sub_results.push((format!("子代理任务异常: {e}"), ConversationLogger::create())),
+                            Ok((Err(e), sub_logger)) => {
+                                sub_results.push((format!("子代理执行失败: {e}"), sub_logger))
+                            }
+                            Err(e) => sub_results.push((
+                                format!("子代理任务异常: {e}"),
+                                ConversationLogger::create(),
+                            )),
                         }
                     }
 
                     for (idx, (output, _sub_logger)) in sub_results.iter().enumerate() {
-                        let _ = event_tx.send(AgentEvent::ToolResult {
-                            name: "task".to_owned(),
-                            output: preview_text(output, 200),
-                            parallel_index: if is_parallel { Some((idx + 1, actual_calls.len())) } else { None },
-                        }).await;
-                        logger.log(&format!("=== 工具结果: task (并行 {}/{}) ===\n{output}", idx + 1, actual_calls.len()));
+                        let _ = event_tx
+                            .send(AgentEvent::ToolResult {
+                                name: "task".to_owned(),
+                                output: preview_text(output, 200),
+                                parallel_index: if is_parallel {
+                                    Some((idx + 1, actual_calls.len()))
+                                } else {
+                                    None
+                                },
+                            })
+                            .await;
+                        logger.log(&format!(
+                            "=== 工具结果: task (并行 {}/{}) ===\n{output}",
+                            idx + 1,
+                            actual_calls.len()
+                        ));
                         let tc_id = &actual_calls[idx].id;
                         let processed = storage::maybe_persist(tc_id, output);
                         results.push(tool_result_block(tc_id, processed));
@@ -352,27 +459,44 @@ impl AgentApp {
 
             rounds_since_todo = if used_todo { 0 } else { rounds_since_todo + 1 };
             if config.use_todo_reminder && rounds_since_todo >= 3 {
-                results.push(json!({ "type": "text", "text": "<reminder>请更新你的待办事项。</reminder>" }));
+                results.push(
+                    json!({ "type": "text", "text": "<reminder>请更新你的待办事项。</reminder>" }),
+                );
             }
 
             ctx.push_user_blocks(results);
 
             if manual_compact {
                 println!("[手动压缩]");
-                match ctx.auto_compact(&self.client, &self.model, &self.workspace_root).await {
+                match ctx
+                    .auto_compact(&self.client, &self.model, &self.workspace_root)
+                    .await
+                {
                     Ok(new_messages) => ctx.replace(new_messages),
                     Err(e) => {
                         eprintln!("[手动压缩失败: {e:#}]");
-                        let _ = event_tx.send(AgentEvent::TurnEnd { api_calls: api_call_count }).await;
+                        let _ = event_tx
+                            .send(AgentEvent::TurnEnd {
+                                api_calls: api_call_count,
+                            })
+                            .await;
                         return Err(e);
                     }
                 }
-                let _ = event_tx.send(AgentEvent::TurnEnd { api_calls: api_call_count }).await;
+                let _ = event_tx
+                    .send(AgentEvent::TurnEnd {
+                        api_calls: api_call_count,
+                    })
+                    .await;
                 return Ok("对话已手动压缩。".to_owned());
             }
         }
 
-        let _ = event_tx.send(AgentEvent::TurnEnd { api_calls: api_call_count }).await;
+        let _ = event_tx
+            .send(AgentEvent::TurnEnd {
+                api_calls: api_call_count,
+            })
+            .await;
         Ok("已达到工具调用轮数安全上限，自动停止。".to_owned())
     }
 
@@ -389,7 +513,14 @@ impl AgentApp {
         logger.log(&format!("=== 子代理系统提示词 ===\n{system_prompt}"));
         let mut sub_ctx = ContextService::new();
         sub_ctx.push_user_text(&prompt);
-        self.run_agent_loop(&mut sub_ctx, system_prompt, AgentRunConfig::child(), logger, event_tx).await
+        self.run_agent_loop(
+            &mut sub_ctx,
+            system_prompt,
+            AgentRunConfig::child(),
+            logger,
+            event_tx,
+        )
+        .await
     }
 }
 

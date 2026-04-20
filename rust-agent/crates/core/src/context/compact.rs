@@ -13,8 +13,8 @@ use anyhow::Context;
 use serde_json::Value;
 
 use super::history::Conversation;
-use crate::api::types::{ApiMessage, ProviderRequest};
 use crate::AgentResult;
+use crate::api::types::{ApiMessage, ProviderRequest};
 
 /// auto_compact 触发的 token 估算阈值
 pub const TOKEN_THRESHOLD: usize = 50_000;
@@ -85,13 +85,13 @@ pub fn micro_compact(conv: &mut Conversation) {
         }
         if let Value::Array(ref blocks) = msg.content {
             for block in blocks {
-                if block.get("type").and_then(Value::as_str) == Some("tool_use") {
-                    if let (Some(id), Some(name)) = (
+                if block.get("type").and_then(Value::as_str) == Some("tool_use")
+                    && let (Some(id), Some(name)) = (
                         block.get("id").and_then(Value::as_str),
                         block.get("name").and_then(Value::as_str),
-                    ) {
-                        tool_name_map.insert(id.to_owned(), name.to_owned());
-                    }
+                    )
+                {
+                    tool_name_map.insert(id.to_owned(), name.to_owned());
                 }
             }
         }
@@ -99,37 +99,34 @@ pub fn micro_compact(conv: &mut Conversation) {
 
     let to_clear = &tool_results[..tool_results.len() - KEEP_RECENT];
     for &(msg_idx, part_idx) in to_clear {
-        if let Value::Array(ref mut parts) = messages[msg_idx].content {
-            if let Some(part) = parts.get_mut(part_idx) {
-                if let Some(content) = part.get("content").and_then(Value::as_str) {
-                    if content.len() <= 100 {
-                        continue;
-                    }
-                }
-
-                let tool_id = part
-                    .get("tool_use_id")
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
-                let tool_name = tool_name_map
-                    .get(tool_id)
-                    .map(|s| s.as_str())
-                    .unwrap_or("unknown");
-
-                if PRESERVE_RESULT_TOOLS.contains(&tool_name) {
-                    continue;
-                }
-
-                let original = part
-                    .get("content")
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
-                let summary = truncate_by_lines(original, SUMMARY_LEN);
-                let original_chars = original.chars().count();
-                part["content"] = Value::String(format!(
-                    "[已压缩: {tool_name}, 原文 {original_chars} 字符]\n{summary}"
-                ));
+        if let Value::Array(ref mut parts) = messages[msg_idx].content
+            && let Some(part) = parts.get_mut(part_idx)
+        {
+            if let Some(content) = part.get("content").and_then(Value::as_str)
+                && content.len() <= 100
+            {
+                continue;
             }
+
+            let tool_id = part
+                .get("tool_use_id")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let tool_name = tool_name_map
+                .get(tool_id)
+                .map(|s| s.as_str())
+                .unwrap_or("unknown");
+
+            if PRESERVE_RESULT_TOOLS.contains(&tool_name) {
+                continue;
+            }
+
+            let original = part.get("content").and_then(Value::as_str).unwrap_or("");
+            let summary = truncate_by_lines(original, SUMMARY_LEN);
+            let original_chars = original.chars().count();
+            part["content"] = Value::String(format!(
+                "[已压缩: {tool_name}, 原文 {original_chars} 字符]\n{summary}"
+            ));
         }
     }
 }
@@ -228,17 +225,39 @@ mod tests {
 
         let msgs = conv.messages();
         if let Value::Array(ref parts) = msgs[1].content {
-            assert!(parts[0].get("content").unwrap().as_str().unwrap().starts_with("x"));
+            assert!(
+                parts[0]
+                    .get("content")
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .starts_with("x")
+            );
         }
         if let Value::Array(ref parts) = msgs[3].content {
-            assert!(parts[0].get("content").unwrap().as_str().unwrap().starts_with("y"));
+            assert!(
+                parts[0]
+                    .get("content")
+                    .unwrap()
+                    .as_str()
+                    .unwrap()
+                    .starts_with("y")
+            );
         }
     }
 
     #[test]
     fn micro_compact_replaces_old_results() {
         let mut conv = Conversation::new();
-        for (id, ch) in [("id1", "a"), ("id2", "b"), ("id3", "c"), ("id4", "d"), ("id5", "e"), ("id6", "f"), ("id7", "g")] {
+        for (id, ch) in [
+            ("id1", "a"),
+            ("id2", "b"),
+            ("id3", "c"),
+            ("id4", "d"),
+            ("id5", "e"),
+            ("id6", "f"),
+            ("id7", "g"),
+        ] {
             conv.push(make_assistant_with_tool_use(id, "bash"));
             conv.push(make_user_with_tool_result(id, &ch.repeat(200)));
         }
@@ -260,7 +279,10 @@ mod tests {
     fn micro_compact_preserves_read_file_results() {
         let mut conv = Conversation::new();
         conv.push(make_assistant_with_tool_use("id1", "read_file"));
-        conv.push(make_user_with_tool_result("id1", &"file content here".repeat(20)));
+        conv.push(make_user_with_tool_result(
+            "id1",
+            &"file content here".repeat(20),
+        ));
         for (id, ch) in [("id2", "o"), ("id3", "o"), ("id4", "o"), ("id5", "o")] {
             conv.push(make_assistant_with_tool_use(id, "bash"));
             conv.push(make_user_with_tool_result(id, &ch.repeat(30)));

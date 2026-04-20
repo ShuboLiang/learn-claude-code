@@ -30,9 +30,7 @@ pub async fn ensure_cli_installed() -> bool {
         return false;
     }
 
-    let install_cmd = format!(
-        "curl -fsSL {INSTALL_URL} | bash -s -- --cli-only"
-    );
+    let install_cmd = format!("curl -fsSL {INSTALL_URL} | bash -s -- --cli-only");
 
     match run_shell_command(&install_cmd, None).await {
         Ok(output) => {
@@ -83,12 +81,9 @@ pub async fn install(name: &str, _workspace_root: &Path) -> AgentResult<String> 
     std::fs::create_dir_all(&target_dir)
         .with_context(|| format!("创建技能目录失败：{}", target_dir.display()))?;
 
-    let output = run_shell_command(
-        &format!("skillhub install {name}"),
-        Some(&target_dir),
-    )
-    .await
-    .with_context(|| format!("安装技能 '{name}' 失败"))?;
+    let output = run_shell_command(&format!("skillhub install {name}"), Some(&target_dir))
+        .await
+        .with_context(|| format!("安装技能 '{name}' 失败"))?;
     Ok(format!(
         "技能 '{name}' 安装到 {}。\n{output}",
         target_dir.display()

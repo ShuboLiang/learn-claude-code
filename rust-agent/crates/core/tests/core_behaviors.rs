@@ -1,6 +1,6 @@
-use rust_agent_core::skills::parse_skill_file;
 use rust_agent_core::infra::todo::{TodoItemInput, TodoManager};
 use rust_agent_core::infra::workspace::resolve_workspace_path;
+use rust_agent_core::skills::parse_skill_file;
 
 #[test]
 fn todo_manager_rejects_multiple_in_progress_items() {

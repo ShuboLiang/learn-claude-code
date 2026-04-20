@@ -16,6 +16,12 @@ pub struct ToolCircuitBreaker {
     threshold: usize,
 }
 
+impl Default for ToolCircuitBreaker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ToolCircuitBreaker {
     pub fn new() -> Self {
         Self {

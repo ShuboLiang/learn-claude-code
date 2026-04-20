@@ -1291,6 +1291,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "rust-agent-a2a"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "chrono",
+ "dashmap",
+ "dotenvy",
+ "futures",
+ "reqwest",
+ "rust-agent-core",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-stream",
+ "tower-http",
+]
+
+[[package]]
 name = "rust-agent-core"
 version = "0.1.0"
 dependencies = [

@@ -12,8 +12,8 @@ use serde_json::Value;
 use tokio::sync::Mutex;
 
 use crate::AgentResult;
-use crate::skills::SkillLoader;
 use crate::infra::todo::{TodoItemInput, TodoManager};
+use crate::skills::SkillLoader;
 
 /// 工具调度的执行结果
 #[derive(Clone, Debug)]
@@ -39,7 +39,11 @@ pub struct AgentToolbox {
 
 impl AgentToolbox {
     /// 创建新的工具箱实例
-    pub fn new(workspace_root: PathBuf, skills: Arc<RwLock<SkillLoader>>, skill_dirs: Vec<PathBuf>) -> Self {
+    pub fn new(
+        workspace_root: PathBuf,
+        skills: Arc<RwLock<SkillLoader>>,
+        skill_dirs: Vec<PathBuf>,
+    ) -> Self {
         Self {
             workspace_root,
             skills,
@@ -84,7 +88,10 @@ impl AgentToolbox {
                 optional_string(input, "output_mode")?,
                 input.get("-i").and_then(Value::as_bool).unwrap_or(false),
                 input.get("-C").and_then(Value::as_u64).map(|v| v as usize),
-                input.get("head_limit").and_then(Value::as_u64).map(|v| v as usize),
+                input
+                    .get("head_limit")
+                    .and_then(Value::as_u64)
+                    .map(|v| v as usize),
             )?,
             "todo" => {
                 let items = parse_todo_items(input)?;
@@ -116,7 +123,11 @@ impl AgentToolbox {
             "load_skill" => {
                 let skill_name = required_string(input, "name")?;
                 let content = self.skills.read().unwrap().load_skill_content(skill_name);
-                let tree = self.skills.read().unwrap().get_skill_dir(skill_name)
+                let tree = self
+                    .skills
+                    .read()
+                    .unwrap()
+                    .get_skill_dir(skill_name)
                     .map(|dir| skill_ops::list_skill_tree(&dir))
                     .unwrap_or_default();
                 if tree.is_empty() {
@@ -149,7 +160,8 @@ impl AgentToolbox {
                 let skill_name = required_string(input, "name")?;
                 let result = skillhub::install(skill_name, &self.workspace_root).await?;
                 // 安装后立即重新加载技能，无需重启
-                let dirs: Vec<&std::path::Path> = self.skill_dirs.iter().map(|p| p.as_path()).collect();
+                let dirs: Vec<&std::path::Path> =
+                    self.skill_dirs.iter().map(|p| p.as_path()).collect();
                 if let Ok(reloaded) = SkillLoader::reload_from_dirs(&dirs) {
                     *self.skills.write().unwrap() = reloaded;
                 }
@@ -234,7 +246,11 @@ mod tests {
     #[ignore]
     async fn load_skill_wraps_body() {
         let skills = SkillLoader::load_from_dir(Path::new("../skills")).unwrap();
-        let mut toolbox = AgentToolbox::new(std::env::current_dir().unwrap(), Arc::new(RwLock::new(skills)), vec![]);
+        let mut toolbox = AgentToolbox::new(
+            std::env::current_dir().unwrap(),
+            Arc::new(RwLock::new(skills)),
+            vec![],
+        );
         let result = toolbox
             .dispatch("load_skill", &json!({ "name": "pdf" }))
             .await

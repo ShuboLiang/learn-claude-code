@@ -186,7 +186,7 @@ impl OpenAIClient {
     /// - 5xx：服务器内部错误
     fn is_retryable_status(status: reqwest::StatusCode) -> bool {
         let code = status.as_u16();
-        code == 429 || (code >= 500 && code < 600)
+        code == 429 || (500..600).contains(&code)
     }
 
     /// 判断网络错误是否属于可重试的类型
@@ -381,14 +381,12 @@ fn convert_messages(system: &str, messages: &[ApiMessage]) -> Vec<OpenAIMessage>
                                 });
                             } else {
                                 // 非 tool_result 块作为普通文本
-                                if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
-                                    if !text.is_empty() {
-                                        openai_messages.push(OpenAIMessage::User {
-                                            content: Some(serde_json::Value::String(
-                                                text.to_owned(),
-                                            )),
-                                        });
-                                    }
+                                if let Some(text) = block.get("text").and_then(|v| v.as_str())
+                                    && !text.is_empty()
+                                {
+                                    openai_messages.push(OpenAIMessage::User {
+                                        content: Some(serde_json::Value::String(text.to_owned())),
+                                    });
                                 }
                             }
                         }
@@ -517,10 +515,10 @@ fn convert_response(response: OpenAIResponse) -> ProviderResponse {
         };
 
         // 提取文本内容
-        if let Some(text) = &choice.message.content {
-            if !text.is_empty() {
-                content_blocks.push(ResponseContentBlock::Text { text: text.clone() });
-            }
+        if let Some(text) = &choice.message.content
+            && !text.is_empty()
+        {
+            content_blocks.push(ResponseContentBlock::Text { text: text.clone() });
         }
 
         // 提取工具调用

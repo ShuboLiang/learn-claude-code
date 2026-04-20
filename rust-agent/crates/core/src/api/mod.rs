@@ -64,21 +64,18 @@ pub fn create_provider() -> AgentResult<ProviderInfo> {
     let config = crate::infra::config::AppConfig::load()?;
     let profile = config.current_profile()?;
 
-    println!("[配置] 使用 profile: {} ({} / {})", profile.name, profile.provider, profile.model);
+    println!(
+        "[配置] 使用 profile: {} ({} / {})",
+        profile.name, profile.provider, profile.model
+    );
 
     let provider = match profile.provider.to_lowercase().as_str() {
         "openai" => {
-            let client = openai::OpenAIClient::new(
-                &profile.api_key,
-                &profile.base_url,
-            )?;
+            let client = openai::OpenAIClient::new(&profile.api_key, &profile.base_url)?;
             LlmProvider::OpenAI(client)
         }
         _ => {
-            let client = anthropic::AnthropicClient::new(
-                &profile.api_key,
-                &profile.base_url,
-            )?;
+            let client = anthropic::AnthropicClient::new(&profile.api_key, &profile.base_url)?;
             LlmProvider::Anthropic(client)
         }
     };

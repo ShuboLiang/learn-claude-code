@@ -2,8 +2,8 @@ use anyhow::Context;
 use tokio::process::Command;
 use tokio::time::{Duration, timeout};
 
-use crate::infra::utils::truncate_text;
 use crate::AgentResult;
+use crate::infra::utils::truncate_text;
 
 impl super::AgentToolbox {
     /// 执行 shell 命令并返回输出

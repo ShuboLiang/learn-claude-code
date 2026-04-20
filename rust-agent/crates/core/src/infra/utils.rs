@@ -9,9 +9,7 @@ pub fn truncate_text(text: &str, max_chars: usize) -> String {
         text.to_owned()
     } else {
         let truncated: String = text.chars().take(max_chars).collect();
-        format!(
-            "{truncated}\n\n... [输出已截断，共 {char_count} 字符，仅显示前 {max_chars} 字符]"
-        )
+        format!("{truncated}\n\n... [输出已截断，共 {char_count} 字符，仅显示前 {max_chars} 字符]")
     }
 }
 

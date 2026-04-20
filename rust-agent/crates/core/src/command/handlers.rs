@@ -64,7 +64,10 @@ async fn handle_compact(
 fn handle_stats(ctx: &ContextService) -> CommandResult {
     let stats = ctx.stats();
     CommandResult {
-        output: format!("消息数: {} | 预估 token: {}", stats.message_count, stats.estimated_tokens),
+        output: format!(
+            "消息数: {} | 预估 token: {}",
+            stats.message_count, stats.estimated_tokens
+        ),
         should_quit: false,
     }
 }
