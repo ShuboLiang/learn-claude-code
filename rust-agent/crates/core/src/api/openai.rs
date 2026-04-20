@@ -254,6 +254,7 @@ impl OpenAIClient {
                 .http
                 .post(&url)
                 .header(AUTHORIZATION, format!("Bearer {}", self.api_key))
+                .header("X-Client-Name", "claude-code")
                 .json(request)
                 .send()
                 .await;
