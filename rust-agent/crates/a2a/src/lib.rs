@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 pub mod agent_card;
+pub mod errors;
 pub mod handlers;
 pub mod routes;
 pub mod state;
@@ -21,6 +22,8 @@ pub async fn app(base_url: &str) -> anyhow::Result<axum::Router> {
         contexts: Arc::new(dashmap::DashMap::new()),
         agent: agent.clone(),
         agent_card,
+        extended_agent_card_enabled: false,
+        task_broadcasts: Arc::new(dashmap::DashMap::new()),
     });
 
     Ok(routes::routes(state))

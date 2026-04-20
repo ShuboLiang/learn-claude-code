@@ -8,15 +8,18 @@ pub fn build_agent_card(base_url: &str, tool_schemas: &[serde_json::Value]) -> A
         description: "A Rust-based programming assistant with tool execution capabilities."
             .to_string(),
         url: base_url.to_string(),
+        provider: None,
         version: env!("CARGO_PKG_VERSION").to_string(),
+        documentation_url: None,
         capabilities: Capabilities {
             streaming: true,
-            push_notifications: false,
-            state_transition_history: false,
+            push_notifications: Some(false),
+            state_transition_history: Some(false),
+            extensions: None,
         },
         authentication: None,
-        default_input_modes: vec!["text".to_string()],
-        default_output_modes: vec!["text".to_string(), "file".to_string()],
+        default_input_modes: vec!["text/plain".to_string()],
+        default_output_modes: vec!["text/plain".to_string()],
         skills,
     }
 }
@@ -44,10 +47,10 @@ fn schema_to_skill(schema: &serde_json::Value) -> Skill {
         id,
         name,
         description,
-        tags: vec![],
-        examples: vec![],
-        input_modes: vec!["text".to_string()],
-        output_modes: vec!["text".to_string(), "file".to_string()],
+        tags: None,
+        examples: None,
+        input_modes: Some(vec!["text/plain".to_string()]),
+        output_modes: Some(vec!["text/plain".to_string()]),
         input_schema: schema.get("input_schema").cloned(),
         output_schema: None,
     }
@@ -80,5 +83,6 @@ mod tests {
             Some(serde_json::json!({"type": "object"}))
         );
         assert_eq!(card.skills[1].id, "delegate_task"); // renamed
+        assert!(card.capabilities.extensions.is_none());
     }
 }
