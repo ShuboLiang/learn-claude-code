@@ -10,7 +10,7 @@ pub async fn run_task(
     user_input: String,
     agent: AgentApp,
     event_tx: mpsc::Sender<AgentEvent>,
-) -> Result<Task> {
+) -> Result<(Task, ContextService)> {
     let mut ctx = ContextService::new();
 
     let result = agent
@@ -45,5 +45,5 @@ pub async fn run_task(
         updated_at: now,
     };
 
-    Ok(task)
+    Ok((task, ctx))
 }

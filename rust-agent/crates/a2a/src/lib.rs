@@ -18,6 +18,8 @@ pub async fn app(base_url: &str) -> anyhow::Result<axum::Router> {
 
     let state = Arc::new(state::AppState {
         tasks: Arc::new(dashmap::DashMap::new()),
+        contexts: Arc::new(dashmap::DashMap::new()),
+        agent: agent.clone(),
         agent_card,
     });
 

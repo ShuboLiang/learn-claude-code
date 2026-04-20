@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-A2A 多轮对话场景测试（会议室预定）
+A2A 会议室预定 — 自动化多轮对话测试
 
 用法:
-    python test_read_file_summary.py
+    python test_meeting_room_booking.py
 
-交互模式:
-    1. 脚本发送初始 prompt
-    2. Agent 回复后，脚本提示你输入下一条消息
-    3. 输入消息按回车继续对话，输入 exit/quit 结束
+测试流程（自动执行，无需人工输入）:
+    Round 1: 请使用会议预定接口定个会议室
+    Round 2: 提供会议时间、人数、时长、主题
+    （如 Agent 仍需更多信息，可继续扩展 DIALOGUE_SCRIPT）
 """
 
 import json
@@ -23,6 +23,14 @@ from urllib.parse import urljoin
 BASE_URL = "http://localhost:3001"
 A2A_CARGO_PATH = Path(__file__).parent.parent  # crates/a2a
 PROJECT_ROOT = A2A_CARGO_PATH.parent.parent  # rust-agent
+
+# 自动对话剧本：每轮的用户输入
+DIALOGUE_SCRIPT = [
+    "请使用会议预定接口定个会议室",
+    "2026-04-25 14:30，8人，2小时，项目例会",
+]
+
+TASK_ID = "task-auto-meeting-001"
 
 
 def wait_for_server(timeout: float = 60.0) -> bool:
@@ -39,37 +47,6 @@ def wait_for_server(timeout: float = 60.0) -> bool:
             pass
         time.sleep(0.5)
     return False
-
-
-def send_sync_task(task_id: str, prompt: str) -> tuple[int, dict | str]:
-    """发送同步任务"""
-    url = urljoin(BASE_URL, "/tasks/send")
-    payload = {
-        "id": task_id,
-        "message": {
-            "role": "user",
-            "parts": [{"type": "text", "text": prompt}]
-        }
-    }
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        method="POST",
-        data=body,
-        headers={"Content-Type": "application/json", "Accept": "application/json"}
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=300) as resp:
-            resp_body = resp.read().decode("utf-8")
-            return resp.status, json.loads(resp_body)
-    except urllib.error.HTTPError as e:
-        resp_body = e.read().decode("utf-8")
-        try:
-            return e.code, json.loads(resp_body)
-        except json.JSONDecodeError:
-            return e.code, resp_body
-    except Exception as e:
-        return -1, str(e)
 
 
 def send_stream_task(task_id: str, prompt: str) -> tuple[int, list[dict]]:
@@ -168,23 +145,21 @@ def print_sse_event(event: dict):
         state = payload.get("status", {}).get("state", "?")
         is_final = payload.get("final", False)
         marker = "[最终]" if is_final else ""
-        print(f"  📊 状态更新: {state} {marker}")
+        print(f"      📊 状态: {state} {marker}")
     elif etype == "task-message":
         parts = payload.get("message", {}).get("parts", [])
         for part in parts:
             if part.get("type") == "text":
                 text = part.get("text", "")
-                display = text[:500] + "..." if len(text) > 500 else text
-                print(f"  💬 {display}")
+                display = text[:400] + "..." if len(text) > 400 else text
+                print(f"      💬 {display}")
     elif etype == "task-artifact":
         name = payload.get("artifact", {}).get("name", "unnamed")
-        print(f"  📎 Artifact: {name}")
-    else:
-        print(f"  📡 {etype}: {str(payload)[:100]}")
+        print(f"      📎 Artifact: {name}")
 
 
 def extract_agent_text(response: dict) -> str:
-    """从同步响应中提取 Agent 文本回复"""
+    """从响应中提取 Agent 文本回复"""
     history = response.get("history", [])
     for msg in history:
         if msg.get("role") == "agent":
@@ -195,17 +170,61 @@ def extract_agent_text(response: dict) -> str:
     return ""
 
 
+def run_round(round_num: int, user_input: str, is_first: bool = False) -> tuple[bool, str]:
+    """
+    执行单轮对话。
+    第一轮使用 SSE 流式，后续使用同步 follow-up。
+    返回 (success, agent_text)
+    """
+    print(f"\n{'─' * 60}")
+    print(f"🔄 Round {round_num}")
+    print(f"👤 User: {user_input}")
+    print("─" * 60)
+
+    if is_first:
+        code, _ = send_stream_task(TASK_ID, user_input)
+        if code != 200:
+            print(f"❌ 流式任务发送失败: {code}")
+            return False, ""
+        # 流结束后稍等，让服务端把 context 落盘
+        time.sleep(0.5)
+        # 查询最终任务状态获取完整文本
+        req = urllib.request.Request(urljoin(BASE_URL, f"/tasks/{TASK_ID}"))
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                task_data = json.loads(resp.read().decode("utf-8"))
+                agent_text = extract_agent_text(task_data)
+        except Exception as e:
+            print(f"⚠️  查询任务状态失败: {e}")
+            agent_text = ""
+    else:
+        code, body = send_followup_task(TASK_ID, user_input)
+        if code != 200:
+            print(f"❌ Follow-up 失败: {code} - {body}")
+            return False, ""
+        if isinstance(body, dict) and "error" in body:
+            print(f"❌ 服务端返回错误: {body['error']}")
+            return False, ""
+        agent_text = extract_agent_text(body)
+
+    if agent_text:
+        print(f"\n🤖 Agent:\n{agent_text.strip()}")
+    else:
+        print("\n🤖 Agent: （无文本回复）")
+
+    return True, agent_text
+
+
 def main():
     print("=" * 60)
-    print("A2A 多轮对话测试（会议室预定）")
+    print("A2A 会议室预定 — 自动化多轮对话测试")
     print(f"工作目录: {PROJECT_ROOT}")
     print(f"服务端地址: {BASE_URL}")
+    print(f"对话轮数: {len(DIALOGUE_SCRIPT)}")
     print("=" * 60)
 
-    # 1. 启动 A2A 服务端
-    print("\n[1/4] 启动 A2A 服务端...")
-    print(f"      工作目录: {PROJECT_ROOT}")
-
+    # 1. 启动服务端
+    print("\n[1/3] 启动 A2A 服务端...")
     proc = subprocess.Popen(
         ["cargo", "run", "-p", "rust-agent-a2a", "--quiet"],
         cwd=PROJECT_ROOT,
@@ -214,8 +233,8 @@ def main():
         text=True,
     )
 
-    # 2. 等待服务就绪
-    print("[2/4] 等待服务端就绪...")
+    # 2. 等待就绪
+    print("[2/3] 等待服务端就绪...")
     if not wait_for_server(timeout=120.0):
         print("❌ 服务端启动超时")
         proc.terminate()
@@ -223,7 +242,7 @@ def main():
     print("✅ 服务端已就绪")
 
     # 3. 验证 Agent Card
-    print("\n[3/4] 验证 Agent Card...")
+    print("\n[3/3] 验证 Agent Card...")
     req = urllib.request.Request(urljoin(BASE_URL, "/.well-known/agent.json"))
     with urllib.request.urlopen(req, timeout=5) as resp:
         card = json.loads(resp.read().decode("utf-8"))
@@ -231,64 +250,28 @@ def main():
         print(f"      Agent: {card.get('name')}")
         print(f"      Skills: {skills}")
 
-    # 4. 多轮对话
-    task_id = "task-meeting-book-001"
-    prompt = "请使用会议预定接口定个会议室"
-    print(f"\n[4/4] 发送初始任务: {prompt}")
-    print("-" * 60)
+    # 4. 执行自动对话剧本
+    print("\n" + "=" * 60)
+    print("开始执行自动对话剧本")
+    print("=" * 60)
 
-    # 第一轮：流式
-    code, events = send_stream_task(task_id, prompt)
-    print("-" * 60)
-
-    # 提取最终文本（从 SSE 事件或后续从 API 查询）
-    # 由于 SSE 结束后任务已经是 Completed，我们可以直接查询
-    time.sleep(0.5)
-    req = urllib.request.Request(urljoin(BASE_URL, f"/tasks/{task_id}"))
-    try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            task_data = json.loads(resp.read().decode("utf-8"))
-            agent_text = extract_agent_text(task_data)
-    except Exception:
-        agent_text = ""
-
-    # 多轮循环
-    round_num = 1
-    while True:
-        if agent_text:
-            print(f"\n🤖 Agent（第 {round_num} 轮）:\n{agent_text.strip()}")
-        else:
-            print(f"\n🤖 Agent（第 {round_num} 轮）: （无文本回复）")
-
-        try:
-            user_input = input("\n👉 你的回复（exit/quit 结束）: ").strip()
-        except (EOFError, KeyboardInterrupt):
-            print("\n")
+    all_agent_replies = []
+    for i, user_input in enumerate(DIALOGUE_SCRIPT, start=1):
+        ok, agent_text = run_round(i, user_input, is_first=(i == 1))
+        if not ok:
+            print("\n❌ 对话中断")
             break
+        all_agent_replies.append((i, agent_text))
 
-        if not user_input:
-            continue
-        if user_input.lower() in ("exit", "quit", "q"):
-            print("👋 结束对话")
-            break
+    # 5. 汇总
+    print("\n" + "=" * 60)
+    print("📋 对话汇总")
+    print("=" * 60)
+    for rnd, text in all_agent_replies:
+        summary = text[:200] + "..." if len(text) > 200 else text
+        print(f"  Round {rnd}: {summary}")
 
-        print(f"\n📤 发送 follow-up...")
-        print("-" * 60)
-        code, body = send_followup_task(task_id, user_input)
-        print("-" * 60)
-
-        if code != 200:
-            print(f"❌ 请求失败: {code} - {body}")
-            break
-
-        if isinstance(body, dict) and "error" in body:
-            print(f"❌ 服务端错误: {body['error']}")
-            break
-
-        agent_text = extract_agent_text(body)
-        round_num += 1
-
-    # 5. 清理
+    # 6. 清理
     print("\n[清理] 关闭服务端...")
     proc.terminate()
     try:

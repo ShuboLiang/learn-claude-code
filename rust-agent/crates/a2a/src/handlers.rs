@@ -6,7 +6,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use rust_agent_core::agent::{AgentApp, AgentEvent};
+use rust_agent_core::agent::AgentEvent;
 use serde::Deserialize;
 use tokio::sync::mpsc;
 
@@ -60,21 +60,7 @@ pub async fn send_task(
         }
     };
 
-    let agent = match AgentApp::from_env().await {
-        Ok(a) => a,
-        Err(e) => {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({
-                    "error": {
-                        "code": "agent_init_failed",
-                        "message": e.to_string()
-                    }
-                })),
-            )
-                .into_response();
-        }
-    };
+    let agent = state.agent.clone();
 
     let placeholder = Task {
         id: body.id.clone(),
@@ -97,8 +83,9 @@ pub async fn send_task(
     let result = run_task(body.id.clone(), user_input, agent, event_tx).await;
 
     match result {
-        Ok(mut task) => {
+        Ok((mut task, ctx)) => {
             task.updated_at = chrono::Utc::now();
+            state.contexts.insert(body.id.clone(), ctx);
             state
                 .tasks
                 .insert(body.id.clone(), TaskState::Completed(task.clone()));
@@ -121,6 +108,7 @@ pub async fn send_task(
                 created_at: placeholder.created_at,
                 updated_at: chrono::Utc::now(),
             };
+            state.contexts.insert(body.id.clone(), rust_agent_core::context::ContextService::new());
             state.tasks.insert(
                 body.id.clone(),
                 TaskState::Failed {
@@ -171,22 +159,7 @@ pub async fn send_task_subscribe(
         }
     };
 
-    let agent = match AgentApp::from_env().await {
-        Ok(a) => a,
-        Err(e) => {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(serde_json::json!({
-                    "error": {
-                        "code": "agent_init_failed",
-                        "message": e.to_string()
-                    }
-                })),
-            )
-                .into_response();
-        }
-    };
-
+    let agent = state.agent.clone();
     let task_id = body.id.clone();
 
     let placeholder = Task {
@@ -218,7 +191,8 @@ pub async fn send_task_subscribe(
     tokio::spawn(async move {
         let result = run_task(runner_task_id.clone(), user_input, agent, agent_event_tx).await;
         match result {
-            Ok(task) => {
+            Ok((task, ctx)) => {
+                runner_state.contexts.insert(runner_task_id.clone(), ctx);
                 runner_state
                     .tasks
                     .insert(runner_task_id, TaskState::Completed(task));
@@ -240,6 +214,7 @@ pub async fn send_task_subscribe(
                     created_at: runner_created_at,
                     updated_at: chrono::Utc::now(),
                 };
+                runner_state.contexts.insert(runner_task_id.clone(), rust_agent_core::context::ContextService::new());
                 runner_state.tasks.insert(
                     runner_task_id,
                     TaskState::Failed {
@@ -268,6 +243,113 @@ pub async fn send_task_subscribe(
 
     let stream = ReceiverStream::new(sse_rx);
     Sse::new(stream).into_response()
+}
+
+pub async fn send_task_followup(
+    State(state): State<Arc<AppState>>,
+    Path(task_id): Path<String>,
+    Json(body): Json<SendTaskRequest>,
+) -> impl IntoResponse {
+    if body.id != task_id {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": {
+                    "code": "task_id_mismatch",
+                    "message": "URL 中的 taskId 与 body 中的 id 不一致"
+                }
+            })),
+        )
+            .into_response();
+    }
+
+    if !state.tasks.contains_key(&task_id) {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": {
+                    "code": "task_not_found",
+                    "message": format!("Task {} not found", task_id)
+                }
+            })),
+        )
+            .into_response();
+    }
+
+    let user_input = match extract_user_input(&body.message) {
+        Ok(text) => text,
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": {
+                        "code": "unsupported_part_type",
+                        "message": e
+                    }
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    let mut ctx = state
+        .contexts
+        .get(&task_id)
+        .map(|entry| entry.value().clone())
+        .unwrap_or_default();
+
+    let agent = state.agent.clone();
+    let (event_tx, _event_rx) = mpsc::channel(64);
+    let result = agent.handle_user_turn(&mut ctx, &user_input, event_tx).await;
+
+    let now = chrono::Utc::now();
+    match result {
+        Ok(text) => {
+            let task = Task {
+                id: task_id.clone(),
+                session_id: body.session_id,
+                status: TaskStatus::Completed,
+                history: vec![Message {
+                    role: Role::Agent,
+                    parts: vec![Part::Text { text: text.clone() }],
+                }],
+                artifacts: vec![],
+                metadata: body.metadata,
+                created_at: now,
+                updated_at: now,
+            };
+            state.contexts.insert(task_id.clone(), ctx);
+            state.tasks.insert(task_id, TaskState::Completed(task.clone()));
+            (StatusCode::OK, Json(task)).into_response()
+        }
+        Err(e) => {
+            let msg = e.to_string();
+            let failed = Task {
+                id: task_id.clone(),
+                session_id: body.session_id,
+                status: TaskStatus::Failed {
+                    message: msg.clone(),
+                },
+                history: vec![Message {
+                    role: Role::Agent,
+                    parts: vec![Part::Text { text: msg.clone() }],
+                }],
+                artifacts: vec![],
+                metadata: body.metadata,
+                created_at: now,
+                updated_at: now,
+            };
+            state.contexts.insert(task_id.clone(), ctx);
+            state.tasks.insert(
+                task_id,
+                TaskState::Failed {
+                    task: failed.clone(),
+                    error: msg,
+                },
+            );
+            (StatusCode::OK, Json(failed)).into_response()
+        }
+    }
 }
 
 pub async fn get_task(

@@ -6,6 +6,8 @@ use crate::types::{AgentCard, Task};
 #[derive(Clone)]
 pub struct AppState {
     pub tasks: Arc<DashMap<String, TaskState>>,
+    pub contexts: Arc<DashMap<String, rust_agent_core::context::ContextService>>,
+    pub agent: rust_agent_core::agent::AgentApp,
     pub agent_card: AgentCard,
 }
 
