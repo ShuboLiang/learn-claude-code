@@ -8,12 +8,11 @@ pub(super) async fn handle(
     ctx: &mut ContextService,
     client: Option<&crate::api::LlmProvider>,
     model: &str,
-    quotas: &[crate::infra::usage::QuotaRule],
     workspace_root: &std::path::Path,
 ) -> CommandResult {
     match cmd {
         UserCommand::Clear => handle_clear(ctx),
-        UserCommand::Compact => handle_compact(ctx, client, model, quotas, workspace_root).await,
+        UserCommand::Compact => handle_compact(ctx, client, model, workspace_root).await,
         UserCommand::Stats => handle_stats(ctx),
         UserCommand::Help => handle_help(),
         UserCommand::Quit => CommandResult {
@@ -36,7 +35,6 @@ async fn handle_compact(
     ctx: &mut ContextService,
     client: Option<&crate::api::LlmProvider>,
     model: &str,
-    quotas: &[crate::infra::usage::QuotaRule],
     workspace_root: &std::path::Path,
 ) -> CommandResult {
     let Some(client) = client else {
@@ -46,7 +44,7 @@ async fn handle_compact(
         };
     };
 
-    match ctx.auto_compact(client, model, quotas, workspace_root).await {
+    match ctx.auto_compact(client, model, workspace_root).await {
         Ok(new_messages) => {
             let before = ctx.len();
             ctx.replace(new_messages);

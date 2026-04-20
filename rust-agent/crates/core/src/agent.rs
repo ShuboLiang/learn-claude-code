@@ -48,7 +48,6 @@ pub struct AgentApp {
     skill_dirs: Vec<PathBuf>,
     model: String,
     max_tokens: u32,
-    quotas: Vec<crate::infra::usage::QuotaRule>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -97,12 +96,7 @@ impl AgentApp {
             skill_dirs,
             model,
             max_tokens,
-            quotas: info.quotas,
         })
-    }
-
-    pub fn quotas(&self) -> &[crate::infra::usage::QuotaRule] {
-        &self.quotas
     }
 
     /// 获取 LLM Provider 的引用（供 /compact 等命令使用）
@@ -185,7 +179,7 @@ impl AgentApp {
             }
             if ctx.estimate_tokens() > compact::TOKEN_THRESHOLD {
                 println!("[auto_compact 已触发]");
-                match ctx.auto_compact(&self.client, &self.model, &self.quotas, &self.workspace_root).await {
+                match ctx.auto_compact(&self.client, &self.model, &self.workspace_root).await {
                     Ok(new_messages) => ctx.replace(new_messages),
                     Err(e) => eprintln!("[auto_compact 失败: {e:#}]"),
                 }
@@ -199,7 +193,7 @@ impl AgentApp {
                 tools: &tools,
                 max_tokens: self.max_tokens,
             };
-            let response = match self.client.create_message(&request, &self.quotas).await {
+            let response = match self.client.create_message(&request).await {
                 Ok(resp) => resp,
                 Err(e) => {
                     eprintln!("[Agent] create_message 失败！错误: {e:#}");
@@ -365,7 +359,7 @@ impl AgentApp {
 
             if manual_compact {
                 println!("[手动压缩]");
-                match ctx.auto_compact(&self.client, &self.model, &self.quotas, &self.workspace_root).await {
+                match ctx.auto_compact(&self.client, &self.model, &self.workspace_root).await {
                     Ok(new_messages) => ctx.replace(new_messages),
                     Err(e) => {
                         eprintln!("[手动压缩失败: {e:#}]");
