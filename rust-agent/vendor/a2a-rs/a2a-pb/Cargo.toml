@@ -1,0 +1,28 @@
+[package]
+name = "a2a-pb"
+version = "0.1.6"
+description = "A2A v1 protobuf-generated types and conversion layer"
+readme = "README.md"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/a2aproject/a2a-rs"
+rust-version = "1.85"
+
+[lib]
+name = "a2a_pb"
+
+[dependencies]
+a2a = { path = "../a2a", package = "a2a-lf" }
+serde = { version = "1", features = ["derive"] }
+prost = "0.13"
+prost-types = "0.13"
+pbjson = "0.7"
+pbjson-types = "0.7"
+tonic = "0.13"
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+
+[build-dependencies]
+pbjson-build = "0.7"
+protoc-bin-vendored = "3"
+tonic-build = "0.13"

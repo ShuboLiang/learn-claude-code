@@ -1,0 +1,36 @@
+[package]
+name = "a2a-server-lf"
+version = "0.2.6"
+description = "A2A v1 async server framework"
+readme = "README.md"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/a2aproject/a2a-rs"
+rust-version = "1.85"
+
+[lib]
+name = "a2a_server"
+
+[dependencies]
+a2a = { path = "../a2a", package = "a2a-lf" }
+a2a-pb = { path = "../a2a-pb" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+futures = "0.3"
+async-trait = "0.1"
+axum = { version = "0.8", features = ["macros"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.6", features = ["cors"] }
+hyper = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "charset", "http2", "system-proxy"] }
+tracing = "0.1"
+uuid = { version = "1", features = ["v7"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+[features]
+default = ["rustls-tls"]
+native-tls = ["reqwest/native-tls"]
+rustls-tls = ["reqwest/rustls-tls"]
+rustls = []

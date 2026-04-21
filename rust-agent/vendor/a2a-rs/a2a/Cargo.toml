@@ -1,0 +1,20 @@
+[package]
+name = "a2a-lf"
+version = "0.2.4"
+description = "A2A v1 protocol types and core definitions"
+readme = "README.md"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/a2aproject/a2a-rs"
+rust-version = "1.85"
+
+[lib]
+name = "a2a"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+base64 = "0.22"
+thiserror = "2"
+uuid = { version = "1", features = ["v7"] }
