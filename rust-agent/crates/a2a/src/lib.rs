@@ -6,9 +6,20 @@ use a2a::*;
 use a2a_server::{
     DefaultRequestHandler, InMemoryTaskStore, StaticAgentCard,
 };
+use axum::{extract::Request, middleware::Next, response::Response};
 use rust_agent_core::agent::AgentApp;
 
 use crate::executor::RustAgentExecutor;
+
+/// 日志中间件：打印每个请求的方法、路径和响应状态码
+async fn log_request(req: Request, next: Next) -> Response {
+    let method = req.method().clone();
+    let uri = req.uri().clone();
+    let response = next.run(req).await;
+    let status = response.status();
+    println!("[A2A] {} {} -> {}", method, uri, status.as_u16());
+    response
+}
 
 /// Build the axum app using the a2a-rs SDK.
 pub async fn app(base_url: &str) -> anyhow::Result<axum::Router> {
@@ -31,9 +42,10 @@ pub async fn app(base_url: &str) -> anyhow::Result<axum::Router> {
 
     let app = axum::Router::new()
         .nest("/jsonrpc", a2a_server::jsonrpc::jsonrpc_router(handler.clone()))
-        .nest("/rest", a2a_server::rest::rest_router(handler))
+        .merge(a2a_server::rest::rest_router(handler))
         .merge(a2a_server::agent_card::agent_card_router(card_producer))
-        .layer(tower_http::cors::CorsLayer::permissive());
+        .layer(tower_http::cors::CorsLayer::permissive())
+        .layer(axum::middleware::from_fn(log_request));
 
     Ok(app)
 }
@@ -71,7 +83,7 @@ fn build_agent_card(base_url: &str, skill_summaries: &[rust_agent_core::skills::
         version: env!("CARGO_PKG_VERSION").to_string(),
         supported_interfaces: vec![
             AgentInterface::new(format!("{}/jsonrpc", base_url), TRANSPORT_PROTOCOL_JSONRPC),
-            AgentInterface::new(format!("{}/rest", base_url), TRANSPORT_PROTOCOL_HTTP_JSON),
+            AgentInterface::new(base_url.to_string(), TRANSPORT_PROTOCOL_HTTP_JSON),
         ],
         capabilities: AgentCapabilities {
             streaming: Some(true),
