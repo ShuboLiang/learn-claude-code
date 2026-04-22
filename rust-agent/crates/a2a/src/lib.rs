@@ -9,7 +9,7 @@ use a2a_server::{
 use axum::body::{to_bytes, Body};
 use axum::{extract::Request, middleware::Next, response::Response, Extension, Json};
 use rust_agent_core::agent::AgentApp;
-use serde::Serialize;
+use serde_json::json;
 
 use crate::executor::RustAgentExecutor;
 
@@ -67,7 +67,7 @@ pub async fn app(base_url: &str) -> anyhow::Result<axum::Router> {
     let agent_card = Arc::new(build_agent_card(base_url, &skill_summaries));
 
     let app = axum::Router::new()
-        .nest("/jsonrpc", a2a_server::jsonrpc::jsonrpc_router(handler.clone()))
+        .merge(a2a_server::jsonrpc::jsonrpc_router(handler.clone()))
         .merge(a2a_server::rest::rest_router(handler))
         .route(
             "/.well-known/agent-card.json",
@@ -81,50 +81,38 @@ pub async fn app(base_url: &str) -> anyhow::Result<axum::Router> {
 }
 
 async fn agent_card_handler(
-    Extension(card): Extension<Arc<AgentCardTemplate>>,
-) -> Json<AgentCardTemplate> {
-    Json((*card).clone())
-}
+    Extension(card): Extension<Arc<AgentCard>>,
+) -> Json<serde_json::Value> {
+    // 先序列化成标准 A2A 的 JSON（含 supportedInterfaces 等）
+    let mut value = serde_json::to_value(&*card).unwrap();
 
-/// 匹配目标模板格式的 AgentCard
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct AgentCardTemplate {
-    pub capabilities: Capabilities,
-    pub default_input_modes: Vec<String>,
-    pub default_output_modes: Vec<String>,
-    pub description: String,
-    pub name: String,
-    pub preferred_transport: String,
-    pub protocol_version: String,
-    pub skills: Vec<SkillTemplate>,
-    pub url: String,
-    pub version: String,
-}
+    // 再注入模板要求的额外顶层字段
+    if let Some(obj) = value.as_object_mut() {
+        // 移除标准 A2A 的 supportedInterfaces（模板里没有这个字段）
+        obj.remove("supportedInterfaces");
 
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct Capabilities {
-    pub push_notifications: bool,
-    pub streaming: bool,
-}
+        obj.insert(
+            "preferredTransport".to_string(),
+            json!("JSONRPC"),
+        );
+        obj.insert(
+            "protocolVersion".to_string(),
+            json!("0.3.0"),
+        );
+        // 顶层 url 直接用 base_url（不带 /jsonrpc 后缀）
+        if let Some(http_json) = card.supported_interfaces.iter().find(|i| i.protocol_binding == TRANSPORT_PROTOCOL_HTTP_JSON) {
+            obj.insert("url".to_string(), json!(http_json.url.clone()));
+        }
+    }
 
-#[derive(Serialize, Clone)]
-#[serde(rename_all = "camelCase")]
-struct SkillTemplate {
-    pub description: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub examples: Option<Vec<String>>,
-    pub id: String,
-    pub name: String,
-    pub tags: Vec<String>,
+    Json(value)
 }
 
 fn build_agent_card(
     base_url: &str,
     skill_summaries: &[rust_agent_core::skills::SkillSummary],
-) -> AgentCardTemplate {
-    let skills: Vec<SkillTemplate> = skill_summaries
+) -> AgentCard {
+    let skills: Vec<AgentSkill> = skill_summaries
         .iter()
         .map(|s| {
             let tags = if s.tags.is_empty() {
@@ -136,30 +124,42 @@ fn build_agent_card(
                     .filter(|t| !t.is_empty())
                     .collect()
             };
-            SkillTemplate {
+            AgentSkill {
                 id: s.name.clone(),
                 name: s.name.clone(),
                 description: s.description.clone(),
                 tags,
                 examples: None,
+                input_modes: None,
+                output_modes: None,
+                security_requirements: None,
             }
         })
         .collect();
 
-    AgentCardTemplate {
+    AgentCard {
         name: "rust-agent".to_string(),
         description: "A Rust-based programming assistant with tool execution capabilities."
             .to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
-        url: base_url.to_string(),
-        preferred_transport: "JSONRPC".to_string(),
-        protocol_version: "0.3.0".to_string(),
-        capabilities: Capabilities {
-            streaming: true,
-            push_notifications: false,
+        supported_interfaces: vec![
+            AgentInterface::new(base_url.to_string(), TRANSPORT_PROTOCOL_JSONRPC),
+            AgentInterface::new(base_url.to_string(), TRANSPORT_PROTOCOL_HTTP_JSON),
+        ],
+        capabilities: AgentCapabilities {
+            streaming: Some(true),
+            push_notifications: Some(false),
+            extensions: None,
+            extended_agent_card: None,
         },
         default_input_modes: vec!["text".to_string(), "text/plain".to_string()],
         default_output_modes: vec!["text".to_string(), "text/plain".to_string()],
         skills,
+        provider: None,
+        documentation_url: None,
+        icon_url: None,
+        security_schemes: None,
+        security_requirements: None,
+        signatures: None,
     }
 }

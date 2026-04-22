@@ -61,12 +61,27 @@ impl AgentExecutor for RustAgentExecutor {
                     .await
             });
 
-            // Forward agent events as stream responses
+            // 收集中间事件到 buffer，不发送到 stream
+            let mut buffer = String::new();
             while let Some(event) = event_rx.recv().await {
-                for resp in agent_event_to_stream_responses(&task_id, &context_id, event) {
-                    if stream_tx.send(Ok(resp)).await.is_err() {
-                        break;
+                match &event {
+                    AgentEvent::TextDelta(text) => buffer.push_str(text),
+                    AgentEvent::ToolCall { name, input, parallel_index } => {
+                        let prefix = match parallel_index {
+                            Some((idx, total)) => format!("[{}/{}] ", idx, total),
+                            None => "".to_string(),
+                        };
+                        buffer.push_str(&format!("{}调用工具: `{}`\n参数: `{}`\n", prefix, name, input));
                     }
+                    AgentEvent::ToolResult { name, output, parallel_index } => {
+                        let prefix = match parallel_index {
+                            Some((idx, total)) => format!("[{}/{}] ", idx, total),
+                            None => "".to_string(),
+                        };
+                        buffer.push_str(&format!("{}工具 `{}` 结果:\n{}\n", prefix, name, output));
+                    }
+                    AgentEvent::TurnEnd { .. } => {}
+                    AgentEvent::Done => {}
                 }
             }
 
@@ -75,13 +90,19 @@ impl AgentExecutor for RustAgentExecutor {
                 Ok(Ok(final_text)) => {
                     contexts.insert(task_id.clone(), ctx_service);
 
+                    let content = if buffer.trim().is_empty() {
+                        final_text
+                    } else {
+                        buffer
+                    };
+
                     let mut final_history = history;
                     final_history.push(Message::new(
                         Role::Agent,
-                        vec![Part::text(final_text.clone())],
+                        vec![Part::text(content.clone())],
                     ));
 
-                    let reply = Message::new(Role::Agent, vec![Part::text(final_text)]);
+                    let reply = Message::new(Role::Agent, vec![Part::text(content)]);
 
                     let task = Task {
                         id: task_id.clone(),
