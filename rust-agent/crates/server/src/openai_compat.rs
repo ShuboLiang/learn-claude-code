@@ -217,6 +217,19 @@ pub async fn chat_completions(
                     stop_reason = "tool_calls".to_owned();
                 }
             }
+            rust_agent_core::agent::AgentEvent::Error { code, message } => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    Json(json!({
+                        "error": {
+                            "message": message,
+                            "type": "llm_api_error",
+                            "code": code
+                        }
+                    })),
+                )
+                    .into_response();
+            }
             _ => {}
         }
     }

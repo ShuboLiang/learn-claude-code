@@ -82,6 +82,7 @@ impl AgentExecutor for RustAgentExecutor {
                     }
                     AgentEvent::TurnEnd { .. } => {}
                     AgentEvent::Done => {}
+                    AgentEvent::Error { .. } => {}
                 }
             }
 
@@ -265,6 +266,21 @@ fn agent_event_to_stream_responses(
             })]
         }
         AgentEvent::Done => vec![],
+        AgentEvent::Error { code, message } => {
+            vec![StreamResponse::StatusUpdate(TaskStatusUpdateEvent {
+                task_id: task_id.to_string(),
+                context_id: context_id.to_string(),
+                status: TaskStatus {
+                    state: TaskState::Failed,
+                    message: Some(Message::new(
+                        Role::Agent,
+                        vec![Part::text(format!("[{code}] {message}"))],
+                    )),
+                    timestamp: Some(chrono::Utc::now()),
+                },
+                metadata: None,
+            })]
+        }
     }
 }
 

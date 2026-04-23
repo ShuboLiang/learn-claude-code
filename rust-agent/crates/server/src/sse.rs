@@ -28,5 +28,8 @@ pub fn agent_event_to_sse(event: AgentEvent) -> Event {
         AgentEvent::Done => Event::default()
             .event("done")
             .data("{}"),
+        AgentEvent::Error { code, message } => Event::default()
+            .event("error")
+            .data(json!({ "code": code, "message": message }).to_string()),
     }
 }

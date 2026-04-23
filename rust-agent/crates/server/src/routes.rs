@@ -145,7 +145,14 @@ async fn send_message(
     let store_clone = store.clone();
 
     tokio::spawn(async move {
-        let _ = agent.handle_user_turn(&mut ctx, &content, event_tx).await;
+        if let Err(e) = agent.handle_user_turn(&mut ctx, &content, event_tx.clone()).await {
+            let _ = event_tx
+                .send(rust_agent_core::agent::AgentEvent::Error {
+                    code: "agent_error".to_owned(),
+                    message: format!("{e:#}"),
+                })
+                .await;
+        }
         store_clone.update(&session_id, ctx);
     });
 

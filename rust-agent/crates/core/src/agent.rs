@@ -37,6 +37,10 @@ pub enum AgentEvent {
         api_calls: usize,
     },
     Done,
+    Error {
+        code: String,
+        message: String,
+    },
 }
 
 const MAX_TOOL_ROUNDS: usize = 30;
@@ -230,6 +234,14 @@ impl AgentApp {
                 Ok(resp) => resp,
                 Err(e) => {
                     eprintln!("[Agent] create_message 失败！错误: {e:#}");
+                    if config.emit_events {
+                        let _ = event_tx
+                            .send(AgentEvent::Error {
+                                code: "llm_api_error".to_owned(),
+                                message: format!("{e:#}"),
+                            })
+                            .await;
+                    }
                     return Err(e);
                 }
             };
