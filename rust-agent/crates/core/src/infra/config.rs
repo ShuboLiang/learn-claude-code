@@ -64,6 +64,10 @@ pub struct AppConfig {
     /// 额外环境变量，加载配置后注入到进程环境中
     #[serde(default)]
     pub extra_env: HashMap<String, String>,
+    /// 技能目录列表（可选）。未设置时回退到默认目录：
+    /// ~/.rust-agent/skills/ 和 ./skills/
+    #[serde(default)]
+    pub skills_dirs: Vec<String>,
 }
 
 fn default_max_tokens() -> u32 {

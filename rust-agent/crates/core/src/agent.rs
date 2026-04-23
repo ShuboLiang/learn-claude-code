@@ -110,10 +110,31 @@ impl AgentApp {
             println!("SkillHub CLI 已就绪。");
         }
 
-        let user_skills_dir = dirs::home_dir()
-            .map(|p| p.join(".rust-agent").join("skills"))
-            .unwrap_or_default();
-        let skill_dirs = vec![user_skills_dir.clone(), workspace_root.join("skills")];
+        // 技能目录优先级：AGENT_SKILLS_DIRS 环境变量 > config.json skills_dirs > 默认目录
+        let skill_dirs = if let Ok(dirs_env) = std::env::var("AGENT_SKILLS_DIRS") {
+            parse_skill_dirs(&dirs_env)
+        } else {
+            let config_skill_dirs = crate::infra::config::AppConfig::load()
+                .ok()
+                .and_then(|cfg| {
+                    if cfg.skills_dirs.is_empty() {
+                        None
+                    } else {
+                        Some(parse_skill_dirs(&cfg.skills_dirs.join(",")))
+                    }
+                });
+            config_skill_dirs.unwrap_or_else(|| {
+                let user_skills_dir = dirs::home_dir()
+                    .map(|p| p.join(".rust-agent").join("skills"))
+                    .unwrap_or_default();
+                vec![user_skills_dir, workspace_root.join("skills")]
+            })
+        };
+
+        for dir in &skill_dirs {
+            println!("[Agent] 技能目录: {}", dir.display());
+        }
+
         let skills = SkillLoader::load_from_dirs(
             &skill_dirs.iter().map(|p| p.as_path()).collect::<Vec<_>>(),
         )?;
@@ -562,6 +583,23 @@ impl AgentApp {
         )
         .await
     }
+}
+
+/// 将逗号/分号分隔的技能目录字符串解析为 PathBuf 列表，支持 ~/ 展开
+fn parse_skill_dirs(raw: &str) -> Vec<PathBuf> {
+    raw.split(|c| c == ',' || c == ';')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            if s.starts_with("~/") {
+                dirs::home_dir()
+                    .map(|p| p.join(&s[2..]))
+                    .unwrap_or_else(|| PathBuf::from(s))
+            } else {
+                PathBuf::from(s)
+            }
+        })
+        .collect()
 }
 
 fn tool_result_block(tool_use_id: &str, content: String) -> Value {
