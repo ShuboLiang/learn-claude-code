@@ -91,12 +91,14 @@ export default function App({ serverUrl }: { serverUrl: string }) {
         }
       }
     } catch (err) {
-      if (err instanceof Error && err.name === 'AbortError') {
+      const isAbort = err instanceof Error && err.name === 'AbortError';
+      const isTerminated = err instanceof TypeError && String(err).includes('terminated');
+      if (isAbort || isTerminated) {
         const reply = currentReplyRef.current;
         if (reply) {
           setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
         }
-        setMessages(prev => [...prev, { role: 'system', content: '── 已中断 ──' }]);
+        setMessages(prev => [...prev, { role: 'system', content: isAbort ? '── 已中断 ──' : '── 连接已断开 ──' }]);
       } else {
         setError(String(err));
       }

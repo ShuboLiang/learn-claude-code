@@ -60,7 +60,18 @@ export async function* sendMessage(
   let buffer = "";
   let currentEvent = "";
   while (true) {
-    const { done, value } = await reader.read();
+    let done: boolean | undefined;
+    let value: Uint8Array | undefined;
+    try {
+      ({ done, value } = await reader.read());
+    } catch (err) {
+      // Node.js fetch 在服务器意外关闭连接时抛出 TypeError: terminated
+      // 当作流正常结束处理，避免显示错误
+      if (err instanceof TypeError && (err.message === "terminated" || err.message.includes("terminated"))) {
+        break;
+      }
+      throw err;
+    }
     buffer += decoder.decode(value, { stream: true });
     const lines = buffer.split("\n");
     buffer = lines.pop() || "";
