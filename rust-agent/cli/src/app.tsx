@@ -68,6 +68,10 @@ export default function App({ serverUrl }: { serverUrl: string }) {
             }
             break;
           }
+          case 'error': {
+            setError(event.data.message || '未知错误');
+            break;
+          }
           case 'done': {
             setCurrentReply('');
             currentReplyRef.current = '';

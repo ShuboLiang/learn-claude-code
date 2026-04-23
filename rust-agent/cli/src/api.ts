@@ -47,7 +47,12 @@ export async function* sendMessage(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ content }),
   });
-  if (!res.ok || !res.body) throw new Error(`请求失败: ${res.status}`);
+  if (!res.ok || !res.body) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(
+      `请求失败 (${res.status}): ${data?.error?.message || res.statusText}`,
+    );
+  }
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
