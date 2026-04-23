@@ -40,12 +40,14 @@ export interface ServerEvent {
 // 流式发送消息，逐行解析 SSE 事件
 export async function* sendMessage(
   content: string,
+  signal?: AbortSignal,
 ): AsyncGenerator<ServerEvent, void> {
   const { baseUrl, sessionId } = getConfig();
   const res = await fetch(`${baseUrl}/sessions/${sessionId}/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ content }),
+    signal,
   });
   if (!res.ok || !res.body) {
     const data = await res.json().catch(() => ({}));

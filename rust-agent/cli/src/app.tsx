@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Box, Text, useApp } from 'ink';
+import { Box, Text, useApp, useInput } from 'ink';
 import { sendMessage, init, createSession, clearSession } from './api';
 import Chat from './chat';
 import Input from './input';
@@ -16,6 +16,16 @@ export default function App({ serverUrl }: { serverUrl: string }) {
   // 使用 ref 追踪 currentReply，避免 stale closure
   const currentReplyRef = useRef(currentReply);
   currentReplyRef.current = currentReply;
+
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  // ESC 中断正在进行的对话
+  useInput((_input, key) => {
+    if (key.escape && abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+  });
 
   useEffect(() => {
     (async () => {
@@ -36,8 +46,9 @@ export default function App({ serverUrl }: { serverUrl: string }) {
     setMessages(prev => [...prev, { role: 'user', content: input }]);
     setIsLoading(true);
     setCurrentReply('');
+    abortControllerRef.current = new AbortController();
     try {
-      for await (const event of sendMessage(input)) {
+      for await (const event of sendMessage(input, abortControllerRef.current.signal)) {
         switch (event.event) {
           case 'text_delta':
             setCurrentReply(prev => prev + event.data.content);
@@ -80,9 +91,20 @@ export default function App({ serverUrl }: { serverUrl: string }) {
         }
       }
     } catch (err) {
-      setError(String(err));
+      if (err instanceof Error && err.name === 'AbortError') {
+        const reply = currentReplyRef.current;
+        if (reply) {
+          setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
+        }
+        setMessages(prev => [...prev, { role: 'system', content: '── 已中断 ──' }]);
+      } else {
+        setError(String(err));
+      }
     } finally {
       setIsLoading(false);
+      setCurrentReply('');
+      currentReplyRef.current = '';
+      abortControllerRef.current = null;
     }
   }, [sessionId, isLoading]);
 
