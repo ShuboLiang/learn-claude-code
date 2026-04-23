@@ -15,6 +15,7 @@ use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 
+use super::retry;
 use super::types::{ApiMessage, ProviderRequest, ProviderResponse, ResponseContentBlock};
 use crate::AgentResult;
 
@@ -98,14 +99,7 @@ struct OpenAIChoiceMessage {
     tool_calls: Option<Vec<OpenAIToolCall>>,
 }
 
-/// 默认最大重试次数（对齐 Claude Code）
-const DEFAULT_MAX_RETRIES: u32 = 10;
 
-/// 默认请求超时时间（毫秒），10 分钟（对齐 Claude Code）
-const DEFAULT_API_TIMEOUT_MS: u64 = 600_000;
-
-/// 默认连接超时（秒）
-const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 30;
 
 /// OpenAI 兼容 API 的 HTTP 客户端
 #[derive(Clone, Debug)]
@@ -139,13 +133,8 @@ impl OpenAIClient {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
 
-        // 从环境变量读取超时配置，默认 10 分钟
-        let timeout_ms = std::env::var("RUST_AGENT_API_TIMEOUT_MS")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(DEFAULT_API_TIMEOUT_MS);
-
-        let connect_timeout = Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS);
+        let timeout_ms = retry::api_timeout_ms_from_env();
+        let connect_timeout = Duration::from_secs(retry::DEFAULT_CONNECT_TIMEOUT_SECS);
         let timeout = Duration::from_millis(timeout_ms);
 
         let http = reqwest::Client::builder()
@@ -155,11 +144,7 @@ impl OpenAIClient {
             .build()
             .context("构建 HTTP 客户端失败")?;
 
-        // 从环境变量读取最大重试次数，默认 10
-        let max_retries = std::env::var("RUST_AGENT_MAX_RETRIES")
-            .ok()
-            .and_then(|v| v.parse::<u32>().ok())
-            .unwrap_or(DEFAULT_MAX_RETRIES);
+        let max_retries = retry::max_retries_from_env();
 
         Ok(Self {
             http,
@@ -179,66 +164,7 @@ impl OpenAIClient {
         &self.api_key
     }
 
-    /// 判断 HTTP 状态码是否属于可重试的错误
-    ///
-    /// 对齐 Claude Code 的可重试条件：
-    /// - 429：限流（容量不足，非账户配额耗尽）
-    /// - 5xx：服务器内部错误
-    fn is_retryable_status(status: reqwest::StatusCode) -> bool {
-        let code = status.as_u16();
-        code == 429 || (500..600).contains(&code)
-    }
 
-    /// 判断网络错误是否属于可重试的类型
-    ///
-    /// 可重试的网络错误：连接重置、连接拒绝、超时等瞬态故障
-    fn is_retryable_error(err: &reqwest::Error) -> bool {
-        let err_str = err.to_string().to_lowercase();
-        err_str.contains("connection reset")
-            || err_str.contains("connection refused")
-            || err_str.contains("econnreset")
-            || err_str.contains("econnrefused")
-            || err_str.contains("etimedout")
-            || err_str.contains("timeout")
-            || err.is_timeout()
-            || err.is_connect()
-    }
-
-    /// 解析 Retry-After 响应头（如果存在）
-    ///
-    /// 429 限流时服务器可能返回此头，指示客户端等待的秒数
-    fn parse_retry_after(response: &reqwest::Response) -> Option<Duration> {
-        response
-            .headers()
-            .get("retry-after")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.parse::<u64>().ok())
-            .map(Duration::from_secs)
-    }
-
-    /// 计算退避等待时间
-    ///
-    /// 优先使用 Retry-After 响应头，否则使用指数退避（1, 2, 4, 8, ... 秒）
-    fn calculate_backoff(response: Option<&reqwest::Response>, attempt: u32) -> Duration {
-        if let Some(retry_after) = response.and_then(Self::parse_retry_after) {
-            return retry_after;
-        }
-        // 指数退避：2^attempt 秒，最大不超过 60 秒
-        let secs = (1 << attempt).min(60);
-        Duration::from_secs(secs as u64)
-    }
-
-    /// 基于已解析的 Retry-After 值计算退避时间
-    ///
-    /// 内部辅助方法，避免在 response 被消费后再次借用
-    fn calculate_backoff_from_retry_after(retry_after: Option<Duration>, attempt: u32) -> Duration {
-        if let Some(delay) = retry_after {
-            return delay;
-        }
-        // 指数退避：2^attempt 秒，最大不超过 60 秒
-        let secs = (1 << attempt).min(60);
-        Duration::from_secs(secs as u64)
-    }
 
     /// 调用 OpenAI Chat Completions API
     ///
@@ -262,33 +188,37 @@ impl OpenAIClient {
             let response = match send_result {
                 Ok(resp) => resp,
                 Err(e) => {
-                    if Self::is_retryable_error(&e) && attempt < self.max_retries {
-                        let backoff = Self::calculate_backoff(None, attempt);
-                        eprintln!(
-                            "[OpenAI API 重试] 请求失败（可重试）: {}，等待 {:?} 后重试 ({}/{})",
-                            e,
+                    let is_retryable = e.is_timeout() || e.is_connect();
+                    if is_retryable && attempt < self.max_retries {
+                        let backoff = retry::calculate_backoff(None, attempt);
+                        retry::log_retry(
+                            "OpenAI",
+                            &format!("请求失败: {}", retry::format_reqwest_error(&e)),
                             backoff,
-                            attempt + 1,
-                            self.max_retries + 1
+                            attempt,
+                            self.max_retries,
                         );
                         sleep(backoff).await;
                         continue;
                     }
-                    return Err(e).context("调用 OpenAI API 失败");
+                    return Err(anyhow!(
+                        "调用 OpenAI API 失败 (URL: {}): {}",
+                        url,
+                        retry::format_reqwest_error(&e)
+                    ));
                 }
             };
 
             let status = response.status();
 
             // 在消费 response 之前解析 Retry-After 响应头
-            let retry_after = Self::parse_retry_after(&response);
+            let retry_after = retry::parse_retry_after(&response);
 
             let body_bytes = match response.bytes().await {
                 Ok(bytes) => bytes,
                 Err(e) => {
                     if attempt < self.max_retries {
-                        let backoff =
-                            Self::calculate_backoff_from_retry_after(retry_after, attempt);
+                        let backoff = retry::calculate_backoff(retry_after, attempt);
                         sleep(backoff).await;
                         continue;
                     }
@@ -304,13 +234,14 @@ impl OpenAIClient {
             }
 
             // 对可重试状态码进行重试（429, 5xx）
-            if Self::is_retryable_status(status) && attempt < self.max_retries {
-                let backoff = Self::calculate_backoff_from_retry_after(retry_after, attempt);
-                eprintln!(
-                    "[OpenAI API 重试] 返回 {status}，等待 {:?} 后重试 ({}/{})",
+            if retry::is_retryable_status(status, &[]) && attempt < self.max_retries {
+                let backoff = retry::calculate_backoff(retry_after, attempt);
+                retry::log_retry(
+                    "OpenAI",
+                    &format!("返回 {status}"),
                     backoff,
-                    attempt + 1,
-                    self.max_retries + 1
+                    attempt,
+                    self.max_retries,
                 );
                 sleep(backoff).await;
                 continue;

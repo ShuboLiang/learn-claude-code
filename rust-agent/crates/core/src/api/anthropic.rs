@@ -13,6 +13,7 @@ use anyhow::{Context, anyhow};
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use tokio::time::sleep;
 
+use super::retry;
 use super::types::{MessagesRequest, MessagesResponse, ProviderRequest, ProviderResponse};
 use crate::AgentResult;
 
@@ -23,15 +24,6 @@ fn parse_messages_response(body: &str) -> AgentResult<MessagesResponse> {
 
 /// Anthropic API 的协议版本号
 const ANTHROPIC_VERSION: &str = "2023-06-01";
-
-/// 默认最大重试次数（对齐 Claude Code）
-const DEFAULT_MAX_RETRIES: u32 = 10;
-
-/// 默认请求超时时间（毫秒），10 分钟（对齐 Claude Code）
-const DEFAULT_API_TIMEOUT_MS: u64 = 600_000;
-
-/// 默认连接超时（秒）
-const DEFAULT_CONNECT_TIMEOUT_SECS: u64 = 30;
 
 /// Anthropic API 的 HTTP 客户端，封装了认证、超时和重试逻辑
 #[derive(Clone, Debug)]
@@ -61,13 +53,8 @@ impl AnthropicClient {
             HeaderValue::from_static(ANTHROPIC_VERSION),
         );
 
-        // 从环境变量读取超时配置，默认 10 分钟
-        let timeout_ms = std::env::var("RUST_AGENT_API_TIMEOUT_MS")
-            .ok()
-            .and_then(|v| v.parse::<u64>().ok())
-            .unwrap_or(DEFAULT_API_TIMEOUT_MS);
-
-        let connect_timeout = Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECS);
+        let timeout_ms = retry::api_timeout_ms_from_env();
+        let connect_timeout = Duration::from_secs(retry::DEFAULT_CONNECT_TIMEOUT_SECS);
         let timeout = Duration::from_millis(timeout_ms);
 
         let http = reqwest::Client::builder()
@@ -77,11 +64,7 @@ impl AnthropicClient {
             .build()
             .context("构建 HTTP 客户端失败")?;
 
-        // 从环境变量读取最大重试次数，默认 10
-        let max_retries = std::env::var("RUST_AGENT_MAX_RETRIES")
-            .ok()
-            .and_then(|v| v.parse::<u32>().ok())
-            .unwrap_or(DEFAULT_MAX_RETRIES);
+        let max_retries = retry::max_retries_from_env();
 
         Ok(Self {
             http,
@@ -101,68 +84,7 @@ impl AnthropicClient {
         &self.api_key
     }
 
-    /// 判断 HTTP 状态码是否属于可重试的错误
-    ///
-    /// 对齐 Claude Code 的可重试条件：
-    /// - 429：限流（容量不足，非账户配额耗尽）
-    /// - 529：服务器过载
-    /// - 5xx：服务器内部错误
-    fn is_retryable_status(status: reqwest::StatusCode) -> bool {
-        let code = status.as_u16();
-        code == 429 || code == 529 || (500..600).contains(&code)
-    }
 
-    /// 判断网络错误是否属于可重试的类型
-    ///
-    /// 可重试的网络错误：连接重置、连接拒绝、超时等瞬态故障
-    fn is_retryable_error(&self, err: &reqwest::Error) -> bool {
-        let err_str = err.to_string().to_lowercase();
-        // 连接相关错误
-        err_str.contains("connection reset")
-            || err_str.contains("connection refused")
-            || err_str.contains("econnreset")
-            || err_str.contains("econnrefused")
-            || err_str.contains("etimedout")
-            || err_str.contains("timeout")
-            || err.is_timeout()
-            || err.is_connect()
-    }
-
-    /// 解析 Retry-After 响应头（如果存在）
-    ///
-    /// 429 限流时服务器可能返回此头，指示客户端等待的秒数
-    fn parse_retry_after(response: &reqwest::Response) -> Option<Duration> {
-        response
-            .headers()
-            .get("retry-after")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.parse::<u64>().ok())
-            .map(Duration::from_secs)
-    }
-
-    /// 计算退避等待时间
-    ///
-    /// 优先使用 Retry-After 响应头，否则使用指数退避（1, 2, 4, 8, ... 秒）
-    fn calculate_backoff(response: Option<&reqwest::Response>, attempt: u32) -> Duration {
-        if let Some(retry_after) = response.and_then(Self::parse_retry_after) {
-            return retry_after;
-        }
-        // 指数退避：2^attempt 秒，最大不超过 60 秒
-        let secs = (1 << attempt).min(60);
-        Duration::from_secs(secs as u64)
-    }
-
-    /// 基于已解析的 Retry-After 值计算退避时间
-    ///
-    /// 内部辅助方法，避免在 response 被消费后再次借用
-    fn calculate_backoff_from_retry_after(retry_after: Option<Duration>, attempt: u32) -> Duration {
-        if let Some(delay) = retry_after {
-            return delay;
-        }
-        // 指数退避：2^attempt 秒，最大不超过 60 秒
-        let secs = (1 << attempt).min(60);
-        Duration::from_secs(secs as u64)
-    }
 
     /// 调用 Claude Messages API，发送请求并获取回复
     ///
@@ -185,33 +107,37 @@ impl AnthropicClient {
             let response = match send_result {
                 Ok(resp) => resp,
                 Err(e) => {
-                    if self.is_retryable_error(&e) && attempt < self.max_retries {
-                        let backoff = Self::calculate_backoff(None, attempt);
-                        eprintln!(
-                            "[Anthropic API 重试] 请求失败（可重试）: {}，等待 {:?} 后重试 ({}/{})",
-                            e,
+                    let is_retryable = e.is_timeout() || e.is_connect();
+                    if is_retryable && attempt < self.max_retries {
+                        let backoff = retry::calculate_backoff(None, attempt);
+                        retry::log_retry(
+                            "Anthropic",
+                            &format!("请求失败: {}", retry::format_reqwest_error(&e)),
                             backoff,
-                            attempt + 1,
-                            self.max_retries + 1
+                            attempt,
+                            self.max_retries,
                         );
                         sleep(backoff).await;
                         continue;
                     }
-                    return Err(anyhow!("调用 Anthropic Messages API 失败: {}", e));
+                    return Err(anyhow!(
+                        "调用 Anthropic Messages API 失败 (URL: {}): {}",
+                        url,
+                        retry::format_reqwest_error(&e)
+                    ));
                 }
             };
 
             let status = response.status();
 
             // 在消费 response 之前解析 Retry-After 响应头
-            let retry_after = Self::parse_retry_after(&response);
+            let retry_after = retry::parse_retry_after(&response);
 
             let body_bytes = match response.bytes().await {
                 Ok(bytes) => bytes,
                 Err(e) => {
                     if attempt < self.max_retries {
-                        let backoff =
-                            Self::calculate_backoff_from_retry_after(retry_after, attempt);
+                        let backoff = retry::calculate_backoff(retry_after, attempt);
                         sleep(backoff).await;
                         continue;
                     }
@@ -227,13 +153,14 @@ impl AnthropicClient {
             }
 
             // 对可重试状态码进行重试（429, 529, 5xx）
-            if Self::is_retryable_status(status) && attempt < self.max_retries {
-                let backoff = Self::calculate_backoff_from_retry_after(retry_after, attempt);
-                eprintln!(
-                    "[Anthropic API 重试] 返回 {status}，等待 {:?} 后重试 ({}/{})",
+            if retry::is_retryable_status(status, &[529]) && attempt < self.max_retries {
+                let backoff = retry::calculate_backoff(retry_after, attempt);
+                retry::log_retry(
+                    "Anthropic",
+                    &format!("返回 {status}"),
                     backoff,
-                    attempt + 1,
-                    self.max_retries + 1
+                    attempt,
+                    self.max_retries,
                 );
                 sleep(backoff).await;
                 continue;
@@ -280,6 +207,77 @@ impl AnthropicClient {
 mod tests {
     use super::*;
     use crate::ResponseContentBlock;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    /// 启动一个极简 HTTP mock 服务器，按顺序返回预设的响应
+    async fn mock_server(
+        responses: Vec<(u16, &'static str, Option<&'static str>)>,
+    ) -> (String, Arc<AtomicUsize>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = format!("http://{}", listener.local_addr().unwrap());
+        let counter = Arc::new(AtomicUsize::new(0));
+
+        tokio::spawn({
+            let counter = counter.clone();
+            async move {
+                for (status, body, retry_after) in responses {
+                    let (mut stream, _) = listener.accept().await.unwrap();
+
+                    // 读取 HTTP 请求头（读到 \r\n\r\n 为止）
+                    let mut buf = [0u8; 4096];
+                    let mut pos = 0;
+                    loop {
+                        let n = stream.read(&mut buf[pos..]).await.unwrap_or(0);
+                        if n == 0 {
+                            break;
+                        }
+                        pos += n;
+                        if pos >= 4 && buf[..pos].windows(4).any(|w| w == b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+
+                    let retry_header = retry_after
+                        .map(|v| format!("Retry-After: {v}\r\n"))
+                        .unwrap_or_default();
+
+                    let resp = format!(
+                        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n{retry_header}\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.write_all(resp.as_bytes()).await;
+                    let _ = stream.shutdown().await;
+
+                    counter.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        });
+
+        (addr, counter)
+    }
+
+    /// 串行化修改环境变量，避免并行测试互相干扰
+    fn with_max_retries<T>(retries: u32, f: impl FnOnce() -> T) -> T {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        let _guard = LOCK.get_or_init(|| std::sync::Mutex::new(())).lock().unwrap();
+
+        let old = std::env::var("RUST_AGENT_MAX_RETRIES").ok();
+        // SAFETY：测试在单线程串行锁保护下修改环境变量，不会与其他线程并发访问
+        unsafe {
+            std::env::set_var("RUST_AGENT_MAX_RETRIES", retries.to_string());
+        }
+        let result = f();
+        // SAFETY：同上
+        unsafe {
+            match old {
+                Some(v) => std::env::set_var("RUST_AGENT_MAX_RETRIES", v),
+                None => std::env::remove_var("RUST_AGENT_MAX_RETRIES"),
+            }
+        }
+        result
+    }
 
     #[test]
     fn parse_messages_response_should_include_body_when_json_is_invalid() {
@@ -328,5 +326,106 @@ mod tests {
             provider_response.content.get(1),
             Some(ResponseContentBlock::ToolUse { name, .. }) if name == "get_weather"
         ));
+    }
+
+    #[tokio::test]
+    async fn should_retry_429_with_retry_after_and_succeed() {
+        let (url, counter) = mock_server(vec![
+            (
+                429,
+                r#"{"error":{"type":"rate_limit_error","message":"Rate limited"}}"#,
+                Some("1"),
+            ),
+            (
+                200,
+                r#"{"content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn"}"#,
+                None,
+            ),
+        ])
+        .await;
+
+        let client = with_max_retries(2, || AnthropicClient::new("fake-key", &url).unwrap());
+
+        let request = MessagesRequest {
+            model: "claude-test",
+            system: "",
+            messages: &[],
+            tools: &[],
+            max_tokens: 100,
+        };
+
+        let result = client.create_message_raw(&request).await;
+        assert!(result.is_ok(), "应在第二次请求时成功: {:?}", result);
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            2,
+            "应先收到 429，然后重试成功"
+        );
+    }
+
+    #[tokio::test]
+    async fn should_retry_500_without_retry_after_and_succeed() {
+        let (url, counter) = mock_server(vec![
+            (
+                500,
+                r#"{"error":{"type":"api_error","message":"Internal server error"}}"#,
+                None,
+            ),
+            (
+                200,
+                r#"{"content":[{"type":"text","text":"world"}],"stop_reason":"end_turn"}"#,
+                None,
+            ),
+        ])
+        .await;
+
+        let client = with_max_retries(2, || AnthropicClient::new("fake-key", &url).unwrap());
+
+        let request = MessagesRequest {
+            model: "claude-test",
+            system: "",
+            messages: &[],
+            tools: &[],
+            max_tokens: 100,
+        };
+
+        let start = std::time::Instant::now();
+        let result = client.create_message_raw(&request).await;
+        let elapsed = start.elapsed();
+
+        assert!(result.is_ok(), "应在第二次请求时成功: {:?}", result);
+        assert_eq!(counter.load(Ordering::SeqCst), 2);
+        // 无 Retry-After 时使用指数退避：attempt=0 → 1 秒
+        assert!(
+            elapsed >= Duration::from_millis(900),
+            "应至少等待约 1 秒退避时间，实际 {:?}",
+            elapsed
+        );
+    }
+
+    #[tokio::test]
+    async fn should_not_retry_400_bad_request() {
+        let (url, counter) = mock_server(vec![
+            (
+                400,
+                r#"{"error":{"type":"invalid_request_error","message":"Bad request"}}"#,
+                None,
+            ),
+        ])
+        .await;
+
+        let client = with_max_retries(2, || AnthropicClient::new("fake-key", &url).unwrap());
+
+        let request = MessagesRequest {
+            model: "claude-test",
+            system: "",
+            messages: &[],
+            tools: &[],
+            max_tokens: 100,
+        };
+
+        let result = client.create_message_raw(&request).await;
+        assert!(result.is_err(), "400 错误应直接失败，不应重试");
+        assert_eq!(counter.load(Ordering::SeqCst), 1, "400 错误不应触发重试");
     }
 }
