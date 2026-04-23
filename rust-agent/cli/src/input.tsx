@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Box, Text } from 'ink';
+import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 
 interface InputProps {
@@ -14,6 +14,17 @@ export default function Input({ onSubmit, onQuit, onClear, isLoading, model }: I
   const [value, setValue] = useState('');
   const [isMultiline, setIsMultiline] = useState(false);
   const [buffer, setBuffer] = useState('');
+
+  // ESC 取消当前输入
+  useInput((_input, key) => {
+    if (key.escape) {
+      if (isMultiline) {
+        setIsMultiline(false);
+        setBuffer('');
+      }
+      setValue('');
+    }
+  });
 
   const handleSubmit = (text: string) => {
     if (!text.trim() && !isMultiline) return;
@@ -61,7 +72,7 @@ export default function Input({ onSubmit, onQuit, onClear, isLoading, model }: I
   const placeholder = isLoading
     ? '(等待响应中...)'
     : isMultiline
-      ? '多行模式: 输入 /send 提交, /cancel 取消...'
+      ? '多行模式: 输入 /send 提交, ESC 或 /cancel 取消...'
       : model
         ? `[${model}] 输入消息, Enter 提交, /m 多行, \\n 换行...`
         : '输入消息, Enter 提交, /m 多行, \\n 换行...';
