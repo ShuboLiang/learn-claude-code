@@ -1,4 +1,5 @@
 pub mod executor;
+pub mod extension;
 
 use std::sync::Arc;
 
@@ -50,7 +51,8 @@ async fn log_request(req: Request, next: Next) -> Response {
 
 /// Build the axum app using the a2a-rs SDK.
 pub async fn app(base_url: &str) -> anyhow::Result<axum::Router> {
-    let agent = AgentApp::from_env().await?;
+    let agent = AgentApp::from_env().await?
+        .with_extension(Arc::new(extension::WeatherToolExtension));
     let skill_summaries = agent.list_skills();
 
     let executor = RustAgentExecutor::new(agent);

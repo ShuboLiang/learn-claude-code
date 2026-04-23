@@ -4,6 +4,8 @@ mod schemas;
 mod search;
 mod skill_ops;
 
+pub mod extension;
+
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
@@ -14,6 +16,7 @@ use tokio::sync::Mutex;
 use crate::AgentResult;
 use crate::infra::todo::{TodoItemInput, TodoManager};
 use crate::skills::SkillLoader;
+use extension::ToolExtension;
 
 /// 工具调度的执行结果
 #[derive(Clone, Debug)]
@@ -25,7 +28,7 @@ pub struct ToolDispatchResult {
 }
 
 /// Agent 工具箱：管理并提供所有可用的工具（bash、文件读写、todo、技能加载等）
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct AgentToolbox {
     /// 工作区根目录，所有文件操作的基准路径
     pub(crate) workspace_root: PathBuf,
@@ -35,6 +38,20 @@ pub struct AgentToolbox {
     pub(crate) skill_dirs: Vec<PathBuf>,
     /// 待办事项管理器，用 Mutex 保护以支持异步安全访问
     pub(crate) todo: Arc<Mutex<TodoManager>>,
+    /// 外部工具扩展（可选）
+    pub(crate) extension: Option<Arc<dyn ToolExtension>>,
+}
+
+impl std::fmt::Debug for AgentToolbox {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentToolbox")
+            .field("workspace_root", &self.workspace_root)
+            .field("skills", &self.skills)
+            .field("skill_dirs", &self.skill_dirs)
+            .field("todo", &self.todo)
+            .field("extension", &self.extension.as_ref().map(|_| "<dyn ToolExtension>"))
+            .finish()
+    }
 }
 
 impl AgentToolbox {
@@ -49,17 +66,39 @@ impl AgentToolbox {
             skills,
             skill_dirs,
             todo: Arc::new(Mutex::new(TodoManager::default())),
+            extension: None,
         }
+    }
+
+    /// 设置外部工具扩展
+    pub fn with_extension(mut self, ext: Arc<dyn ToolExtension>) -> Self {
+        self.extension = Some(ext);
+        self
     }
 
     /// 生成所有工具的 JSON Schema 定义列表，用于传给 Claude API
     pub fn tool_schemas(&self, allow_task: bool) -> Vec<Value> {
-        schemas::tool_schemas(allow_task)
+        let mut schemas = schemas::tool_schemas(allow_task);
+        if let Some(ext) = &self.extension {
+            schemas.extend(ext.schemas());
+        }
+        schemas
     }
 
     /// 根据工具名称分发并执行对应的工具，返回执行结果
     pub async fn dispatch(&mut self, name: &str, input: &Value) -> AgentResult<ToolDispatchResult> {
         use crate::skills::hub as skillhub;
+
+        // 优先路由到外部扩展
+        if let Some(ext) = &self.extension {
+            if ext.can_handle(name) {
+                let output = ext.dispatch(name, input).await?;
+                return Ok(ToolDispatchResult {
+                    output,
+                    used_todo: false,
+                });
+            }
+        }
 
         let output = match name {
             "bash" => self.run_bash(required_string(input, "command")?).await?,

@@ -17,10 +17,10 @@ async fn main() {
         .expect("Failed to build app");
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    println!("rust-agent-a2a listening on {}", addr);
-    println!("Agent card: {}/.well-known/agent-card.json", base_url);
-    println!("REST endpoint: {}/rest", base_url);
-    println!("JSON-RPC endpoint: {}/jsonrpc", base_url);
+    // println!("rust-agent-a2a listening on {}", addr);
+    // println!("Agent card: {}/.well-known/agent-card.json", base_url);
+    // println!("REST endpoint: {}/rest", base_url);
+    // println!("JSON-RPC endpoint: {}/jsonrpc", base_url);
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();

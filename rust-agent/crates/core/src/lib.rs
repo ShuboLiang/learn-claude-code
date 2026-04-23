@@ -20,3 +20,4 @@ pub use command::{CommandDispatcher, CommandResult, UserCommand};
 pub use context::ContextService;
 pub use infra::todo::TodoManager;
 pub use skills::SkillLoader;
+pub use tools::extension::ToolExtension;

@@ -19,6 +19,7 @@ use crate::infra::utils::preview_text;
 use crate::skills::SkillLoader;
 use crate::skills::hub as skillhub;
 use crate::tools::AgentToolbox;
+use crate::tools::extension::ToolExtension;
 
 #[derive(Clone, Debug)]
 pub enum AgentEvent {
@@ -46,7 +47,7 @@ pub enum AgentEvent {
 const MAX_TOOL_ROUNDS: usize = 30;
 const MAX_PARALLEL_TASKS: usize = 5;
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct AgentApp {
     client: crate::api::LlmProvider,
     workspace_root: PathBuf,
@@ -54,6 +55,20 @@ pub struct AgentApp {
     skill_dirs: Vec<PathBuf>,
     model: String,
     max_tokens: u32,
+    tool_extension: Option<Arc<dyn ToolExtension>>,
+}
+
+impl std::fmt::Debug for AgentApp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentApp")
+            .field("workspace_root", &self.workspace_root)
+            .field("skills", &self.skills)
+            .field("skill_dirs", &self.skill_dirs)
+            .field("model", &self.model)
+            .field("max_tokens", &self.max_tokens)
+            .field("tool_extension", &self.tool_extension.as_ref().map(|_| "<dyn ToolExtension>"))
+            .finish()
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -110,6 +125,7 @@ impl AgentApp {
             skill_dirs,
             model,
             max_tokens,
+            tool_extension: None,
         })
     }
 
@@ -128,13 +144,22 @@ impl AgentApp {
         &self.workspace_root
     }
 
+    /// 注入外部工具扩展
+    pub fn with_extension(mut self, ext: Arc<dyn ToolExtension>) -> Self {
+        self.tool_extension = Some(ext);
+        self
+    }
+
     /// 获取工具 schema 列表（用于 A2A 协议 Agent Card 生成）
     pub fn tool_schemas(&self) -> Vec<serde_json::Value> {
-        let toolbox = crate::tools::AgentToolbox::new(
+        let mut toolbox = crate::tools::AgentToolbox::new(
             self.workspace_root.clone(),
             Arc::clone(&self.skills),
             self.skill_dirs.clone(),
         );
+        if let Some(ext) = &self.tool_extension {
+            toolbox = toolbox.with_extension(Arc::clone(ext));
+        }
         toolbox
             .tool_schemas(true)
             .iter()
@@ -198,6 +223,9 @@ impl AgentApp {
             Arc::clone(&self.skills),
             self.skill_dirs.clone(),
         );
+        if let Some(ext) = &self.tool_extension {
+            toolbox = toolbox.with_extension(Arc::clone(ext));
+        }
         let mut rounds_since_todo = 0usize;
         let mut last_micro_compact = Instant::now();
         let mut breaker = ToolCircuitBreaker::new();
