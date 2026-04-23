@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 
@@ -14,15 +14,39 @@ export default function Input({ onSubmit, onQuit, onClear, isLoading, model }: I
   const [value, setValue] = useState('');
   const [isMultiline, setIsMultiline] = useState(false);
   const [buffer, setBuffer] = useState('');
+  const historyRef = useRef<string[]>([]);
+  const historyIndexRef = useRef<number>(-1);
 
-  // ESC 取消当前输入
   useInput((_input, key) => {
     if (key.escape) {
+      // ESC 取消当前输入
       if (isMultiline) {
         setIsMultiline(false);
         setBuffer('');
       }
       setValue('');
+      historyIndexRef.current = -1;
+    } else if (key.upArrow) {
+      // 上键翻阅历史
+      const history = historyRef.current;
+      if (history.length === 0 || isMultiline) return;
+      if (historyIndexRef.current === -1) {
+        historyIndexRef.current = history.length - 1;
+      } else if (historyIndexRef.current > 0) {
+        historyIndexRef.current--;
+      }
+      setValue(history[historyIndexRef.current]);
+    } else if (key.downArrow) {
+      // 下键翻阅历史
+      const history = historyRef.current;
+      if (history.length === 0 || isMultiline || historyIndexRef.current === -1) return;
+      if (historyIndexRef.current < history.length - 1) {
+        historyIndexRef.current++;
+        setValue(history[historyIndexRef.current]);
+      } else {
+        historyIndexRef.current = -1;
+        setValue('');
+      }
     }
   });
 
@@ -34,6 +58,8 @@ export default function Input({ onSubmit, onQuit, onClear, isLoading, model }: I
     if (isMultiline) {
       if (lower === '/send') {
         onSubmit(buffer);
+        historyRef.current = [...historyRef.current, buffer];
+        historyIndexRef.current = -1;
         setIsMultiline(false);
         setBuffer('');
         setValue('');
@@ -66,6 +92,8 @@ export default function Input({ onSubmit, onQuit, onClear, isLoading, model }: I
 
     // 普通提交：支持 \n 转义为真实换行
     setValue('');
+    historyRef.current = [...historyRef.current, text];
+    historyIndexRef.current = -1;
     onSubmit(text.replace(/\\n/g, '\n'));
   };
 
