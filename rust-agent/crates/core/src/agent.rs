@@ -47,6 +47,38 @@ pub enum AgentEvent {
 const MAX_TOOL_ROUNDS: usize = 30;
 const MAX_PARALLEL_TASKS: usize = 5;
 
+/// Agent 身份信息
+#[derive(Clone, Debug, Default)]
+pub struct AgentIdentity {
+    /// 昵称，如 "小明"
+    pub nickname: String,
+    /// 职位/角色，如 "代码审查"
+    pub role: String,
+}
+
+impl AgentIdentity {
+    pub fn new(nickname: impl Into<String>, role: impl Into<String>) -> Self {
+        Self {
+            nickname: nickname.into(),
+            role: role.into(),
+        }
+    }
+
+    /// 完整称呼，如 "小明（代码审查）"
+    pub fn display_name(&self) -> String {
+        if self.nickname.is_empty() && self.role.is_empty() {
+            return "Agent".to_owned();
+        }
+        if self.role.is_empty() {
+            return self.nickname.clone();
+        }
+        if self.nickname.is_empty() {
+            return self.role.clone();
+        }
+        format!("{}（{}）", self.nickname, self.role)
+    }
+}
+
 #[derive(Clone)]
 pub struct AgentApp {
     client: crate::api::LlmProvider,
@@ -56,6 +88,7 @@ pub struct AgentApp {
     model: String,
     max_tokens: u32,
     tool_extension: Option<Arc<dyn ToolExtension>>,
+    identity: AgentIdentity,
 }
 
 impl std::fmt::Debug for AgentApp {
@@ -67,6 +100,7 @@ impl std::fmt::Debug for AgentApp {
             .field("model", &self.model)
             .field("max_tokens", &self.max_tokens)
             .field("tool_extension", &self.tool_extension.as_ref().map(|_| "<dyn ToolExtension>"))
+            .field("identity", &self.identity)
             .finish()
     }
 }
@@ -139,6 +173,8 @@ impl AgentApp {
             &skill_dirs.iter().map(|p| p.as_path()).collect::<Vec<_>>(),
         )?;
 
+        let identity = Self::load_identity();
+
         Ok(Self {
             client: info.provider,
             workspace_root,
@@ -147,6 +183,7 @@ impl AgentApp {
             model,
             max_tokens,
             tool_extension: None,
+            identity,
         })
     }
 
@@ -169,6 +206,44 @@ impl AgentApp {
     pub fn with_extension(mut self, ext: Arc<dyn ToolExtension>) -> Self {
         self.tool_extension = Some(ext);
         self
+    }
+
+    /// 设置 Agent 身份信息
+    pub fn with_identity(mut self, identity: AgentIdentity) -> Self {
+        self.identity = identity;
+        self
+    }
+
+    /// 获取当前身份信息
+    pub fn identity(&self) -> &AgentIdentity {
+        &self.identity
+    }
+
+    /// 从环境变量和配置文件加载身份信息
+    fn load_identity() -> AgentIdentity {
+        // 1. 环境变量最高优先级
+        if let (Ok(nick), Ok(role)) = (
+            std::env::var("AGENT_NICKNAME"),
+            std::env::var("AGENT_ROLE"),
+        ) {
+            return AgentIdentity::new(nick, role);
+        }
+        if let Ok(nick) = std::env::var("AGENT_NICKNAME") {
+            return AgentIdentity::new(nick, "");
+        }
+        if let Ok(role) = std::env::var("AGENT_ROLE") {
+            return AgentIdentity::new("", role);
+        }
+
+        // 2. config.json 次之
+        if let Ok(cfg) = crate::infra::config::AppConfig::load() {
+            return AgentIdentity::new(
+                cfg.agent_nickname.unwrap_or_default(),
+                cfg.agent_role.unwrap_or_default(),
+            );
+        }
+
+        AgentIdentity::default()
     }
 
     /// 获取工具 schema 列表（用于 A2A 协议 Agent Card 生成）
@@ -207,6 +282,7 @@ impl AgentApp {
             &self.workspace_root,
             &self.skills.read().unwrap().descriptions_for_system_prompt(),
             &self.model,
+            &self.identity,
         );
         logger.log(&format!("=== 系统提示词 ===\n{system_prompt}"));
 
@@ -570,6 +646,7 @@ impl AgentApp {
         let system_prompt = build_subagent_prompt(
             &self.workspace_root,
             &self.skills.read().unwrap().descriptions_for_system_prompt(),
+            &self.identity,
         );
         logger.log(&format!("=== 子代理系统提示词 ===\n{system_prompt}"));
         let mut sub_ctx = ContextService::new();
@@ -606,14 +683,31 @@ fn tool_result_block(tool_use_id: &str, content: String) -> Value {
     json!({ "type": "tool_result", "tool_use_id": tool_use_id, "content": content })
 }
 
-fn build_system_prompt(workspace_root: &std::path::Path, skills_desc: &str, model: &str) -> String {
+fn build_system_prompt(
+    workspace_root: &std::path::Path,
+    skills_desc: &str,
+    model: &str,
+    identity: &AgentIdentity,
+) -> String {
     let platform = if cfg!(windows) {
         "Windows (PowerShell)。使用 PowerShell 语法：用 Get-ChildItem 代替 ls，Get-Content 代替 cat，-Command 代替 -lc，; 代替 &&"
     } else {
         "Unix (bash)"
     };
+    let identity_line = if identity.nickname.is_empty() && identity.role.is_empty() {
+        format!("你是 {model}，一个编程助手。")
+    } else if identity.role.is_empty() {
+        format!("你是 {model}，昵称是 {}。", identity.nickname)
+    } else if identity.nickname.is_empty() {
+        format!("你是 {model}，担任{}。", identity.role)
+    } else {
+        format!(
+            "你是 {model}，昵称是 {}，担任{}。",
+            identity.nickname, identity.role
+        )
+    };
     format!(
-        "你是 {model}，一个编程助手，工作目录：{}。\n平台：{platform}\n优先使用工具解决问题，避免冗长解释。\n\n\
+        "{identity_line}\n工作目录：{}。\n平台：{platform}\n优先使用工具解决问题，避免冗长解释。\n\n\
         任务执行流程 — 每个任务必须按以下顺序执行：\n\
         0. 先了解项目：读取目录结构和关键文件，理解项目上下文。\n\
         1. 检查已安装的技能是否覆盖当前任务。如果有，调用 load_skill。\n\
@@ -642,9 +736,18 @@ fn build_system_prompt(workspace_root: &std::path::Path, skills_desc: &str, mode
     )
 }
 
-fn build_subagent_prompt(workspace_root: &std::path::Path, skills_desc: &str) -> String {
+fn build_subagent_prompt(
+    workspace_root: &std::path::Path,
+    skills_desc: &str,
+    identity: &AgentIdentity,
+) -> String {
+    let identity_line = if identity.nickname.is_empty() && identity.role.is_empty() {
+        "你是一个编程子代理".to_owned()
+    } else {
+        format!("你是 {} 的子代理", identity.display_name())
+    };
     format!(
-        "你是一个编程子代理，工作目录：{}。\n完成给定任务，按需使用工具，然后返回简洁的摘要。不能调用 task 工具。\n\n\
+        "{identity_line}，工作目录：{}。\n完成给定任务，按需使用工具，然后返回简洁的摘要。不能调用 task 工具。\n\n\
         已安装的技能：\n{skills_desc}\n\n\
         如果已安装的技能覆盖当前任务，直接调用 load_skill 加载；否则跳过技能流程，直接执行。",
         workspace_root.display()

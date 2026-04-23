@@ -53,6 +53,7 @@ async fn log_request(req: Request, next: Next) -> Response {
 pub async fn app(base_url: &str) -> anyhow::Result<axum::Router> {
     let agent = AgentApp::from_env().await?
         .with_extension(Arc::new(extension::WeatherToolExtension));
+    let identity = agent.identity().clone();
     let skill_summaries = agent.list_skills();
 
     let executor = RustAgentExecutor::new(agent);
@@ -66,7 +67,7 @@ pub async fn app(base_url: &str) -> anyhow::Result<axum::Router> {
         }),
     );
 
-    let agent_card = Arc::new(build_agent_card(base_url, &skill_summaries));
+    let agent_card = Arc::new(build_agent_card(base_url, &skill_summaries, &identity));
 
     let app = axum::Router::new()
         .merge(a2a_server::jsonrpc::jsonrpc_router(handler.clone()))
@@ -113,6 +114,7 @@ async fn agent_card_handler(
 fn build_agent_card(
     base_url: &str,
     skill_summaries: &[rust_agent_core::skills::SkillSummary],
+    identity: &rust_agent_core::agent::AgentIdentity,
 ) -> AgentCard {
     let skills: Vec<AgentSkill> = skill_summaries
         .iter()
@@ -139,10 +141,34 @@ fn build_agent_card(
         })
         .collect();
 
+    let (name, description) = if identity.nickname.is_empty() && identity.role.is_empty() {
+        (
+            "rust-agent".to_string(),
+            "A Rust-based programming assistant with tool execution capabilities.".to_string(),
+        )
+    } else if identity.role.is_empty() {
+        (
+            identity.nickname.clone(),
+            format!("Agent '{}' powered by rust-agent.", identity.nickname),
+        )
+    } else if identity.nickname.is_empty() {
+        (
+            identity.role.clone(),
+            format!("A {} assistant powered by rust-agent.", identity.role),
+        )
+    } else {
+        (
+            identity.display_name(),
+            format!(
+                "{}，一个由 rust-agent 驱动的{}助手。",
+                identity.nickname, identity.role
+            ),
+        )
+    };
+
     AgentCard {
-        name: "rust-agent".to_string(),
-        description: "A Rust-based programming assistant with tool execution capabilities."
-            .to_string(),
+        name,
+        description,
         version: env!("CARGO_PKG_VERSION").to_string(),
         supported_interfaces: vec![
             AgentInterface::new(base_url.to_string(), TRANSPORT_PROTOCOL_JSONRPC),

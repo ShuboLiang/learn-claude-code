@@ -68,6 +68,12 @@ pub struct AppConfig {
     /// ~/.rust-agent/skills/ 和 ./skills/
     #[serde(default)]
     pub skills_dirs: Vec<String>,
+    /// Agent 昵称（可选）
+    #[serde(default)]
+    pub agent_nickname: Option<String>,
+    /// Agent 职位/角色（可选）
+    #[serde(default)]
+    pub agent_role: Option<String>,
 }
 
 fn default_max_tokens() -> u32 {
