@@ -72,6 +72,19 @@ pub(crate) struct MessagesResponse {
     pub content: Vec<ResponseContentBlock>,
     /// 停止原因："tool_use"（需要调用工具）、"end_turn"（正常结束）等
     pub stop_reason: Option<String>,
+    /// 本次 API 调用的 token 用量
+    pub usage: AnthropicUsage,
+}
+
+/// Anthropic API 返回的 usage 字段
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct AnthropicUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    #[serde(default)]
+    pub cache_read_input_tokens: u64,
+    #[serde(default)]
+    pub cache_creation_input_tokens: u64,
 }
 
 /// Claude API 返回的单个内容块，可以是文本、思考内容或工具调用请求
@@ -114,6 +127,39 @@ pub struct ProviderRequest<'a> {
     pub max_tokens: u32,
 }
 
+/// 单次 LLM API 调用的 token 用量
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct TokenUsage {
+    /// 输入 token 数（含缓存命中部分）
+    pub input_tokens: u64,
+    /// 输出 token 数
+    pub output_tokens: u64,
+    /// 缓存读取的 token 数（Anthropic 的 `cache_read_input_tokens`，
+    /// OpenAI Chat Completions 的 `prompt_tokens_details.cached_tokens`）
+    #[serde(default)]
+    pub cache_read_tokens: u64,
+    /// 缓存写入的 token 数（Anthropic 的 `cache_creation_input_tokens`，
+    /// OpenAI 当前无对应字段）
+    #[serde(default)]
+    pub cache_creation_tokens: u64,
+}
+
+impl std::ops::AddAssign for TokenUsage {
+    fn add_assign(&mut self, other: Self) {
+        self.input_tokens += other.input_tokens;
+        self.output_tokens += other.output_tokens;
+        self.cache_read_tokens += other.cache_read_tokens;
+        self.cache_creation_tokens += other.cache_creation_tokens;
+    }
+}
+
+impl TokenUsage {
+    /// 总 token 数（输入 + 输出）
+    pub fn total(&self) -> u64 {
+        self.input_tokens + self.output_tokens
+    }
+}
+
 /// LLM Provider 返回的统一响应
 #[derive(Clone, Debug)]
 pub struct ProviderResponse {
@@ -121,6 +167,8 @@ pub struct ProviderResponse {
     pub content: Vec<ResponseContentBlock>,
     /// 停止原因："end_turn"（正常结束）或 "tool_calls"（需要调用工具）
     pub stop_reason: String,
+    /// 本次 API 调用的 token 用量（部分 provider 可能不返回）
+    pub usage: TokenUsage,
 }
 
 impl ProviderResponse {

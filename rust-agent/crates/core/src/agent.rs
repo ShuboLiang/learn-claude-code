@@ -36,6 +36,7 @@ pub enum AgentEvent {
     },
     TurnEnd {
         api_calls: usize,
+        token_usage: Option<crate::api::types::TokenUsage>,
     },
     Done,
     Error {
@@ -89,6 +90,7 @@ pub struct AgentApp {
     max_tokens: u32,
     tool_extension: Option<Arc<dyn ToolExtension>>,
     identity: AgentIdentity,
+    token_tracker: crate::infra::token_tracker::TokenTracker,
 }
 
 impl std::fmt::Debug for AgentApp {
@@ -184,6 +186,7 @@ impl AgentApp {
             max_tokens,
             tool_extension: None,
             identity,
+            token_tracker: crate::infra::token_tracker::TokenTracker::new(),
         })
     }
 
@@ -356,7 +359,10 @@ impl AgentApp {
                 max_tokens: self.max_tokens,
             };
             let response = match self.client.create_message(&request).await {
-                Ok(resp) => resp,
+                Ok(resp) => {
+                    self.token_tracker.record(&self.model, &resp.usage);
+                    resp
+                }
                 Err(e) => {
                     eprintln!("[Agent] create_message 失败！错误: {e:#}");
                     if config.emit_events {
@@ -384,6 +390,7 @@ impl AgentApp {
                     let _ = event_tx
                         .send(AgentEvent::TurnEnd {
                             api_calls: api_call_count,
+                            token_usage: Some(self.token_tracker.snapshot().total),
                         })
                         .await;
                 }
@@ -615,6 +622,7 @@ impl AgentApp {
                         let _ = event_tx
                             .send(AgentEvent::TurnEnd {
                                 api_calls: api_call_count,
+                                token_usage: Some(self.token_tracker.snapshot().total),
                             })
                             .await;
                         return Err(e);
@@ -623,6 +631,7 @@ impl AgentApp {
                 let _ = event_tx
                     .send(AgentEvent::TurnEnd {
                         api_calls: api_call_count,
+                        token_usage: Some(self.token_tracker.snapshot().total),
                     })
                     .await;
                 return Ok("对话已手动压缩。".to_owned());
@@ -632,6 +641,7 @@ impl AgentApp {
         let _ = event_tx
             .send(AgentEvent::TurnEnd {
                 api_calls: api_call_count,
+                token_usage: Some(self.token_tracker.snapshot().total),
             })
             .await;
         Ok("已达到工具调用轮数安全上限，自动停止。".to_owned())

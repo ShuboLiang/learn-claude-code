@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 
 use super::retry;
-use super::types::{ApiMessage, ProviderRequest, ProviderResponse, ResponseContentBlock};
+use super::types::{ApiMessage, ProviderRequest, ProviderResponse, ResponseContentBlock, TokenUsage};
 use crate::AgentResult;
 
 // ── OpenAI 请求/响应类型（用于序列化和反序列化） ──
@@ -83,6 +83,26 @@ struct OpenAIFunctionCall {
 #[derive(Deserialize)]
 struct OpenAIResponse {
     choices: Vec<OpenAIChoice>,
+    #[serde(default)]
+    usage: OpenAIUsage,
+}
+
+#[derive(Deserialize, Default)]
+struct OpenAIUsage {
+    #[serde(alias = "prompt_tokens")]
+    input_tokens: u64,
+    #[serde(alias = "completion_tokens")]
+    output_tokens: u64,
+    #[serde(default)]
+    prompt_tokens_details: Option<OpenAITokensDetails>,
+    #[serde(default)]
+    input_tokens_details: Option<OpenAITokensDetails>,
+}
+
+#[derive(Deserialize)]
+struct OpenAITokensDetails {
+    #[serde(default)]
+    cached_tokens: u64,
 }
 
 /// OpenAI 响应中的选项
@@ -471,5 +491,21 @@ fn convert_response(response: OpenAIResponse) -> ProviderResponse {
     ProviderResponse {
         content: content_blocks,
         stop_reason,
+        usage: TokenUsage {
+            input_tokens: response.usage.input_tokens,
+            output_tokens: response.usage.output_tokens,
+            cache_read_tokens: {
+                let from_prompt = response.usage.prompt_tokens_details
+                    .as_ref()
+                    .map(|d| d.cached_tokens)
+                    .unwrap_or(0);
+                let from_input = response.usage.input_tokens_details
+                    .as_ref()
+                    .map(|d| d.cached_tokens)
+                    .unwrap_or(0);
+                from_prompt + from_input
+            },
+            cache_creation_tokens: 0,
+        },
     }
 }

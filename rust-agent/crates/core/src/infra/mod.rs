@@ -5,6 +5,7 @@ pub mod compact;
 pub mod config;
 pub mod logging;
 pub mod storage;
+pub mod token_tracker;
 pub mod todo;
 pub mod utils;
 pub mod workspace;

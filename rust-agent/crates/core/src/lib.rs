@@ -14,7 +14,8 @@ pub use tokio::sync::mpsc;
 
 // ── 公共 API 统一导出 ──
 pub use agent::{AgentApp, AgentEvent};
-pub use api::types::{ApiMessage, ProviderRequest, ProviderResponse, ResponseContentBlock};
+pub use api::types::{ApiMessage, ProviderRequest, ProviderResponse, ResponseContentBlock, TokenUsage};
+pub use infra::token_tracker::{TokenTracker, TokenSnapshot};
 pub use api::{LlmProvider, ProviderInfo};
 pub use command::{CommandDispatcher, CommandResult, UserCommand};
 pub use context::ContextService;

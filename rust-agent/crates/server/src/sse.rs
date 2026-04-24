@@ -22,9 +22,18 @@ pub fn agent_event_to_sse(event: AgentEvent) -> Event {
             }
             Event::default().event("tool_result").data(data.to_string())
         }
-        AgentEvent::TurnEnd { api_calls } => Event::default()
-            .event("turn_end")
-            .data(json!({ "api_calls": api_calls }).to_string()),
+        AgentEvent::TurnEnd { api_calls, token_usage } => {
+            let mut data = json!({ "api_calls": api_calls });
+            if let Some(usage) = token_usage {
+                data["token_usage"] = json!({
+                    "input_tokens": usage.input_tokens,
+                    "output_tokens": usage.output_tokens,
+                    "cache_read_tokens": usage.cache_read_tokens,
+                    "cache_creation_tokens": usage.cache_creation_tokens,
+                });
+            }
+            Event::default().event("turn_end").data(data.to_string())
+        }
         AgentEvent::Done => Event::default()
             .event("done")
             .data("{}"),

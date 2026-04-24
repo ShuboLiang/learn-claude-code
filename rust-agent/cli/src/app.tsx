@@ -74,9 +74,16 @@ export default function App({ serverUrl }: { serverUrl: string }) {
               setMessages(prev => [...prev, { role: 'assistant', content: reply }]);
             }
             const apiCalls = event.data?.api_calls;
-            if (apiCalls) {
-              setMessages(prev => [...prev, { role: 'system', content: `── 完成，API 调用 ${apiCalls} 次 ──` }]);
+            const tokenUsage = event.data?.token_usage;
+            let info = apiCalls ? `── 完成，API 调用 ${apiCalls} 次` : '── 完成';
+            if (tokenUsage) {
+              info += ` │ Token: ${tokenUsage.input_tokens}入/${tokenUsage.output_tokens}出`;
+              if (tokenUsage.cache_read_tokens > 0) {
+                info += ` (缓存命中 ${tokenUsage.cache_read_tokens})`;
+              }
             }
+            info += ' ──';
+            setMessages(prev => [...prev, { role: 'system', content: info }]);
             break;
           }
           case 'error': {

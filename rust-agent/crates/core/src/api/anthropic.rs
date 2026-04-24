@@ -14,7 +14,7 @@ use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use tokio::time::sleep;
 
 use super::retry;
-use super::types::{MessagesRequest, MessagesResponse, ProviderRequest, ProviderResponse};
+use super::types::{MessagesRequest, MessagesResponse, ProviderRequest, ProviderResponse, TokenUsage};
 use crate::AgentResult;
 
 fn parse_messages_response(body: &str) -> AgentResult<MessagesResponse> {
@@ -199,6 +199,12 @@ impl AnthropicClient {
         Ok(ProviderResponse {
             content: raw_response.content,
             stop_reason,
+            usage: TokenUsage {
+                input_tokens: raw_response.usage.input_tokens,
+                output_tokens: raw_response.usage.output_tokens,
+                cache_read_tokens: raw_response.usage.cache_read_input_tokens,
+                cache_creation_tokens: raw_response.usage.cache_creation_input_tokens,
+            },
         })
     }
 }
@@ -311,7 +317,8 @@ mod tests {
               "input": {"city": "Shanghai"}
             }
           ],
-          "stop_reason": "tool_use"
+          "stop_reason": "tool_use",
+          "usage": {"input_tokens": 20, "output_tokens": 10}
         }
         "#;
 
@@ -319,6 +326,12 @@ mod tests {
         let provider_response = ProviderResponse {
             content: response.content,
             stop_reason: "tool_calls".to_owned(),
+            usage: TokenUsage {
+                input_tokens: response.usage.input_tokens,
+                output_tokens: response.usage.output_tokens,
+                cache_read_tokens: response.usage.cache_read_input_tokens,
+                cache_creation_tokens: response.usage.cache_creation_input_tokens,
+            },
         };
 
         assert_eq!(provider_response.final_text(), "");
@@ -338,7 +351,7 @@ mod tests {
             ),
             (
                 200,
-                r#"{"content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn"}"#,
+                r#"{"content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":5}}"#,
                 None,
             ),
         ])
@@ -373,7 +386,7 @@ mod tests {
             ),
             (
                 200,
-                r#"{"content":[{"type":"text","text":"world"}],"stop_reason":"end_turn"}"#,
+                r#"{"content":[{"type":"text","text":"world"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":5}}"#,
                 None,
             ),
         ])
