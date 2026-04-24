@@ -94,14 +94,10 @@ success "Server binary: $SERVER_BINARY"
 # ── 安装 CLI 依赖 ──
 step "安装 CLI 依赖..."
 cd "$CLI_DIR"
-if [[ ! -d "node_modules" ]]; then
-  if ! npm install; then
-    error_exit "npm install 失败"
-  fi
-  success "npm install 完成"
-else
-  success "node_modules 已存在，跳过 install"
+if ! npm install; then
+  error_exit "npm install 失败"
 fi
+success "npm install 完成"
 
 # ── npm link ──
 step "注册全局命令 rust-agent..."

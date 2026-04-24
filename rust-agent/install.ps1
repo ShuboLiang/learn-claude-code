@@ -95,16 +95,12 @@ Write-Success "Server binary: $ServerBinary"
 Write-Step "安装 CLI 依赖..."
 Push-Location $CliDir
 try {
-    if (-not (Test-Path (Join-Path $CliDir "node_modules"))) {
-        npm install 2>&1 | ForEach-Object {
-            if ($_ -match "ERR" -or $_ -match "error") { Write-Host "    $_" -ForegroundColor Red }
-            elseif ($_ -match "added|packages") { Write-Host "    $_" -ForegroundColor DarkGray }
-        }
-        if ($LASTEXITCODE -ne 0) { Write-ErrorExit "npm install 失败" }
-        Write-Success "npm install 完成"
-    } else {
-        Write-Success "node_modules 已存在，跳过 install"
+    npm install 2>&1 | ForEach-Object {
+        if ($_ -match "ERR" -or $_ -match "error") { Write-Host "    $_" -ForegroundColor Red }
+        elseif ($_ -match "added|packages") { Write-Host "    $_" -ForegroundColor DarkGray }
     }
+    if ($LASTEXITCODE -ne 0) { Write-ErrorExit "npm install 失败" }
+    Write-Success "npm install 完成"
 } finally {
     Pop-Location
 }
