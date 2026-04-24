@@ -1,10 +1,10 @@
 use axum::Router;
 use tower_http::cors::CorsLayer;
 
+mod openai_compat;
 mod routes;
 mod session;
 mod sse;
-mod openai_compat;
 
 use session::SessionStore;
 

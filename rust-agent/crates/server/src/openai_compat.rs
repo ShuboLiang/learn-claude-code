@@ -3,12 +3,7 @@
 //! 提供 `/v1/chat/completions` 端点，兼容 OpenAI API 格式，
 //! 供 Cursor、Continue 等工具直接调用。
 
-use axum::{
-    extract::State,
-    http::StatusCode,
-    response::IntoResponse,
-    Json,
-};
+use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -42,7 +37,9 @@ pub struct ChatCompletionRequest {
 #[serde(tag = "role")]
 #[serde(rename_all = "lowercase")]
 pub enum ChatMessage {
-    System { content: String },
+    System {
+        content: String,
+    },
     User {
         #[serde(default)]
         content: Option<Value>,
@@ -202,7 +199,11 @@ pub async fn chat_completions(
             rust_agent_core::agent::AgentEvent::TextDelta(text) => {
                 final_text.push_str(&text);
             }
-            rust_agent_core::agent::AgentEvent::ToolCall { name, input, parallel_index: _ } => {
+            rust_agent_core::agent::AgentEvent::ToolCall {
+                name,
+                input,
+                parallel_index: _,
+            } => {
                 tool_calls_collected.push(json!({
                     "id": format!("call_{}", short_id()),
                     "type": "function",
@@ -212,7 +213,10 @@ pub async fn chat_completions(
                     }
                 }));
             }
-            rust_agent_core::agent::AgentEvent::TurnEnd { api_calls: _, token_usage: _ } => {
+            rust_agent_core::agent::AgentEvent::TurnEnd {
+                api_calls: _,
+                token_usage: _,
+            } => {
                 if !tool_calls_collected.is_empty() {
                     stop_reason = "tool_calls".to_owned();
                 }

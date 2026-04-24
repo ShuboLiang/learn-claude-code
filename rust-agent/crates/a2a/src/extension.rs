@@ -14,19 +14,17 @@ pub struct WeatherToolExtension;
 #[async_trait]
 impl ToolExtension for WeatherToolExtension {
     fn schemas(&self) -> Vec<Value> {
-        vec![
-            json!({
-                "name": "get_weather",
-                "description": "查询指定城市的实时天气",
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        "city": { "type": "string", "description": "城市名称，如 Beijing、Shanghai" }
-                    },
-                    "required": ["city"]
-                }
-            }),
-        ]
+        vec![json!({
+            "name": "get_weather",
+            "description": "查询指定城市的实时天气",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "city": { "type": "string", "description": "城市名称，如 Beijing、Shanghai" }
+                },
+                "required": ["city"]
+            }
+        })]
     }
 
     fn can_handle(&self, name: &str) -> bool {

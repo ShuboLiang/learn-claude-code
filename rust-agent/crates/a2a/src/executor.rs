@@ -66,14 +66,25 @@ impl AgentExecutor for RustAgentExecutor {
             while let Some(event) = event_rx.recv().await {
                 match &event {
                     AgentEvent::TextDelta(text) => buffer.push_str(text),
-                    AgentEvent::ToolCall { name, input, parallel_index } => {
+                    AgentEvent::ToolCall {
+                        name,
+                        input,
+                        parallel_index,
+                    } => {
                         let prefix = match parallel_index {
                             Some((idx, total)) => format!("[{}/{}] ", idx, total),
                             None => "".to_string(),
                         };
-                        buffer.push_str(&format!("{}调用工具: `{}`\n参数: `{}`\n", prefix, name, input));
+                        buffer.push_str(&format!(
+                            "{}调用工具: `{}`\n参数: `{}`\n",
+                            prefix, name, input
+                        ));
                     }
-                    AgentEvent::ToolResult { name, output, parallel_index } => {
+                    AgentEvent::ToolResult {
+                        name,
+                        output,
+                        parallel_index,
+                    } => {
                         let prefix = match parallel_index {
                             Some((idx, total)) => format!("[{}/{}] ", idx, total),
                             None => "".to_string(),
@@ -98,10 +109,8 @@ impl AgentExecutor for RustAgentExecutor {
                     };
 
                     let mut final_history = history;
-                    final_history.push(Message::new(
-                        Role::Agent,
-                        vec![Part::text(content.clone())],
-                    ));
+                    final_history
+                        .push(Message::new(Role::Agent, vec![Part::text(content.clone())]));
 
                     let reply = Message::new(Role::Agent, vec![Part::text(content)]);
 
@@ -122,10 +131,7 @@ impl AgentExecutor for RustAgentExecutor {
                 Ok(Err(e)) => {
                     let msg = e.to_string();
                     let mut final_history = history;
-                    final_history.push(Message::new(
-                        Role::Agent,
-                        vec![Part::text(msg.clone())],
-                    ));
+                    final_history.push(Message::new(Role::Agent, vec![Part::text(msg.clone())]));
 
                     let task = Task {
                         id: task_id.clone(),
@@ -143,9 +149,7 @@ impl AgentExecutor for RustAgentExecutor {
                 }
                 Err(e) => {
                     let _ = stream_tx
-                        .send(Err(A2AError::internal(format!(
-                            "agent task panicked: {e}"
-                        ))))
+                        .send(Err(A2AError::internal(format!("agent task panicked: {e}"))))
                         .await;
                 }
             }
@@ -154,10 +158,7 @@ impl AgentExecutor for RustAgentExecutor {
         Box::pin(ReceiverStream::new(stream_rx))
     }
 
-    fn cancel(
-        &self,
-        ctx: ExecutorContext,
-    ) -> BoxStream<'static, Result<StreamResponse, A2AError>> {
+    fn cancel(&self, ctx: ExecutorContext) -> BoxStream<'static, Result<StreamResponse, A2AError>> {
         let task_id = ctx.task_id.clone();
         let context_id = ctx.context_id.clone();
 

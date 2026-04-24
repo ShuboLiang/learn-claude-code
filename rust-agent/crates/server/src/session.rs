@@ -21,7 +21,9 @@ pub struct SessionStore {
 
 impl SessionStore {
     pub fn new() -> Self {
-        Self { sessions: Arc::new(DashMap::new()) }
+        Self {
+            sessions: Arc::new(DashMap::new()),
+        }
     }
 
     pub fn create(&self, agent: Arc<AgentApp>) -> Session {

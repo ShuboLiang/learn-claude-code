@@ -11,12 +11,14 @@
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
+use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 
 use super::retry;
-use super::types::{ApiMessage, ProviderRequest, ProviderResponse, ResponseContentBlock, TokenUsage};
+use super::types::{
+    ApiMessage, ProviderRequest, ProviderResponse, ResponseContentBlock, TokenUsage,
+};
 use crate::AgentResult;
 
 // ── OpenAI 请求/响应类型（用于序列化和反序列化） ──
@@ -119,8 +121,6 @@ struct OpenAIChoiceMessage {
     tool_calls: Option<Vec<OpenAIToolCall>>,
 }
 
-
-
 /// OpenAI 兼容 API 的 HTTP 客户端
 #[derive(Clone, Debug)]
 pub struct OpenAIClient {
@@ -184,8 +184,6 @@ impl OpenAIClient {
         &self.api_key
     }
 
-
-
     /// 调用 OpenAI Chat Completions API
     ///
     /// 支持对 429（限流）、5xx（服务器错误）、连接错误的指数退避重试。
@@ -201,6 +199,7 @@ impl OpenAIClient {
                 .post(&url)
                 .header(AUTHORIZATION, format!("Bearer {}", self.api_key))
                 .header("X-Client-Name", "claude-code")
+                .header(USER_AGENT, "claude-code/1.0")
                 .json(request)
                 .send()
                 .await;
@@ -495,11 +494,15 @@ fn convert_response(response: OpenAIResponse) -> ProviderResponse {
             input_tokens: response.usage.input_tokens,
             output_tokens: response.usage.output_tokens,
             cache_read_tokens: {
-                let from_prompt = response.usage.prompt_tokens_details
+                let from_prompt = response
+                    .usage
+                    .prompt_tokens_details
                     .as_ref()
                     .map(|d| d.cached_tokens)
                     .unwrap_or(0);
-                let from_input = response.usage.input_tokens_details
+                let from_input = response
+                    .usage
+                    .input_tokens_details
                     .as_ref()
                     .map(|d| d.cached_tokens)
                     .unwrap_or(0);

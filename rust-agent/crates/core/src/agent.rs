@@ -101,7 +101,10 @@ impl std::fmt::Debug for AgentApp {
             .field("skill_dirs", &self.skill_dirs)
             .field("model", &self.model)
             .field("max_tokens", &self.max_tokens)
-            .field("tool_extension", &self.tool_extension.as_ref().map(|_| "<dyn ToolExtension>"))
+            .field(
+                "tool_extension",
+                &self.tool_extension.as_ref().map(|_| "<dyn ToolExtension>"),
+            )
             .field("identity", &self.identity)
             .finish()
     }
@@ -225,10 +228,8 @@ impl AgentApp {
     /// 从环境变量和配置文件加载身份信息
     fn load_identity() -> AgentIdentity {
         // 1. 环境变量最高优先级
-        if let (Ok(nick), Ok(role)) = (
-            std::env::var("AGENT_NICKNAME"),
-            std::env::var("AGENT_ROLE"),
-        ) {
+        if let (Ok(nick), Ok(role)) = (std::env::var("AGENT_NICKNAME"), std::env::var("AGENT_ROLE"))
+        {
             return AgentIdentity::new(nick, role);
         }
         if let Ok(nick) = std::env::var("AGENT_NICKNAME") {
@@ -674,7 +675,7 @@ impl AgentApp {
 
 /// 将逗号/分号分隔的技能目录字符串解析为 PathBuf 列表，支持 ~/ 展开
 fn parse_skill_dirs(raw: &str) -> Vec<PathBuf> {
-    raw.split(|c| c == ',' || c == ';')
+    raw.split([',', ';'])
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .map(|s| {

@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use axum::{
+    Json, Router,
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
     routing::{get, post},
-    Json, Router,
 };
 use serde::Deserialize;
 use tokio_stream::StreamExt;
@@ -13,9 +13,9 @@ use tokio_stream::StreamExt;
 use rust_agent_core::agent::AgentApp;
 use rust_agent_core::mpsc;
 
+use crate::openai_compat;
 use crate::session::SessionStore;
 use crate::sse::agent_event_to_sse;
-use crate::openai_compat;
 
 #[derive(Deserialize)]
 pub struct SendMessageRequest {
@@ -30,7 +30,10 @@ pub fn routes(store: SessionStore) -> Router {
         .route("/sessions/{id}", get(get_session).delete(delete_session))
         .route("/sessions/{id}/messages", post(send_message))
         .route("/sessions/{id}/clear", post(clear_session))
-        .route("/v1/chat/completions", post(openai_compat::chat_completions))
+        .route(
+            "/v1/chat/completions",
+            post(openai_compat::chat_completions),
+        )
         .with_state(store)
 }
 
@@ -40,18 +43,17 @@ async fn health_check() -> Json<serde_json::Value> {
 }
 
 /// POST /sessions — 创建新会话
-async fn create_session(
-    State(store): State<SessionStore>,
-) -> impl IntoResponse {
+async fn create_session(State(store): State<SessionStore>) -> impl IntoResponse {
     let _ = dotenvy::dotenv();
     let agent = match AgentApp::from_env().await {
         Ok(a) => a,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": { "code": "init_failed", "message": e.to_string() } })),
-            ).into_response()
-        }
+        Err(e) => return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(
+                serde_json::json!({ "error": { "code": "init_failed", "message": e.to_string() } }),
+            ),
+        )
+            .into_response(),
     };
     let model = agent.model().to_owned();
     let session = store.create(Arc::new(agent));
@@ -59,7 +61,8 @@ async fn create_session(
         "id": session.id,
         "model": model,
         "created_at": session.created_at.to_rfc3339(),
-    })).into_response()
+    }))
+    .into_response()
 }
 
 /// GET /sessions/:id — 查询会话状态
@@ -73,13 +76,15 @@ async fn get_session(
             "message_count": session.context.len(),
             "created_at": session.created_at.to_rfc3339(),
             "last_active": session.last_active.to_rfc3339(),
-        })).into_response(),
+        }))
+        .into_response(),
         None => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({
                 "error": { "code": "session_not_found", "message": "会话不存在或已过期" }
             })),
-        ).into_response(),
+        )
+            .into_response(),
     }
 }
 
@@ -96,7 +101,8 @@ async fn delete_session(
             Json(serde_json::json!({
                 "error": { "code": "session_not_found", "message": "会话不存在" }
             })),
-        ).into_response()
+        )
+            .into_response()
     }
 }
 
@@ -113,7 +119,8 @@ async fn clear_session(
             Json(serde_json::json!({
                 "error": { "code": "session_not_found", "message": "会话不存在" }
             })),
-        ).into_response()
+        )
+            .into_response()
     }
 }
 
@@ -131,7 +138,8 @@ async fn send_message(
                 Json(serde_json::json!({
                     "error": { "code": "session_not_found", "message": "会话不存在或已过期" }
                 })),
-            ).into_response()
+            )
+                .into_response();
         }
     };
 
@@ -145,7 +153,10 @@ async fn send_message(
     let store_clone = store.clone();
 
     tokio::spawn(async move {
-        if let Err(e) = agent.handle_user_turn(&mut ctx, &content, event_tx.clone()).await {
+        if let Err(e) = agent
+            .handle_user_turn(&mut ctx, &content, event_tx.clone())
+            .await
+        {
             let _ = event_tx
                 .send(rust_agent_core::agent::AgentEvent::Error {
                     code: "agent_error".to_owned(),

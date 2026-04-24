@@ -2,6 +2,9 @@
   "name": "rust-agent-cli",
   "version": "0.1.0",
   "type": "module",
+  "bin": {
+    "rust-agent": "./bin/rust-agent.js"
+  },
   "scripts": {
     "start": "tsx src/index.tsx"
   },

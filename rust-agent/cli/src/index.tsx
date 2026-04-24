@@ -11,17 +11,25 @@ import { fileURLToPath } from "url";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-// 从 cli/src/ 解析到项目根目录的 target/
-const projectRoot = resolve(__dirname, "../..");
+// 优先从环境变量获取项目根目录，支持全局安装场景
+const projectRoot = process.env.RUST_AGENT_ROOT || resolve(__dirname, "../..");
 
 function resolveServerBinary(): string {
-  const win = resolve(projectRoot, "target/debug/rust-agent-server.exe");
-  const linux = resolve(projectRoot, "target/debug/rust-agent-server");
-  // 优先按平台选择，不存在时尝试另一个（兼容 WSL 环境）
-  if (process.platform === "win32") {
-    return existsSync(win) ? win : linux;
+  // 优先使用 release 版本，回退到 debug
+  const candidates = process.platform === "win32"
+    ? [
+        resolve(projectRoot, "target/release/rust-agent-server.exe"),
+        resolve(projectRoot, "target/debug/rust-agent-server.exe"),
+      ]
+    : [
+        resolve(projectRoot, "target/release/rust-agent-server"),
+        resolve(projectRoot, "target/debug/rust-agent-server"),
+      ];
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
   }
-  return existsSync(linux) ? linux : win;
+  // 都不存在时返回第一个，让后续 spawn 报错提示用户
+  return candidates[0];
 }
 
 const SERVER_BINARY = resolveServerBinary();

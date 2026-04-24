@@ -230,7 +230,10 @@ async fn push_notification_returns_not_supported() {
     let task_id = task["id"].as_str().unwrap();
 
     let res = client
-        .post(format!("{}/tasks/{}/pushNotificationConfigs", base_url, task_id))
+        .post(format!(
+            "{}/tasks/{}/pushNotificationConfigs",
+            base_url, task_id
+        ))
         .json(&serde_json::json!({}))
         .send()
         .await

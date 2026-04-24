@@ -129,10 +129,8 @@ impl CurlClient {
 
     /// 校验 URL 是否被黑名单禁止
     fn check_blacklist(&self, url: &str) -> AgentResult<()> {
-        let parsed = reqwest::Url::parse(url)
-            .map_err(|e| anyhow!("无效的 URL: {e}"))?;
-        let host = parsed.host_str()
-            .ok_or_else(|| anyhow!("URL 缺少主机名"))?;
+        let parsed = reqwest::Url::parse(url).map_err(|e| anyhow!("无效的 URL: {e}"))?;
+        let host = parsed.host_str().ok_or_else(|| anyhow!("URL 缺少主机名"))?;
         if is_blacklisted(host, &self.blacklist) {
             bail!("URL 被安全策略禁止: {host}");
         }
@@ -148,6 +146,7 @@ impl CurlClient {
     /// * `json` — JSON body（自动设置 Content-Type，与 body 互斥）
     /// * `timeout` — 超时秒数
     /// * `detailed` — true 返回完整 CurlResponse，false 仅返回 body 文本
+    #[allow(clippy::too_many_arguments)]
     pub async fn execute(
         &self,
         url: &str,
@@ -175,12 +174,15 @@ impl CurlClient {
             .timeout(Duration::from_secs(timeout));
 
         // 添加自定义 headers
-        if let Some(headers_obj) = headers {
-            if let Some(obj) = headers_obj.as_object() {
-                for (key, value) in obj {
-                    let val = value.as_str().map(|s| s.to_string()).unwrap_or_else(|| value.to_string());
-                    request = request.header(key, val);
-                }
+        if let Some(headers_obj) = headers
+            && let Some(obj) = headers_obj.as_object()
+        {
+            for (key, value) in obj {
+                let val = value
+                    .as_str()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| value.to_string());
+                request = request.header(key, val);
             }
         }
 
@@ -215,7 +217,10 @@ impl CurlClient {
 
         // 读取 body（10MB 限制）
         const MAX_BODY_SIZE: usize = 10 * 1024 * 1024;
-        let body_bytes = response.bytes().await.map_err(|e| anyhow!("读取响应失败: {e}"))?;
+        let body_bytes = response
+            .bytes()
+            .await
+            .map_err(|e| anyhow!("读取响应失败: {e}"))?;
         let (body_text, truncated) = if body_bytes.len() > MAX_BODY_SIZE {
             let truncated = &body_bytes[..MAX_BODY_SIZE];
             let text = String::from_utf8_lossy(truncated).to_string();
@@ -298,7 +303,11 @@ mod tests {
             http: reqwest::Client::new(),
             blacklist: parse_blacklist(&["localhost".to_string()]),
         };
-        assert!(client.check_blacklist("http://localhost:8080/test").is_err());
+        assert!(
+            client
+                .check_blacklist("http://localhost:8080/test")
+                .is_err()
+        );
         assert!(client.check_blacklist("https://example.com/test").is_ok());
     }
 }

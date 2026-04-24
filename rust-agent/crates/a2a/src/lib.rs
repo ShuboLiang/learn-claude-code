@@ -4,11 +4,9 @@ pub mod extension;
 use std::sync::Arc;
 
 use a2a::*;
-use a2a_server::{
-    DefaultRequestHandler, InMemoryTaskStore,
-};
-use axum::body::{to_bytes, Body};
-use axum::{extract::Request, middleware::Next, response::Response, Extension, Json};
+use a2a_server::{DefaultRequestHandler, InMemoryTaskStore};
+use axum::body::{Body, to_bytes};
+use axum::{Extension, Json, extract::Request, middleware::Next, response::Response};
 use rust_agent_core::agent::AgentApp;
 use serde_json::json;
 
@@ -51,7 +49,8 @@ async fn log_request(req: Request, next: Next) -> Response {
 
 /// Build the axum app using the a2a-rs SDK.
 pub async fn app(base_url: &str) -> anyhow::Result<axum::Router> {
-    let agent = AgentApp::from_env().await?
+    let agent = AgentApp::from_env()
+        .await?
         .with_extension(Arc::new(extension::WeatherToolExtension));
     let identity = agent.identity().clone();
     let skill_summaries = agent.list_skills();
@@ -83,9 +82,7 @@ pub async fn app(base_url: &str) -> anyhow::Result<axum::Router> {
     Ok(app)
 }
 
-async fn agent_card_handler(
-    Extension(card): Extension<Arc<AgentCard>>,
-) -> Json<serde_json::Value> {
+async fn agent_card_handler(Extension(card): Extension<Arc<AgentCard>>) -> Json<serde_json::Value> {
     // 先序列化成标准 A2A 的 JSON（含 supportedInterfaces 等）
     let mut value = serde_json::to_value(&*card).unwrap();
 
@@ -94,16 +91,14 @@ async fn agent_card_handler(
         // 移除标准 A2A 的 supportedInterfaces（模板里没有这个字段）
         obj.remove("supportedInterfaces");
 
-        obj.insert(
-            "preferredTransport".to_string(),
-            json!("JSONRPC"),
-        );
-        obj.insert(
-            "protocolVersion".to_string(),
-            json!("0.3.0"),
-        );
+        obj.insert("preferredTransport".to_string(), json!("JSONRPC"));
+        obj.insert("protocolVersion".to_string(), json!("0.3.0"));
         // 顶层 url 直接用 base_url（不带 /jsonrpc 后缀）
-        if let Some(http_json) = card.supported_interfaces.iter().find(|i| i.protocol_binding == TRANSPORT_PROTOCOL_HTTP_JSON) {
+        if let Some(http_json) = card
+            .supported_interfaces
+            .iter()
+            .find(|i| i.protocol_binding == TRANSPORT_PROTOCOL_HTTP_JSON)
+        {
             obj.insert("url".to_string(), json!(http_json.url.clone()));
         }
     }

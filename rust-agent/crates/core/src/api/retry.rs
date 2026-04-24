@@ -148,7 +148,10 @@ mod tests {
         assert!(is_retryable_status(teapot, &[418]));
         // 529 本身属于 5xx，因此无论 extra_codes 是什么都可重试
         assert!(is_retryable_status(StatusCode::from_u16(529).unwrap(), &[]));
-        assert!(is_retryable_status(StatusCode::from_u16(529).unwrap(), &[529]));
+        assert!(is_retryable_status(
+            StatusCode::from_u16(529).unwrap(),
+            &[529]
+        ));
     }
 
     #[tokio::test]
@@ -200,7 +203,9 @@ mod tests {
             let mut buf = [0u8; 1024];
             let _ = stream.read(&mut buf).await;
             let _ = stream
-                .write_all(b"HTTP/1.1 200 OK\r\nRetry-After: not-a-number\r\nContent-Length: 0\r\n\r\n")
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nRetry-After: not-a-number\r\nContent-Length: 0\r\n\r\n",
+                )
                 .await;
         });
 

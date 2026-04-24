@@ -14,7 +14,9 @@ use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use tokio::time::sleep;
 
 use super::retry;
-use super::types::{MessagesRequest, MessagesResponse, ProviderRequest, ProviderResponse, TokenUsage};
+use super::types::{
+    MessagesRequest, MessagesResponse, ProviderRequest, ProviderResponse, TokenUsage,
+};
 use crate::AgentResult;
 
 fn parse_messages_response(body: &str) -> AgentResult<MessagesResponse> {
@@ -83,8 +85,6 @@ impl AnthropicClient {
     pub fn api_key(&self) -> &str {
         &self.api_key
     }
-
-
 
     /// 调用 Claude Messages API，发送请求并获取回复
     ///
@@ -213,8 +213,8 @@ impl AnthropicClient {
 mod tests {
     use super::*;
     use crate::ResponseContentBlock;
-    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     /// 启动一个极简 HTTP mock 服务器，按顺序返回预设的响应
@@ -267,7 +267,10 @@ mod tests {
     /// 串行化修改环境变量，避免并行测试互相干扰
     fn with_max_retries<T>(retries: u32, f: impl FnOnce() -> T) -> T {
         static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        let _guard = LOCK.get_or_init(|| std::sync::Mutex::new(())).lock().unwrap();
+        let _guard = LOCK
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap();
 
         let old = std::env::var("RUST_AGENT_MAX_RETRIES").ok();
         // SAFETY：测试在单线程串行锁保护下修改环境变量，不会与其他线程并发访问
@@ -418,13 +421,11 @@ mod tests {
 
     #[tokio::test]
     async fn should_not_retry_400_bad_request() {
-        let (url, counter) = mock_server(vec![
-            (
-                400,
-                r#"{"error":{"type":"invalid_request_error","message":"Bad request"}}"#,
-                None,
-            ),
-        ])
+        let (url, counter) = mock_server(vec![(
+            400,
+            r#"{"error":{"type":"invalid_request_error","message":"Bad request"}}"#,
+            None,
+        )])
         .await;
 
         let client = with_max_retries(2, || AnthropicClient::new("fake-key", &url).unwrap());

@@ -53,7 +53,10 @@ impl std::fmt::Debug for AgentToolbox {
             .field("skills", &self.skills)
             .field("skill_dirs", &self.skill_dirs)
             .field("todo", &self.todo)
-            .field("extension", &self.extension.as_ref().map(|_| "<dyn ToolExtension>"))
+            .field(
+                "extension",
+                &self.extension.as_ref().map(|_| "<dyn ToolExtension>"),
+            )
             .field("curl_client", &"<CurlClient>")
             .finish()
     }
@@ -99,14 +102,14 @@ impl AgentToolbox {
         use crate::skills::hub as skillhub;
 
         // 优先路由到外部扩展
-        if let Some(ext) = &self.extension {
-            if ext.can_handle(name) {
-                let output = ext.dispatch(name, input).await?;
-                return Ok(ToolDispatchResult {
-                    output,
-                    used_todo: false,
-                });
-            }
+        if let Some(ext) = &self.extension
+            && ext.can_handle(name)
+        {
+            let output = ext.dispatch(name, input).await?;
+            return Ok(ToolDispatchResult {
+                output,
+                used_todo: false,
+            });
         }
 
         let output = match name {
@@ -114,7 +117,10 @@ impl AgentToolbox {
             "curl" => {
                 let url = required_string(input, "url")?;
                 let method = input.get("method").and_then(Value::as_str).unwrap_or("GET");
-                let detailed = input.get("detailed").and_then(Value::as_bool).unwrap_or(false);
+                let detailed = input
+                    .get("detailed")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
                 let headers = input.get("headers").cloned();
                 let body = input.get("body").and_then(Value::as_str);
                 let json = input.get("json").cloned();

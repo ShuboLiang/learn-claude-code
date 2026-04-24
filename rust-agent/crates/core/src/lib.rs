@@ -14,11 +14,13 @@ pub use tokio::sync::mpsc;
 
 // ── 公共 API 统一导出 ──
 pub use agent::{AgentApp, AgentEvent};
-pub use api::types::{ApiMessage, ProviderRequest, ProviderResponse, ResponseContentBlock, TokenUsage};
-pub use infra::token_tracker::{TokenTracker, TokenSnapshot};
+pub use api::types::{
+    ApiMessage, ProviderRequest, ProviderResponse, ResponseContentBlock, TokenUsage,
+};
 pub use api::{LlmProvider, ProviderInfo};
 pub use command::{CommandDispatcher, CommandResult, UserCommand};
 pub use context::ContextService;
 pub use infra::todo::TodoManager;
+pub use infra::token_tracker::{TokenSnapshot, TokenTracker};
 pub use skills::SkillLoader;
 pub use tools::extension::ToolExtension;
