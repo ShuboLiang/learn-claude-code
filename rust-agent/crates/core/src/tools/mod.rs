@@ -1,4 +1,5 @@
 mod bash;
+mod curl;
 mod file_ops;
 mod schemas;
 mod search;
@@ -16,6 +17,7 @@ use tokio::sync::Mutex;
 use crate::AgentResult;
 use crate::infra::todo::{TodoItemInput, TodoManager};
 use crate::skills::SkillLoader;
+use curl::CurlClient;
 use extension::ToolExtension;
 
 /// 工具调度的执行结果
