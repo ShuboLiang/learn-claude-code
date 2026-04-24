@@ -4,6 +4,16 @@ import { sendMessage, init, createSession, clearSession } from './api';
 import Chat from './chat';
 import Input from './input';
 
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) {
+    return (n / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'm';
+  }
+  if (n >= 1_000) {
+    return (n / 1_000).toFixed(1).replace(/\.0$/, '') + 'k';
+  }
+  return String(n);
+}
+
 export default function App({ serverUrl }: { serverUrl: string }) {
   const { exit } = useApp();
   const [sessionId, setSessionId] = useState('');
@@ -77,9 +87,9 @@ export default function App({ serverUrl }: { serverUrl: string }) {
             const tokenUsage = event.data?.token_usage;
             let info = apiCalls ? `── 完成，API 调用 ${apiCalls} 次` : '── 完成';
             if (tokenUsage) {
-              info += ` │ Token: ${tokenUsage.input_tokens}入/${tokenUsage.output_tokens}出`;
+              info += ` │ Token: ${formatTokens(tokenUsage.input_tokens)}入/${formatTokens(tokenUsage.output_tokens)}出`;
               if (tokenUsage.cache_read_tokens > 0) {
-                info += ` (缓存命中 ${tokenUsage.cache_read_tokens})`;
+                info += ` (缓存命中 ${formatTokens(tokenUsage.cache_read_tokens)})`;
               }
             }
             info += ' ──';

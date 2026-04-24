@@ -122,6 +122,9 @@ struct OpenAIChoice {
 struct OpenAIChoiceMessage {
     content: Option<String>,
     tool_calls: Option<Vec<OpenAIToolCall>>,
+    /// 部分兼容层（如 Claude 转 OpenAI）会返回 reasoning_content
+    #[serde(default)]
+    reasoning_content: Option<String>,
 }
 
 /// OpenAI 兼容 API 的 HTTP 客户端
@@ -485,6 +488,15 @@ fn convert_response(response: OpenAIResponse) -> ProviderResponse {
             Some(other) => other.to_owned(),
             None => String::new(),
         };
+
+        // 提取思考内容（兼容层返回的 reasoning_content）
+        if let Some(reasoning) = &choice.message.reasoning_content
+            && !reasoning.is_empty()
+        {
+            content_blocks.push(ResponseContentBlock::Thinking {
+                thinking: reasoning.clone(),
+            });
+        }
 
         // 提取文本内容
         if let Some(text) = &choice.message.content
