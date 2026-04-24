@@ -51,6 +51,9 @@ enum OpenAIMessage {
         content: Option<String>,
         #[serde(skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<OpenAIToolCall>,
+        /// 用于传递 Claude thinking 内容（部分兼容层要求）
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reasoning_content: Option<String>,
     },
     /// 工具调用结果
     Tool {
@@ -350,10 +353,12 @@ fn convert_messages(system: &str, messages: &[ApiMessage]) -> Vec<OpenAIMessage>
                 });
             }
             "assistant" => {
-                let (text, tool_calls) = extract_assistant_parts(&msg.content);
+                let (text, tool_calls, reasoning_content) =
+                    extract_assistant_parts(&msg.content);
                 openai_messages.push(OpenAIMessage::Assistant {
                     content: if text.is_empty() { None } else { Some(text) },
                     tool_calls,
+                    reasoning_content,
                 });
             }
             _ => {
@@ -368,14 +373,17 @@ fn convert_messages(system: &str, messages: &[ApiMessage]) -> Vec<OpenAIMessage>
     openai_messages
 }
 
-/// 从助手消息的内容块中提取纯文本和工具调用
-fn extract_assistant_parts(content: &serde_json::Value) -> (String, Vec<OpenAIToolCall>) {
+/// 从助手消息的内容块中提取纯文本、工具调用和思考内容
+fn extract_assistant_parts(
+    content: &serde_json::Value,
+) -> (String, Vec<OpenAIToolCall>, Option<String>) {
     let mut text = String::new();
     let mut tool_calls = Vec::new();
+    let mut reasoning = String::new();
 
     // 纯文本消息
     if let Some(s) = content.as_str() {
-        return (s.to_owned(), Vec::new());
+        return (s.to_owned(), Vec::new(), None);
     }
 
     // 内容块数组
@@ -386,6 +394,14 @@ fn extract_assistant_parts(content: &serde_json::Value) -> (String, Vec<OpenAITo
                 "text" => {
                     if let Some(t) = block.get("text").and_then(|v| v.as_str()) {
                         text.push_str(t);
+                    }
+                }
+                "thinking" => {
+                    if let Some(t) = block.get("thinking").and_then(|v| v.as_str()) {
+                        if !reasoning.is_empty() {
+                            reasoning.push('\n');
+                        }
+                        reasoning.push_str(t);
                     }
                 }
                 "tool_use" => {
@@ -409,7 +425,12 @@ fn extract_assistant_parts(content: &serde_json::Value) -> (String, Vec<OpenAITo
         }
     }
 
-    (text, tool_calls)
+    let reasoning_content = if reasoning.is_empty() {
+        None
+    } else {
+        Some(reasoning)
+    };
+    (text, tool_calls, reasoning_content)
 }
 
 /// 将内部工具 schema 转换为 OpenAI 工具定义
