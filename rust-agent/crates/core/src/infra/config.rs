@@ -74,6 +74,10 @@ pub struct AppConfig {
     /// Agent 职位/角色（可选）
     #[serde(default)]
     pub agent_role: Option<String>,
+    /// curl 工具黑名单（可选）。默认空列表，不限制任何地址。
+    /// 支持精确匹配、通配符（*）、正则（regex:前缀）。
+    #[serde(default)]
+    pub curl_blacklist: Option<Vec<String>>,
 }
 
 fn default_max_tokens() -> u32 {
