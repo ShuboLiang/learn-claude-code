@@ -2,6 +2,7 @@
 //!
 //! 提供结构化 HTTP 请求能力，支持黑名单安全策略。
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail};
@@ -13,10 +14,11 @@ use crate::AgentResult;
 use crate::infra::config::AppConfig;
 
 /// 黑名单条目
+#[derive(Clone)]
 enum BlacklistEntry {
     Exact(String),
     Wildcard(String),
-    Regex(Regex),
+    Regex(Arc<Regex>),
 }
 
 impl BlacklistEntry {
@@ -66,7 +68,7 @@ fn parse_blacklist(items: &[String]) -> Vec<BlacklistEntry> {
             }
             if let Some(pattern) = trimmed.strip_prefix("regex:") {
                 match Regex::new(pattern) {
-                    Ok(re) => Some(BlacklistEntry::Regex(re)),
+                    Ok(re) => Some(BlacklistEntry::Regex(Arc::new(re))),
                     Err(e) => {
                         eprintln!("[curl] 黑名单正则编译失败 '{}': {e}", trimmed);
                         None
@@ -96,6 +98,7 @@ pub struct CurlResponse {
 }
 
 /// HTTP 请求客户端
+#[derive(Clone)]
 pub struct CurlClient {
     http: reqwest::Client,
     blacklist: Vec<BlacklistEntry>,

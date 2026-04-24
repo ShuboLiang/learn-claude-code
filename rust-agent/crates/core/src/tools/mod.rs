@@ -42,6 +42,8 @@ pub struct AgentToolbox {
     pub(crate) todo: Arc<Mutex<TodoManager>>,
     /// 外部工具扩展（可选）
     pub(crate) extension: Option<Arc<dyn ToolExtension>>,
+    /// HTTP 请求客户端
+    pub(crate) curl_client: CurlClient,
 }
 
 impl std::fmt::Debug for AgentToolbox {
@@ -52,6 +54,7 @@ impl std::fmt::Debug for AgentToolbox {
             .field("skill_dirs", &self.skill_dirs)
             .field("todo", &self.todo)
             .field("extension", &self.extension.as_ref().map(|_| "<dyn ToolExtension>"))
+            .field("curl_client", &"<CurlClient>")
             .finish()
     }
 }
@@ -69,6 +72,10 @@ impl AgentToolbox {
             skill_dirs,
             todo: Arc::new(Mutex::new(TodoManager::default())),
             extension: None,
+            curl_client: match crate::infra::config::AppConfig::load() {
+                Ok(config) => CurlClient::from_config(&config),
+                Err(_) => CurlClient::default(),
+            },
         }
     }
 
@@ -104,6 +111,18 @@ impl AgentToolbox {
 
         let output = match name {
             "bash" => self.run_bash(required_string(input, "command")?).await?,
+            "curl" => {
+                let url = required_string(input, "url")?;
+                let method = input.get("method").and_then(Value::as_str).unwrap_or("GET");
+                let detailed = input.get("detailed").and_then(Value::as_bool).unwrap_or(false);
+                let headers = input.get("headers").cloned();
+                let body = input.get("body").and_then(Value::as_str);
+                let json = input.get("json").cloned();
+                let timeout = input.get("timeout").and_then(Value::as_u64).unwrap_or(30);
+                self.curl_client
+                    .execute(url, method, headers, body, json, timeout, detailed)
+                    .await?
+            }
             "read_file" => {
                 let path = required_string(input, "path")?;
                 let limit = optional_u64(input, "limit")?.map(|value| value as usize);
