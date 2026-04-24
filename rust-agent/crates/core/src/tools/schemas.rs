@@ -158,6 +158,23 @@ pub fn tool_schemas(allow_task: bool) -> Vec<Value> {
             }
         }),
         json!({
+            "name": "curl",
+            "description": "发起 HTTP 请求。默认返回响应 body，detailed=true 时返回完整信息（含 status/headers）。",
+            "input_schema": {
+                "type": "object",
+                "required": ["url"],
+                "properties": {
+                    "url": { "type": "string", "description": "请求地址" },
+                    "method": { "type": "string", "enum": ["GET", "POST", "PUT", "DELETE", "PATCH"], "default": "GET", "description": "HTTP 方法（可选，默认 GET）" },
+                    "headers": { "type": "object", "description": "可选的请求头，键值对形式" },
+                    "body": { "type": "string", "description": "原始 body 文本（与 json 参数互斥）" },
+                    "json": { "type": "object", "description": "JSON body，自动设置 Content-Type: application/json（与 body 参数互斥）" },
+                    "timeout": { "type": "integer", "description": "超时秒数（可选，默认 30）" },
+                    "detailed": { "type": "boolean", "description": "返回完整响应信息（含 status/headers/body），可选，默认 false", "default": false }
+                }
+            }
+        }),
+        json!({
             "name": "compact",
             "description": "触发手动对话压缩。当上下文过长时使用，将对话历史压缩为摘要。",
             "input_schema": {
