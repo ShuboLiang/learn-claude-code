@@ -120,7 +120,6 @@ impl AppConfig {
             .with_context(|| format!("读取配置文件失败: {}", path.display()))?;
         let config: AppConfig = serde_json::from_str(&content)
             .with_context(|| format!("解析配置文件失败: {}", path.display()))?;
-        config.inject_extra_env();
         Ok(config)
     }
 
@@ -174,21 +173,5 @@ impl AppConfig {
     /// 获取 profile 的 max_tokens，未指定则使用全局默认值
     pub fn effective_max_tokens(&self, profile: &ApiProfile) -> u32 {
         profile.max_tokens.unwrap_or(self.default_max_tokens)
-    }
-
-    /// 将 extra_env 中的键值对注入到进程环境中
-    ///
-    /// # Safety
-    /// `std::env::set_var` 在 Rust 1.94+ 中标记为 unsafe，
-    /// 因为在多线程环境中修改环境变量可能导致未定义行为。
-    /// 此方法仅在 Agent 初始化阶段（单线程上下文）调用，后续所有
-    /// 子进程通过 fork 继承环境变量，不会再修改。
-    fn inject_extra_env(&self) {
-        for (key, value) in &self.extra_env {
-            unsafe { std::env::set_var(key, value) };
-        }
-        if !self.extra_env.is_empty() {
-            println!("[配置] 已注入 {} 个额外环境变量", self.extra_env.len());
-        }
     }
 }

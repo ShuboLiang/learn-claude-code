@@ -138,6 +138,8 @@ impl AgentRunConfig {
 impl AgentApp {
     pub async fn from_env() -> AgentResult<Self> {
         let _ = dotenv();
+        // 先加载配置并注入 extra_env，确保后续读取的环境变量生效
+        let _ = crate::infra::config::AppConfig::load().ok();
         let workspace_root =
             std::env::current_dir().context("Failed to determine current directory")?;
         let info = crate::api::create_provider()?;
@@ -227,6 +229,8 @@ impl AgentApp {
 
     /// 从环境变量和配置文件加载身份信息
     fn load_identity() -> AgentIdentity {
+        // 先加载配置并注入 extra_env，确保后续读取的环境变量生效
+        let _ = crate::infra::config::AppConfig::load().ok();
         // 1. 环境变量最高优先级
         if let (Ok(nick), Ok(role)) = (std::env::var("AGENT_NICKNAME"), std::env::var("AGENT_ROLE"))
         {
@@ -701,7 +705,7 @@ fn build_system_prompt(
     identity: &AgentIdentity,
 ) -> String {
     let platform = if cfg!(windows) {
-        "Windows (PowerShell)。使用 PowerShell 语法：用 Get-ChildItem 代替 ls，Get-Content 代替 cat，-Command 代替 -lc，; 代替 &&"
+        "Windows (PowerShell)。"
     } else {
         "Unix (bash)"
     };
@@ -759,6 +763,7 @@ fn build_subagent_prompt(
     };
     format!(
         "{identity_line}，工作目录：{}。\n完成给定任务，按需使用工具，然后返回简洁的摘要。不能调用 task 工具。\n\n\
+        脚本执行规则：执行一次性脚本时禁止先检查环境，直接运行；禁止将临时脚本写入工作区，必须使用 exec_script 工具执行代码。\n\n\
         已安装的技能：\n{skills_desc}\n\n\
         如果已安装的技能覆盖当前任务，直接调用 load_skill 加载；否则跳过技能流程，直接执行。",
         workspace_root.display()

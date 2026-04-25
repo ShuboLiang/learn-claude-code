@@ -1,8 +1,11 @@
 mod bash;
 mod curl;
+mod exec_script;
 mod file_ops;
+mod powershell;
 mod schemas;
 mod search;
+mod shell;
 mod skill_ops;
 
 pub mod extension;
@@ -44,6 +47,10 @@ pub struct AgentToolbox {
     pub(crate) extension: Option<Arc<dyn ToolExtension>>,
     /// HTTP 请求客户端
     pub(crate) curl_client: CurlClient,
+    /// 默认的 ShellProvider（Unix 为 Bash，Windows 为 PowerShell）
+    pub(crate) default_shell: std::sync::Arc<dyn shell::ShellProvider>,
+    /// PowerShell 工具（可选，通过环境变量启用）
+    pub(crate) powershell_tool: Option<powershell::PowerShellTool>,
 }
 
 impl std::fmt::Debug for AgentToolbox {
@@ -69,15 +76,30 @@ impl AgentToolbox {
         skills: Arc<RwLock<SkillLoader>>,
         skill_dirs: Vec<PathBuf>,
     ) -> Self {
+        let config = crate::infra::config::AppConfig::load().ok();
+        let curl_client = match &config {
+            Some(cfg) => CurlClient::from_config(cfg),
+            None => CurlClient::default(),
+        };
+        let extra_env = config.map(|cfg| cfg.extra_env).unwrap_or_default();
+
+        #[cfg(unix)]
+        let default_shell = std::sync::Arc::new(shell::bash::BashShellProvider::new(extra_env.clone()));
+        #[cfg(windows)]
+        let default_shell = std::sync::Arc::new(shell::powershell::PowerShellShellProvider::new(extra_env.clone()));
+
         Self {
             workspace_root,
             skills,
             skill_dirs,
             todo: Arc::new(Mutex::new(TodoManager::default())),
             extension: None,
-            curl_client: match crate::infra::config::AppConfig::load() {
-                Ok(config) => CurlClient::from_config(&config),
-                Err(_) => CurlClient::default(),
+            curl_client,
+            default_shell,
+            powershell_tool: if std::env::var("AGENT_ENABLE_POWERSHELL_TOOL").is_ok() {
+                Some(powershell::PowerShellTool::new(extra_env))
+            } else {
+                None
             },
         }
     }
@@ -114,6 +136,20 @@ impl AgentToolbox {
 
         let output = match name {
             "bash" => self.run_bash(required_string(input, "command")?).await?,
+            "exec_script" => {
+                let language = required_string(input, "language")?;
+                let code = required_string(input, "code")?;
+                let save_as = optional_string(input, "save_as")?;
+                let timeout = optional_u64(input, "timeout")?;
+                self.run_exec_script(language, code, save_as, timeout).await?
+            }
+            "powershell" => {
+                if let Some(tool) = &self.powershell_tool {
+                    tool.run(required_string(input, "command")?, &self.workspace_root).await?
+                } else {
+                    bail!("PowerShell 工具未启用。设置 AGENT_ENABLE_POWERSHELL_TOOL=1 后重试。")
+                }
+            },
             "curl" => {
                 let url = required_string(input, "url")?;
                 let method = input.get("method").and_then(Value::as_str).unwrap_or("GET");
@@ -304,7 +340,7 @@ mod tests {
     use encoding_rs::GBK;
     use serde_json::json;
 
-    use super::{AgentToolbox, bash::decode_command_output};
+    use super::{AgentToolbox, shell::decode_command_output};
     use crate::skills::SkillLoader;
 
     /// 需要外部技能目录（../skills），在 CI 或无 fixtures 环境下跳过

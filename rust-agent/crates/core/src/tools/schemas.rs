@@ -9,10 +9,39 @@ pub fn tool_schemas(allow_task: bool) -> Vec<Value> {
     let mut tools = vec![
         json!({
             "name": "bash",
-            "description": "执行 shell 命令。",
+            "description": "执行 shell 命令。禁止用于保存并执行临时脚本（这是反模式）。如需执行多行脚本，优先使用 exec_script 工具。",
             "input_schema": {
                 "type": "object",
                 "properties": { "command": { "type": "string", "description": "要执行的 shell 命令" } },
+                "required": ["command"]
+            }
+        }),
+        json!({
+            "name": "exec_script",
+            "description": "执行一次性脚本/代码片段（python、node、bash、powershell）。代码写入系统临时目录运行，执行完毕后自动清理，不会在工作区留下垃圾文件。执行前禁止检查环境（如 python --version），直接运行即可，失败再报告。禁止将脚本先 write_file 到工作区再用 bash 执行。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "language": {
+                        "type": "string",
+                        "enum": ["python", "node", "bash", "powershell"],
+                        "description": "脚本语言"
+                    },
+                    "code": { "type": "string", "description": "要执行的代码内容" },
+                    "save_as": { "type": "string", "description": "可选。如果提供，执行成功后将脚本复制到此路径保留（相对于工作区）" },
+                    "timeout": { "type": "integer", "description": "超时秒数（可选，默认 120）" }
+                },
+                "required": ["language", "code"]
+            }
+        }),
+        json!({
+            "name": "powershell",
+            "description": "在 Windows 上执行 PowerShell 命令。仅在需要 Windows 原生功能（如 WMI、Registry、.NET）时，且已启用 AGENT_ENABLE_POWERSHELL_TOOL 时使用。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "command": { "type": "string", "description": "要执行的 PowerShell 命令" }
+                },
                 "required": ["command"]
             }
         }),
@@ -30,7 +59,7 @@ pub fn tool_schemas(allow_task: bool) -> Vec<Value> {
         }),
         json!({
             "name": "write_file",
-            "description": "将内容写入文件。",
+            "description": "将内容写入文件。禁止用于保存临时执行脚本——如需执行代码，请使用 exec_script 工具。",
             "input_schema": {
                 "type": "object",
                 "properties": {
