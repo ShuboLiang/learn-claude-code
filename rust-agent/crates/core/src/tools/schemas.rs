@@ -36,7 +36,7 @@ pub fn tool_schemas(allow_task: bool) -> Vec<Value> {
         }),
         json!({
             "name": "powershell",
-            "description": "在 Windows 上执行 PowerShell 命令。仅在需要 Windows 原生功能（如 WMI、Registry、.NET）时，且已启用 AGENT_ENABLE_POWERSHELL_TOOL 时使用。",
+            "description": "在 Windows 上执行 PowerShell 命令。仅在需要 Windows 原生功能（如 WMI、Registry、.NET）时使用。",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -84,7 +84,7 @@ pub fn tool_schemas(allow_task: bool) -> Vec<Value> {
         }),
         json!({
             "name": "todo",
-            "description": "更新任务列表。用于规划和跟踪多步骤任务的进度。",
+            "description": "更新任务列表。用于规划和跟踪多步骤任务的进度。当任务标记为 'completed' 时，务必在 result_summary 中提供该任务产出的关键结果摘要。",
             "input_schema": {
                 "type": "object",
                 "properties": {
@@ -99,6 +99,10 @@ pub fn tool_schemas(allow_task: bool) -> Vec<Value> {
                                     "type": "string",
                                     "enum": ["pending", "in_progress", "completed"],
                                     "description": "任务状态：待处理、进行中、已完成"
+                                },
+                                "result_summary": {
+                                    "type": "string",
+                                    "description": "任务产出的结果摘要或数据预览。仅在 status 为 completed 时填写。"
                                 }
                             },
                             "required": ["id", "text", "status"]
@@ -230,12 +234,12 @@ pub fn tool_schemas(allow_task: bool) -> Vec<Value> {
         }));
         tools.push(json!({
             "name": "call_bot",
-            "description": "将专业任务委派给拥有专属技能和角色的 Bot 子代理。支持并行调用多个不同的 Bot。每个 Bot 有独立的角色、system prompt 和专属技能。任务完成后返回 Bot 的处理结果。",
+            "description": "将专业任务委派给拥有专属技能和角色的 Bot 子代理。每个 Bot 的能力描述和可用 Bot 列表见 system prompt 中的「Bot 子代理」章节。支持并行调用多个不同的 Bot。Bot 有独立的上下文、角色和专属技能。任务完成后返回 Bot 的处理结果。",
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "name": { "type": "string", "description": "Bot 名称，如 code-reviewer、debugger" },
-                    "task": { "type": "string", "description": "要交给 Bot 执行的具体任务描述" }
+                    "name": { "type": "string", "description": "Bot 名称，如 code-reviewer、debugger。具体可用列表见 system prompt 中的 Bot 子代理章节。" },
+                    "task": { "type": "string", "description": "要交给 Bot 执行的具体任务描述。应包含所有必要上下文，因为 Bot 不共享对话历史。" }
                 },
                 "required": ["name", "task"]
             }

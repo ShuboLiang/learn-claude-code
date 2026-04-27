@@ -26,6 +26,10 @@ pub struct BotMetadata {
     /// 角色/职位描述
     #[serde(default)]
     pub role: String,
+    /// 能力描述：说明该 Bot 擅长什么、何时应该委派给它
+    /// 这段描述会显示在 system prompt 中，帮助主 agent 判断路由
+    #[serde(default)]
+    pub description: String,
     /// 指定模型（可选，不指定则继承主 agent 的 model）
     pub model: Option<String>,
     /// 最大 token 数（可选）
@@ -67,6 +71,8 @@ pub struct BotSummary {
     pub nickname: String,
     /// 角色
     pub role: String,
+    /// 能力描述
+    pub description: String,
     /// 专属技能数量
     pub skill_count: usize,
     /// 指定模型（可选）
@@ -80,8 +86,6 @@ pub struct BotSummary {
 pub struct BotRegistry {
     /// Bot 名称 → Bot 定义
     bots: BTreeMap<String, BotDefinition>,
-    /// 全局技能加载器（Bot 专属技能未覆盖时继承）
-    global_skills: SkillLoader,
 }
 
 impl BotRegistry {
@@ -95,16 +99,13 @@ impl BotRegistry {
         Ok(dir)
     }
 
-    /// 从 `~/.rust-agent/bots/` 加载所有 Bot，并合并全局技能
-    pub fn load(global_skills: SkillLoader) -> AgentResult<Self> {
+    /// 从 `~/.rust-agent/bots/` 加载所有 Bot
+    pub fn load() -> AgentResult<Self> {
         let bots_dir = Self::bots_dir()?;
         let mut bots = BTreeMap::new();
 
         if !bots_dir.exists() {
-            return Ok(Self {
-                bots,
-                global_skills,
-            });
+            return Ok(Self { bots });
         }
 
         // 扫描 bots/ 下所有 BOT.md 文件
@@ -136,10 +137,7 @@ impl BotRegistry {
 
             // 加载 Bot 专属技能（从 bots/<name>/skills/ 目录）
             let bot_skills_dir = dir.join("skills");
-            let mut bot_skills = SkillLoader::load_from_dir(&bot_skills_dir)?;
-
-            // 合并全局技能（Bot 专属覆盖同名全局技能）
-            bot_skills.merge(global_skills.clone());
+            let bot_skills = SkillLoader::load_from_dir(&bot_skills_dir)?;
 
             bots.insert(
                 name,
@@ -153,10 +151,7 @@ impl BotRegistry {
             );
         }
 
-        Ok(Self {
-            bots,
-            global_skills,
-        })
+        Ok(Self { bots })
     }
 
     /// 按名称查找 Bot
@@ -169,14 +164,12 @@ impl BotRegistry {
         self.bots
             .iter()
             .map(|(name, bot)| {
-                // 计算专属技能数量（不含全局技能）
-                let exclusive_count =
-                    bot.skills.list_skills().len() - self.global_skills.list_skills().len();
                 BotSummary {
                     name: name.clone(),
                     nickname: bot.metadata.nickname.clone(),
                     role: bot.metadata.role.clone(),
-                    skill_count: exclusive_count.max(0),
+                    description: bot.metadata.description.clone(),
+                    skill_count: bot.skills.list_skills().len(),
                     model: bot.metadata.model.clone(),
                     profile: bot.metadata.profile.clone(),
                 }
@@ -194,13 +187,8 @@ impl BotRegistry {
         self.bots.is_empty()
     }
 
-    /// 获取全局技能加载器的引用
-    pub fn global_skills(&self) -> &SkillLoader {
-        &self.global_skills
-    }
-
     /// 生成用于 system prompt 的 Bot 列表字符串
-    /// 包含名称、角色、昵称，便于 LLM 进行智能路由和编排
+    /// 包含名称、角色、能力描述、昵称，便于 LLM 进行智能路由和编排
     pub fn descriptions_for_system_prompt(&self) -> String {
         if self.bots.is_empty() {
             return String::new();
@@ -208,22 +196,28 @@ impl BotRegistry {
         self.bots
             .iter()
             .map(|(name, bot)| {
-                let label = if !bot.metadata.role.is_empty() {
-                    format!("{}（{}）", name, bot.metadata.role)
-                } else if !bot.metadata.nickname.is_empty() {
-                    format!("{}（{}）", name, bot.metadata.nickname)
+                let mut parts = vec![format!("**{name}**")];
+                if !bot.metadata.nickname.is_empty() {
+                    parts.push(format!("（{}）", bot.metadata.nickname));
+                }
+                if !bot.metadata.role.is_empty() {
+                    parts.push(format!("— {}", bot.metadata.role));
+                }
+                let label = parts.join("");
+
+                // description 优先，fallback 到 body 摘要
+                let desc = if !bot.metadata.description.is_empty() {
+                    bot.metadata.description.clone()
                 } else {
-                    name.clone()
+                    bot.body
+                        .chars()
+                        .take(120)
+                        .collect::<String>()
+                        .replace('\n', " ")
+                        .trim()
+                        .to_owned()
                 };
-                let excerpt = bot
-                    .body
-                    .chars()
-                    .take(120)
-                    .collect::<String>()
-                    .replace('\n', " ")
-                    .trim()
-                    .to_owned();
-                format!("- **{label}**: {excerpt}")
+                format!("- {label}\n  能力：{desc}")
             })
             .collect::<Vec<_>>()
             .join("\n")

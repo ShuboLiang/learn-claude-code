@@ -15,7 +15,6 @@ use rust_agent_core::api::types::ApiMessage;
 use rust_agent_core::bots::BotRegistry;
 use rust_agent_core::context::ContextService;
 use rust_agent_core::mpsc;
-use rust_agent_core::skills::SkillLoader;
 
 use crate::openai_compat;
 use crate::session::SessionStore;
@@ -41,9 +40,8 @@ pub struct AppState {
 
 /// 构建所有 API 路由
 pub fn routes(store: SessionStore) -> Router {
-    // 服务启动时加载 Bot 注册表（含全局技能）
-    let global_skills = SkillLoader::load_from_dirs(&[]).unwrap_or_default();
-    let bot_registry = BotRegistry::load(global_skills).unwrap_or_default();
+    // 服务启动时加载 Bot 注册表
+    let bot_registry = BotRegistry::load().unwrap_or_default();
 
     let app_state = AppState {
         store: store.clone(),

@@ -96,11 +96,7 @@ impl AgentToolbox {
             extension: None,
             curl_client,
             default_shell,
-            powershell_tool: if std::env::var("AGENT_ENABLE_POWERSHELL_TOOL").is_ok() {
-                Some(powershell::PowerShellTool::new(extra_env))
-            } else {
-                None
-            },
+            powershell_tool: Some(powershell::PowerShellTool::new(extra_env)),
         }
     }
 
@@ -144,11 +140,8 @@ impl AgentToolbox {
                 self.run_exec_script(language, code, save_as, timeout).await?
             }
             "powershell" => {
-                if let Some(tool) = &self.powershell_tool {
-                    tool.run(required_string(input, "command")?, &self.workspace_root).await?
-                } else {
-                    bail!("PowerShell 工具未启用。设置 AGENT_ENABLE_POWERSHELL_TOOL=1 后重试。")
-                }
+                let tool = self.powershell_tool.as_ref().expect("powershell_tool should be initialized");
+                tool.run(required_string(input, "command")?, &self.workspace_root).await?
             },
             "curl" => {
                 let url = required_string(input, "url")?;
@@ -327,6 +320,7 @@ pub(crate) fn parse_todo_items(input: &Value) -> AgentResult<Vec<TodoItemInput>>
                 id: required_string(item, "id")?.to_owned(),
                 text: required_string(item, "text")?.to_owned(),
                 status: required_string(item, "status")?.to_owned(),
+                result_summary: optional_string(item, "result_summary")?.map(|s| s.to_owned()),
             })
         })
         .collect()

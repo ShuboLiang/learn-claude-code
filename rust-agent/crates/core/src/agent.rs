@@ -184,7 +184,7 @@ impl AgentApp {
 
         let identity = Self::load_identity();
 
-        let bots = BotRegistry::load(skills.clone())?;
+        let bots = BotRegistry::load()?;
         if bots.is_empty() {
             println!("[Agent] 未找到任何 Bot 定义");
         } else {
@@ -779,6 +779,10 @@ impl AgentApp {
             )
         })?;
 
+        // 克隆 AgentApp 并把技能加载器替换为 Bot 专属技能（不继承全局技能）
+        let mut bot_app = self.clone();
+        bot_app.skills = Arc::new(RwLock::new(bot.skills.clone()));
+
         let skills_desc = bot.skills.descriptions_for_system_prompt();
 
         let identity_line = if bot.metadata.nickname.is_empty() && bot.metadata.role.is_empty() {
@@ -806,8 +810,11 @@ impl AgentApp {
 提示：
 - 如果已安装的技能覆盖当前任务，直接调用 load_skill 加载后再执行。
 - 否则跳过技能流程，直接使用 bash 等工具执行。
-- 执行一次性脚本时禁止先检查环境，直接运行。
-- 禁止将临时脚本写入工作区，必须使用 exec_script 工具执行代码。
+- **脚本执行规则**：
+  - 已安装技能的脚本（已在 skills/ 目录下）→ 用 bash 直接从技能目录运行。
+  - 只有凭空生成的临时代码片段才使用 exec_script 工具执行。
+  - 执行前禁止先检查环境，直接运行，失败再报告。
+  - 禁止 write_file 写临时脚本到工作区再用 bash 执行。
 - 不能调用 task 工具。
 - 完成后返回详细的结果，不要只说"已完成"。"#,
             identity_line = identity_line,
@@ -820,7 +827,7 @@ impl AgentApp {
 
         let mut bot_ctx = ContextService::new();
         bot_ctx.push_user_text(task);
-        self.run_agent_loop(
+        bot_app.run_agent_loop(
             &mut bot_ctx,
             system_prompt,
             AgentRunConfig::child(),
@@ -905,6 +912,9 @@ fn build_system_prompt(
             6. 绝对不能跳过 Bot/技能检查直接使用 bash/curl 等工具。\n\
             7. 在完成 Bot/技能流程之前，绝对不能声称无法完成任务。\n\n\
             输出规则：\n\
+            - **交付产物优先**：在将某个任务步骤标记为完成（completed）时，你必须在同一条回复中展示该步骤产出的核心数据（如解析后的 JSON、代码、分析结论等）。\n\
+            - **禁止隐瞒结果**：严禁在未展示关键数据的情况下仅回复“已完成”。\n\
+            - **结果记录**：调用 todo 工具更新状态时，务必在 result_summary 字段中填入该任务产出的简要描述或数据预览，以便于后续流程引用。\n\
             - 研究类任务：收集完资料后必须输出完整内容，不能只说整理完毕。\n\
             - 长篇内容（>500字）应写入文件并告知用户文件路径。\n\
             - 如果工具结果被持久化到磁盘（包含 <persisted-output> 标签），可以随时用 read_file 读取完整内容。\n\n\
