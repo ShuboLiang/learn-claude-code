@@ -800,6 +800,14 @@ impl AgentApp {
 
         let platform = if cfg!(windows) { "Windows (PowerShell)" } else { "Unix (bash)" };
 
+        // 将 BOT.md 的 body 内容（行为指令）注入 system prompt
+        // body 可能为空（BOT.md 只有 frontmatter 没有正文）
+        let bot_body_section = if bot.body.trim().is_empty() {
+            String::new()
+        } else {
+            format!("\n## 行为指令（来自 BOT.md）\n\n{bot_body}\n", bot_body = bot.body)
+        };
+
         let system_prompt = format!(
             r#"{identity_line}。
 工作目录：{workspace}。
@@ -811,7 +819,7 @@ impl AgentApp {
 
 专属技能：
 {skills_desc}
-
+{bot_body_section}
 提示：
 - 如果已安装的技能覆盖当前任务，直接调用 load_skill 加载后再执行。
 - 否则跳过技能流程，直接使用 bash 等工具执行。
@@ -820,10 +828,12 @@ impl AgentApp {
   - 只有凭空生成的临时代码片段才使用 exec_script 工具执行。
   - 执行前禁止先检查环境，直接运行，失败再报告。
   - 禁止 write_file 写临时脚本到工作区再用 bash 执行。
-- 完成后返回详细的结果，不要只说"已完成"。"#,
+- 完成后返回详细的结果，不要只说"已完成"。
+- **信息不明确时必须询问用户**：当任务存在多种可行方案（如不同的算法、权重模型、模板风格等），或关键信息缺失导致无法做出唯一判断时，**必须**先向用户确认，**禁止**擅自选择默认值直接执行。"#,
             identity_line = identity_line,
             workspace = self.workspace_root.display(),
             skills_desc = skills_desc,
+            bot_body_section = bot_body_section,
         );
 
         let mut sub_logger = ConversationLogger::create();
