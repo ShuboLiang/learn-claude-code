@@ -198,6 +198,36 @@ impl BotRegistry {
     pub fn global_skills(&self) -> &SkillLoader {
         &self.global_skills
     }
+
+    /// 生成用于 system prompt 的 Bot 列表字符串
+    /// 包含名称、角色、昵称，便于 LLM 进行智能路由和编排
+    pub fn descriptions_for_system_prompt(&self) -> String {
+        if self.bots.is_empty() {
+            return String::new();
+        }
+        self.bots
+            .iter()
+            .map(|(name, bot)| {
+                let label = if !bot.metadata.role.is_empty() {
+                    format!("{}（{}）", name, bot.metadata.role)
+                } else if !bot.metadata.nickname.is_empty() {
+                    format!("{}（{}）", name, bot.metadata.nickname)
+                } else {
+                    name.clone()
+                };
+                let excerpt = bot
+                    .body
+                    .chars()
+                    .take(120)
+                    .collect::<String>()
+                    .replace('\n', " ")
+                    .trim()
+                    .to_owned();
+                format!("- **{label}**: {excerpt}")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
 }
 
 /// 解析 BOT.md 文件的原始内容，分离 YAML frontmatter 和正文。

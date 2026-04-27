@@ -296,11 +296,13 @@ impl AgentApp {
         ctx.push_user_text(user_input);
         logger.log(&format!("=== 用户 ===\n{user_input}"));
 
+        let bot_list = self.bots.descriptions_for_system_prompt();
         let system_prompt = build_system_prompt(
             &self.workspace_root,
             &self.skills.read().unwrap().descriptions_for_system_prompt(),
             &self.model,
             &self.identity,
+            &bot_list,
         );
         logger.log(&format!("=== 系统提示词 ===\n{system_prompt}"));
 
@@ -855,6 +857,7 @@ fn build_system_prompt(
     skills_desc: &str,
     model: &str,
     identity: &AgentIdentity,
+    bot_list: &str,
 ) -> String {
     let platform = if cfg!(windows) {
         "Windows (PowerShell)。"
@@ -873,16 +876,34 @@ fn build_system_prompt(
             identity.nickname, identity.role
         )
     };
+
+    let bot_section = if bot_list.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "\n\n\
+            ## Bot 子代理（专业领域专家）\n\
+            Bot 是拥有专属技能的专家子代理，优先级高于普通技能。\n\
+            **委派规则**：当任务匹配某个 Bot 的职责范围时，优先调用 call_bot 委派，不要改用技能。\n\
+            **多轮编排**：复杂任务可分多轮委派：先调用数据收集 Bot → 拿到结果 → 调用分析/总结 Bot。\n\
+            **并行调度**：多个独立的子任务可在同一轮并行调用多个 Bot（上限 5 个）。\n\
+            **存在依赖**的任务必须串行：等上一个 Bot 返回后再调用下一个。\n\n\
+            可用 Bot：\n{bot_list}"
+        )
+    };
+
     format!(
-        "{identity_line}\n工作目录：{}。\n平台：{platform}\n优先使用工具解决问题，避免冗长解释。\n\n\
+        "{identity_line}\n工作目录：{}。\n平台：{platform}\n优先使用工具解决问题，避免冗长解释。{bot_section}\n\n\
             任务执行流程 — 每个任务必须按以下顺序执行：\n\
             0. 先了解项目：读取目录结构和关键文件，理解项目上下文。\n\
-            1. 检查已安装的技能是否覆盖当前任务。如果有，调用 load_skill。\n\
-            2. 如果没有匹配的已安装技能，必须调用 search_skillhub 搜索。\n\
-            3. 如果 search_skillhub 返回了相关技能，调用 install_skill 安装它。\n\
-            4. 只有在步骤 0-3 完成（且未找到技能）后，才能使用 bash 或其他工具执行具体操作。\n\
-            5. 绝对不能跳过技能检查直接使用 bash/curl 等工具。\n\
-            6. 在完成技能流程之前，绝对不能声称无法完成任务。\n\n\
+            1. 检查任务是否匹配某个 Bot 的职责范围。如果匹配，直接调用 call_bot 委派。\n\
+               **不可用技能替代 Bot，Bot 优先级高于技能。**\n\
+            2. 检查已安装的技能是否覆盖当前任务。如果有，调用 load_skill。\n\
+            3. 如果没有匹配的已安装技能，必须调用 search_skillhub 搜索。\n\
+            4. 如果 search_skillhub 返回了相关技能，调用 install_skill 安装它。\n\
+            5. 只有在步骤 0-4 完成（且未找到 Bot/技能）后，才能使用 bash 或其他工具执行具体操作。\n\
+            6. 绝对不能跳过 Bot/技能检查直接使用 bash/curl 等工具。\n\
+            7. 在完成 Bot/技能流程之前，绝对不能声称无法完成任务。\n\n\
             输出规则：\n\
             - 研究类任务：收集完资料后必须输出完整内容，不能只说整理完毕。\n\
             - 长篇内容（>500字）应写入文件并告知用户文件路径。\n\
@@ -892,7 +913,7 @@ fn build_system_prompt(
             - **并行执行条件**（需全部满足）：2+ 个独立任务、任务间无依赖、无共享文件冲突。\n\
             - **串行执行条件**（任一触发）：任务间有依赖、共享文件/状态、范围不明确需先了解。\n\
             - 典型并行场景：同时研究多个不相关主题、同时探索不同模块、同时分析多个文件。\n\
-            - 典型串行场景：先调研再实现、先写 schema 再写 API、需要前一步结果才能决定下一步。\n\
+            - 典型串行场景：先调研再实现、先写 schema 再写 API、当任务需要前一步结果才能决定下一步。\n\
             - 并行上限为 5 个子代理/Bot，超出部分将被忽略。\n\n\
             其他工具：\n\
             - 使用 todo 工具规划多步骤工作。\n\
