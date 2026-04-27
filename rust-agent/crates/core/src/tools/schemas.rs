@@ -9,7 +9,7 @@ pub fn tool_schemas(allow_task: bool) -> Vec<Value> {
     let mut tools = vec![
         json!({
             "name": "bash",
-            "description": "执行 shell 命令。禁止用于保存并执行临时脚本（这是反模式）。如需执行多行脚本，优先使用 exec_script 工具。",
+            "description": "执行 shell 命令。用于运行已有脚本（如已安装技能的脚本）或直接执行命令。禁止 write_file 写脚本后 bash 执行。多行临时代码片段使用 exec_script；已有独立脚本直接用 bash 从原路径运行。",
             "input_schema": {
                 "type": "object",
                 "properties": { "command": { "type": "string", "description": "要执行的 shell 命令" } },
@@ -18,7 +18,7 @@ pub fn tool_schemas(allow_task: bool) -> Vec<Value> {
         }),
         json!({
             "name": "exec_script",
-            "description": "执行一次性脚本/代码片段（python、node、bash、powershell）。代码写入系统临时目录运行，执行完毕后自动清理，不会在工作区留下垃圾文件。执行前禁止检查环境（如 python --version），直接运行即可，失败再报告。禁止将脚本先 write_file 到工作区再用 bash 执行。",
+            "description": "执行凭空生成的临时代码片段（python、node、bash、powershell）。代码写入临时目录运行，执行后自动清理。仅用于 ad-hoc 脚本；已安装技能的现有脚本（已在磁盘上）应用 bash 从原目录运行，不要复制到 exec_script。执行前禁止检查环境，直接运行，失败再报告。",
             "input_schema": {
                 "type": "object",
                 "properties": {

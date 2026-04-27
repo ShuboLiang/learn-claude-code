@@ -798,11 +798,16 @@ impl AgentApp {
             )
         };
 
+        let platform = if cfg!(windows) { "Windows (PowerShell)" } else { "Unix (bash)" };
+
         let system_prompt = format!(
             r#"{identity_line}。
 工作目录：{workspace}。
+平台：{platform}。
 你是一个具备独立上下文的 Bot 子代理，拥有专属技能。
 完成用户交给你的任务，按需使用工具，然后返回完整的处理结果。
+
+工具限制：task 和 call_bot 工具已为你禁用，不可调用。
 
 专属技能：
 {skills_desc}
@@ -815,7 +820,6 @@ impl AgentApp {
   - 只有凭空生成的临时代码片段才使用 exec_script 工具执行。
   - 执行前禁止先检查环境，直接运行，失败再报告。
   - 禁止 write_file 写临时脚本到工作区再用 bash 执行。
-- 不能调用 task 工具。
 - 完成后返回详细的结果，不要只说"已完成"。"#,
             identity_line = identity_line,
             workspace = self.workspace_root.display(),
@@ -906,11 +910,16 @@ fn build_system_prompt(
             1. 检查任务是否匹配某个 Bot 的职责范围。如果匹配，直接调用 call_bot 委派。\n\
                **不可用技能替代 Bot，Bot 优先级高于技能。**\n\
             2. 检查已安装的技能是否覆盖当前任务。如果有，调用 load_skill。\n\
-            3. 如果没有匹配的已安装技能，必须调用 search_skillhub 搜索。\n\
+            3. 如果任务需要领域知识但没有匹配的已安装技能，调用 search_skillhub 搜索。\n\
+               简单操作（文件读写、命令执行、搜索等）可直接跳过此步骤。\n\
             4. 如果 search_skillhub 返回了相关技能，调用 install_skill 安装它。\n\
-            5. 只有在步骤 0-4 完成（且未找到 Bot/技能）后，才能使用 bash 或其他工具执行具体操作。\n\
-            6. 绝对不能跳过 Bot/技能检查直接使用 bash/curl 等工具。\n\
+            5. 只有在步骤 0-4 完成后，才能使用 bash 或其他工具执行具体操作。\n\
+            6. 绝对不能跳过 Bot/技能检查直接使用 bash/curl 等工具（简单文件操作除外）。\n\
             7. 在完成 Bot/技能流程之前，绝对不能声称无法完成任务。\n\n\
+            脚本执行规则：\n\
+            - 已安装技能的脚本（已在 skills/ 目录下）→ 用 bash 直接从技能目录运行。\n\
+            - 只有凭空生成的临时代码片段才使用 exec_script 工具执行。\n\
+            - 禁止 write_file 写临时脚本到工作区再用 bash 执行。\n\n\
             输出规则：\n\
             - **交付产物优先**：在将某个任务步骤标记为完成（completed）时，你必须在同一条回复中展示该步骤产出的核心数据（如解析后的 JSON、代码、分析结论等）。\n\
             - **禁止隐瞒结果**：严禁在未展示关键数据的情况下仅回复“已完成”。\n\
@@ -945,8 +954,13 @@ fn build_subagent_prompt(
         format!("你是 {} 的子代理", identity.display_name())
     };
     format!(
-        "{identity_line}，工作目录：{}。\n完成给定任务，按需使用工具，然后返回简洁的摘要。不能调用 task 工具。\n\n\
-        脚本执行规则：执行一次性脚本时禁止先检查环境，直接运行；禁止将临时脚本写入工作区，必须使用 exec_script 工具执行代码。\n\n\
+        "{identity_line}，工作目录：{}。\n完成给定任务，按需使用工具，然后返回简洁的摘要。\n\n\
+        工具限制：task 和 call_bot 工具已为你禁用，不可调用。\n\n\
+        脚本执行规则：\n\
+        - 已安装技能的脚本（已在 skills/ 目录下）→ 用 bash 直接从技能目录运行。\n\
+        - 只有凭空生成的临时代码片段才使用 exec_script 工具执行。\n\
+        - 执行前禁止先检查环境，直接运行，失败再报告。\n\
+        - 禁止 write_file 写临时脚本到工作区再用 bash 执行。\n\n\
         已安装的技能：\n{skills_desc}\n\n\
         如果已安装的技能覆盖当前任务，直接调用 load_skill 加载；否则跳过技能流程，直接执行。",
         workspace_root.display()
