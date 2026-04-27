@@ -228,6 +228,18 @@ pub fn tool_schemas(allow_task: bool) -> Vec<Value> {
                 "required": ["prompt"]
             }
         }));
+        tools.push(json!({
+            "name": "call_bot",
+            "description": "将专业任务委派给拥有专属技能和角色的 Bot 子代理。支持并行调用多个不同的 Bot。每个 Bot 有独立的角色、system prompt 和专属技能。任务完成后返回 Bot 的处理结果。",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Bot 名称，如 code-reviewer、debugger" },
+                    "task": { "type": "string", "description": "要交给 Bot 执行的具体任务描述" }
+                },
+                "required": ["name", "task"]
+            }
+        }));
     }
 
     tools

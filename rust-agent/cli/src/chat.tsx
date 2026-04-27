@@ -11,6 +11,7 @@ interface ChatProps {
   messages: Message[];
   currentReply: string;
   isLoading: boolean;
+  activeBot?: string | null;
 }
 
 // 解析 tool_call JSON，提取工具名和简短描述
@@ -73,6 +74,16 @@ function renderMessage(msg: Message, index: number) {
         </Box>
       );
     }
+    case "bot_call": {
+      const text = msg.content;
+      return (
+        <Box key={`msg-${index}`} flexDirection="column">
+          <Text color="magenta" bold>
+            ╭─ 🤖 {text}
+          </Text>
+        </Box>
+      );
+    }
     case "system":
       return (
         <Box key={`msg-${index}`}>
@@ -84,7 +95,12 @@ function renderMessage(msg: Message, index: number) {
   }
 }
 
-export default function Chat({ messages, currentReply, isLoading }: ChatProps) {
+export default function Chat({
+  messages,
+  currentReply,
+  isLoading,
+  activeBot,
+}: ChatProps) {
   return (
     <Box flexDirection="column" flexGrow={1}>
       {/* 已完成的消息用 Static 永久渲染 */}
@@ -92,10 +108,12 @@ export default function Chat({ messages, currentReply, isLoading }: ChatProps) {
         {(msg, index) => renderMessage(msg, index)}
       </Static>
 
-      {/* 加载指示器（非流式，等 turn_end 后 Static 一次性渲染 Markdown） */}
+      {/* 加载指示器 */}
       {isLoading && (
         <Box>
-          <Text dimColor>思考中...</Text>
+          <Text dimColor>
+            {activeBot ? `[@${activeBot}] 执行中...` : "思考中..."}
+          </Text>
         </Box>
       )}
     </Box>

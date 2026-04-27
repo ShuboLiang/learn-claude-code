@@ -11,8 +11,6 @@ use rust_agent_core::agent::AgentApp;
 use rust_agent_core::context::ContextService;
 use rust_agent_core::mpsc;
 
-use crate::session::SessionStore;
-
 /// OpenAI Chat Completions 请求格式
 #[derive(Deserialize)]
 pub struct ChatCompletionRequest {
@@ -141,7 +139,7 @@ fn extract_user_input(messages: &[ChatMessage]) -> String {
 
 /// POST /v1/chat/completions — OpenAI 兼容端点
 pub async fn chat_completions(
-    State(_store): State<SessionStore>,
+    State(_state): State<crate::routes::AppState>,
     Json(body): Json<ChatCompletionRequest>,
 ) -> impl IntoResponse {
     let _ = dotenvy::dotenv();

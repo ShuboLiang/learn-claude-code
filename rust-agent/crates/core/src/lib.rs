@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod api;
+pub mod bots;
 pub mod command;
 pub mod context;
 pub mod infra;
@@ -18,6 +19,7 @@ pub use api::types::{
     ApiMessage, ProviderRequest, ProviderResponse, ResponseContentBlock, TokenUsage,
 };
 pub use api::{LlmProvider, ProviderInfo};
+pub use bots::{BotDefinition, BotMetadata, BotRegistry, BotSummary, parse_bot_file};
 pub use command::{CommandDispatcher, CommandResult, UserCommand};
 pub use context::ContextService;
 pub use infra::todo::TodoManager;
