@@ -19,7 +19,7 @@ pub use api::types::{
     ApiMessage, ProviderRequest, ProviderResponse, ResponseContentBlock, TokenUsage,
 };
 pub use api::{LlmProvider, ProviderInfo};
-pub use bots::{BotDefinition, BotMetadata, BotRegistry, BotSummary, parse_bot_file};
+pub use bots::{BotDefinition, BotMetadata, BotRegistry, BotSession, BotSummary, parse_bot_file};
 pub use command::{CommandDispatcher, CommandResult, UserCommand};
 pub use context::ContextService;
 pub use infra::todo::TodoManager;

@@ -764,6 +764,7 @@ impl AgentApp {
     }
 
     /// 运行 Bot 子代理：用 Bot 的 BOT.md body 作为 system prompt，Bot 专属技能运行
+    /// 支持多轮会话：存在活跃会话时恢复上下文继续执行
     async fn run_bot(
         &self,
         bot_name: &str,
@@ -778,6 +779,9 @@ impl AgentApp {
                 bot_names.join(", ")
             )
         })?;
+
+        // ── 检测是否有活跃会话（恢复执行） ──
+        let is_resume = self.bots.get_session(bot_name).is_some();
 
         // 克隆 AgentApp 并把技能加载器替换为 Bot 专属技能（不继承全局技能）
         let mut bot_app = self.clone();
@@ -829,26 +833,58 @@ impl AgentApp {
   - 执行前禁止先检查环境，直接运行，失败再报告。
   - 禁止 write_file 写临时脚本到工作区再用 bash 执行。
 - 完成后返回详细的结果，不要只说"已完成"。
-- **信息不明确时必须询问用户**：当任务存在多种可行方案（如不同的算法、权重模型、模板风格等），或关键信息缺失导致无法做出唯一判断时，**必须**先向用户确认，**禁止**擅自选择默认值直接执行。"#,
+- **信息不明确时必须询问用户**：当任务存在多种可行方案（如不同的算法、权重模型、模板风格等），或关键信息缺失导致无法做出唯一判断时，**必须**先向用户确认，**禁止**擅自选择默认值直接执行。{resume_hint}"#,
             identity_line = identity_line,
             workspace = self.workspace_root.display(),
             skills_desc = skills_desc,
             bot_body_section = bot_body_section,
+            resume_hint = if is_resume {
+                "\n\n**⚠️ 会话恢复**：这是之前中断的对话的继续。你的对话上下文中已有之前的所有工作成果（文件解析、数据收集、评分等）。请从上次中断的地方继续推进，**不要重复已完成的步骤**。用户刚才的回复是对你上次提问的回应。"
+            } else {
+                ""
+            },
         );
 
         let mut sub_logger = ConversationLogger::create();
         sub_logger.log(&format!("=== Bot 子代理系统提示词 ===\n{system_prompt}"));
 
-        let mut bot_ctx = ContextService::new();
-        bot_ctx.push_user_text(task);
-        bot_app.run_agent_loop(
-            &mut bot_ctx,
-            system_prompt,
-            AgentRunConfig::child(),
-            &mut sub_logger,
-            event_tx,
-        )
-        .await
+        // ── 恢复活跃会话或创建新上下文 ──
+        let mut bot_ctx = if let Some(session) = self.bots.get_session(bot_name) {
+            sub_logger.log(&format!(
+                "=== Bot 子代理: 恢复会话 {bot_name}，上次创建于 {:?} ===",
+                session.created_at,
+            ));
+            let mut ctx = session.ctx;
+            // 将用户回复作为新的用户消息注入
+            ctx.push_user_text(task);
+            ctx
+        } else {
+            let mut ctx = ContextService::new();
+            ctx.push_user_text(task);
+            ctx
+        };
+
+        let result = bot_app
+            .run_agent_loop(
+                &mut bot_ctx,
+                system_prompt,
+                AgentRunConfig::child(),
+                &mut sub_logger,
+                event_tx,
+            )
+            .await;
+
+        // ── 会话持久化：正常返回则保存，出错则清理 ──
+        match &result {
+            Ok(_) => {
+                bot_app.bots.save_session(bot_name.to_owned(), bot_ctx);
+            }
+            Err(_) => {
+                bot_app.bots.clear_session(bot_name);
+            }
+        }
+
+        result
     }
 }
 
@@ -944,6 +980,12 @@ fn build_system_prompt(
             - 典型并行场景：同时研究多个不相关主题、同时探索不同模块、同时分析多个文件。\n\
             - 典型串行场景：先调研再实现、先写 schema 再写 API、当任务需要前一步结果才能决定下一步。\n\
             - 并行上限为 5 个子代理/Bot，超出部分将被忽略。\n\n\
+            Bot 子代理结果处理规则（极其重要）：\n\
+            - **多轮编排**：复杂任务可分多轮委派：先调用数据收集 Bot → 拿到结果 → 调用分析/总结 Bot。\n\
+            - **存在依赖**的任务必须串行：等上一个 Bot 返回后再调用下一个。\n\
+            - **Bot 反问必须转发给用户**：如果 call_bot 返回的结果中包含 Bot 向用户提出的问题（如\"请选择评分方案\"、\"请确认以下选项\"、\"请告诉我...\"），你**必须**原封不动地将问题转发给用户，并等待用户明确回复后再继续。**严禁**替用户做决定（包括选择默认值、推荐选项等）。\n\
+            - **区分 Bot 完成 vs Bot 反问**：Bot 返回\"任务已完成，结果是...\"则不转发问题直接处理结果；Bot 返回\"请选择 A/B/C\"则必须停下来转发给用户。\n\
+            - **禁止预设 Bot 能力限制**：在构造 call_bot 的 task 参数时，**严禁**加入类似\"当前环境不支持X\"、\"只需生成内容即可\"、\"不要实际发送\"等对 Bot 能力的假设性限制。Bot 拥有专属技能和工具，它的能力边界你无法预知。如果 Bot 真的缺乏某项能力（如 SMTP 未配置），Bot 自己会报告。**在 task 中预设限制等于剥夺 Bot 的核心功能。**\n\n\
             其他工具：\n\
             - 使用 todo 工具规划多步骤工作。\n\
             - 使用 task 工具委派普通子任务（子代理拥有独立上下文，支持并行）。\n\

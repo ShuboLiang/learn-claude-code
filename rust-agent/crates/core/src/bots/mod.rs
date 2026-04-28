@@ -7,12 +7,15 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
 use crate::AgentResult;
+use crate::context::ContextService;
 use crate::skills::SkillLoader;
 
 /// Bot 定义文件的元数据（从 BOT.md 的 YAML frontmatter 中解析）
@@ -36,6 +39,28 @@ pub struct BotMetadata {
     pub max_tokens: Option<u32>,
     /// 指定 API profile（可选）
     pub profile: Option<String>,
+}
+
+/// Bot 活跃会话：缓存对话上下文，支持多轮交互
+///
+/// 当 Bot 反问用户后，对话上下文（包含简历解析、打分等中间结果）
+/// 被保存到此结构。用户回复后，Bot 从断点继续执行。
+#[derive(Clone, Debug)]
+pub struct BotSession {
+    /// Bot 的对话上下文（包含所有中间结果和对话历史）
+    pub ctx: ContextService,
+    /// 会话创建时间，用于过期清理
+    pub created_at: Instant,
+}
+
+impl BotSession {
+    /// 会话过期时间（30 分钟）
+    const TTL: Duration = Duration::from_secs(30 * 60);
+
+    /// 是否已过期
+    pub fn is_expired(&self) -> bool {
+        self.created_at.elapsed() >= Self::TTL
+    }
 }
 
 /// 解析后的 BOT.md 文件内容
@@ -81,11 +106,13 @@ pub struct BotSummary {
     pub profile: Option<String>,
 }
 
-/// Bot 注册表：加载并管理所有可用的 Bot
+/// Bot 注册表：加载并管理所有可用的 Bot 及其活跃会话
 #[derive(Clone, Debug, Default)]
 pub struct BotRegistry {
     /// Bot 名称 → Bot 定义
     bots: BTreeMap<String, BotDefinition>,
+    /// Bot 名称 → 活跃会话（用 RwLock 支持内部可变性）
+    sessions: Arc<RwLock<BTreeMap<String, BotSession>>>,
 }
 
 impl BotRegistry {
@@ -105,7 +132,10 @@ impl BotRegistry {
         let mut bots = BTreeMap::new();
 
         if !bots_dir.exists() {
-            return Ok(Self { bots });
+            return Ok(Self {
+                bots,
+                sessions: Arc::new(RwLock::new(BTreeMap::new())),
+            });
         }
 
         // 扫描 bots/ 下所有 BOT.md 文件
@@ -151,7 +181,10 @@ impl BotRegistry {
             );
         }
 
-        Ok(Self { bots })
+        Ok(Self {
+            bots,
+            sessions: Arc::new(RwLock::new(BTreeMap::new())),
+        })
     }
 
     /// 按名称查找 Bot
@@ -221,6 +254,38 @@ impl BotRegistry {
             })
             .collect::<Vec<_>>()
             .join("\n")
+    }
+
+    // ── 会话管理（支持 Bot 多轮交互） ──
+
+    /// 获取 Bot 的活跃会话克隆。过期会话自动过滤。
+    pub fn get_session(&self, bot_name: &str) -> Option<BotSession> {
+        let sessions = self.sessions.read().unwrap();
+        sessions.get(bot_name).filter(|s| !s.is_expired()).cloned()
+    }
+
+    /// 保存（或覆盖）Bot 会话
+    pub fn save_session(&self, bot_name: String, ctx: ContextService) {
+        let mut sessions = self.sessions.write().unwrap();
+        sessions.insert(
+            bot_name,
+            BotSession {
+                ctx,
+                created_at: Instant::now(),
+            },
+        );
+    }
+
+    /// 移除并销毁 Bot 会话（任务完成或出错时调用）
+    pub fn clear_session(&self, bot_name: &str) {
+        let mut sessions = self.sessions.write().unwrap();
+        sessions.remove(bot_name);
+    }
+
+    /// 清理所有过期会话
+    pub fn cleanup_expired_sessions(&self) {
+        let mut sessions = self.sessions.write().unwrap();
+        sessions.retain(|_, s| !s.is_expired());
     }
 }
 
