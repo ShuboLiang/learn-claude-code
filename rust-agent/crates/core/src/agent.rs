@@ -399,11 +399,16 @@ impl AgentApp {
 
             if stop_reason != "tool_calls" {
                 let text = response.final_text();
+                // 兜底：如果模型未生成可见文本（如仅有 Thinking 或空回复），
+                // 给出默认提示，避免空字符串在调用链中传播导致 CLI 无输出
+                let text = if text.trim().is_empty() {
+                    "（本轮未生成可见回复，但已执行相关工具操作）".to_owned()
+                } else {
+                    text
+                };
                 // 将文本响应通过 SSE 通道发送给客户端（子 agent 静默）
                 if config.emit_events {
-                    if !text.is_empty() {
-                        let _ = event_tx.send(AgentEvent::TextDelta(text)).await;
-                    }
+                    let _ = event_tx.send(AgentEvent::TextDelta(text.clone())).await;
                     let _ = event_tx
                         .send(AgentEvent::TurnEnd {
                             api_calls: api_call_count,
@@ -411,7 +416,7 @@ impl AgentApp {
                         })
                         .await;
                 }
-                return Ok(response.final_text());
+                return Ok(text);
             }
 
             let mut results = Vec::new();
