@@ -1,0 +1,16 @@
+[package]
+name = "mock-llm"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "mock-llm"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.8", features = ["json"] }
+tokio = { version = "1.48", features = ["macros", "rt-multi-thread", "time", "net"] }
+tokio-stream = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+async-stream = "0.3"
