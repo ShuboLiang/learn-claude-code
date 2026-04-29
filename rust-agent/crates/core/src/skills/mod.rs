@@ -182,6 +182,10 @@ impl SkillLoader {
 
 /// 解析 SKILL.md 文件的原始内容，分离 YAML frontmatter 和正文
 pub fn parse_skill_file(raw: &str) -> AgentResult<ParsedSkillFile> {
+    // 统一换行符，兼容 Windows CRLF
+    let normalized = raw.replace("\r\n", "\n");
+    let raw = normalized.as_str();
+
     if !raw.starts_with("---\n") {
         return Ok(ParsedSkillFile {
             metadata: SkillMetadata::default(),

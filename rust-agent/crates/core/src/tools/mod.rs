@@ -168,9 +168,10 @@ impl AgentToolbox {
                 required_string(input, "content")?,
             )?,
             "edit_file" => self.edit_file(
-                required_string(input, "path")?,
-                required_string(input, "old_text")?,
-                required_string(input, "new_text")?,
+                required_string(input, "file_path")?,
+                required_string(input, "old_string")?,
+                required_string(input, "new_string")?,
+                optional_bool(input, "replace_all")?,
             )?,
             "glob" => self.glob_search(
                 required_string(input, "pattern")?,
@@ -292,6 +293,16 @@ pub(crate) fn optional_u64(input: &Value, key: &str) -> AgentResult<Option<u64>>
             .map(Some)
             .ok_or_else(|| anyhow!("字段 '{key}' 必须是整数")),
         None => Ok(None),
+    }
+}
+
+/// 从 JSON 对象中提取可选的 bool 字段值（默认 false）
+pub(crate) fn optional_bool(input: &Value, key: &str) -> AgentResult<bool> {
+    match input.get(key) {
+        Some(value) => value
+            .as_bool()
+            .ok_or_else(|| anyhow!("字段 '{key}' 必须是布尔值")),
+        None => Ok(false),
     }
 }
 

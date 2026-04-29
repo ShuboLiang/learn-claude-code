@@ -71,15 +71,16 @@ pub fn tool_schemas(allow_task: bool) -> Vec<Value> {
         }),
         json!({
             "name": "edit_file",
-            "description": "在文件中精确替换一段文本（首次匹配）。",
+            "description": "对文件执行精确字符串替换。old_string 在文件中必须唯一（出现一次），否则需设置 replace_all: true 替换所有匹配项，或提供更多上下文使匹配唯一。",
             "input_schema": {
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "文件路径" },
-                    "old_text": { "type": "string", "description": "要被替换的原始文本" },
-                    "new_text": { "type": "string", "description": "替换后的新文本" }
+                    "file_path": { "type": "string", "description": "要修改的文件的绝对路径" },
+                    "old_string": { "type": "string", "description": "要被替换的文本" },
+                    "new_string": { "type": "string", "description": "替换后的新文本（必须与 old_string 不同）" },
+                    "replace_all": { "type": "boolean", "description": "替换所有匹配项（可选，默认 false）" }
                 },
-                "required": ["path", "old_text", "new_text"]
+                "required": ["file_path", "old_string", "new_string"]
             }
         }),
         json!({
