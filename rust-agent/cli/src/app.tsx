@@ -36,6 +36,8 @@ export default function App({ serverUrl }: { serverUrl: string }) {
   const [botsLoaded, setBotsLoaded] = useState(false);
   // 当前正在执行的 bot 名称（用于 subagent 模式下的 UI 指示）
   const [activeBot, setActiveBot] = useState<string | null>(null);
+  // 重试状态提示（API 限流/网络错误时显示）
+  const [retryStatus, setRetryStatus] = useState<string | null>(null);
 
   // 使用 ref 追踪 currentReply，避免 stale closure
   const currentReplyRef = useRef(currentReply);
@@ -114,6 +116,7 @@ export default function App({ serverUrl }: { serverUrl: string }) {
               ]);
               break;
             case "turn_end": {
+              setRetryStatus(null);
               const reply = currentReplyRef.current;
               setCurrentReply("");
               currentReplyRef.current = "";
@@ -137,8 +140,16 @@ export default function App({ serverUrl }: { serverUrl: string }) {
               ]);
               break;
             }
+            case "retrying": {
+              const d = event.data;
+              setRetryStatus(
+                `⏳ 正在重试 (${d.attempt + 1}/${d.max_retries + 1}) — ${d.detail}，等待 ${d.wait_seconds}s`,
+              );
+              break;
+            }
             case "error": {
               setError(`[@${displayName}] ${event.data.message || "未知错误"}`);
+              setRetryStatus(null);
               break;
             }
           }
@@ -164,12 +175,14 @@ export default function App({ serverUrl }: { serverUrl: string }) {
           ]);
         } else {
           setError(String(err));
+          setRetryStatus(null);
         }
       } finally {
         setIsLoading(false);
         setCurrentReply("");
         currentReplyRef.current = "";
         setActiveBot(null);
+        setRetryStatus(null);
         abortControllerRef.current = null;
       }
     },
@@ -253,6 +266,7 @@ export default function App({ serverUrl }: { serverUrl: string }) {
               ]);
               break;
             case "turn_end": {
+              setRetryStatus(null);
               const reply = currentReplyRef.current;
               setCurrentReply("");
               currentReplyRef.current = "";
@@ -280,8 +294,16 @@ export default function App({ serverUrl }: { serverUrl: string }) {
               ]);
               break;
             }
+            case "retrying": {
+              const d = event.data;
+              setRetryStatus(
+                `⏳ 正在重试 (${d.attempt + 1}/${d.max_retries + 1}) — ${d.detail}，等待 ${d.wait_seconds}s`,
+              );
+              break;
+            }
             case "error": {
               setError(event.data.message || "未知错误");
+              setRetryStatus(null);
               break;
             }
             case "done": {
@@ -317,6 +339,7 @@ export default function App({ serverUrl }: { serverUrl: string }) {
         setIsLoading(false);
         setCurrentReply("");
         currentReplyRef.current = "";
+        setRetryStatus(null);
         abortControllerRef.current = null;
       }
     },
@@ -353,6 +376,7 @@ export default function App({ serverUrl }: { serverUrl: string }) {
         currentReply={currentReply}
         isLoading={isLoading}
         activeBot={activeBot}
+        retryStatus={retryStatus}
       />
       <Input
         onSubmit={handleSubmit}

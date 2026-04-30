@@ -12,6 +12,8 @@ pub mod types;
 use crate::AgentResult;
 pub use types::{ApiMessage, ProviderRequest, ProviderResponse, ResponseContentBlock};
 
+use retry::{CancelFlag, RetryNotifier};
+
 /// LLM Provider 枚举，封装不同的 LLM 后端
 #[derive(Clone, Debug)]
 pub enum LlmProvider {
@@ -23,13 +25,22 @@ pub enum LlmProvider {
 
 impl LlmProvider {
     /// 发送消息并获取回复（统一入口，自动分发到对应后端）
+    ///
+    /// `retry_notifier`：可选的重试进度通知器，用于在重试时向客户端推送进度
+    /// `cancel`：可选的取消标志，当客户端断开时设为 true，重试循环检测后立即终止
     pub async fn create_message(
         &self,
         request: &ProviderRequest<'_>,
+        retry_notifier: Option<&RetryNotifier>,
+        cancel: Option<&CancelFlag>,
     ) -> AgentResult<ProviderResponse> {
         match self {
-            LlmProvider::Anthropic(client) => client.create_message(request).await,
-            LlmProvider::OpenAI(client) => client.create_message(request).await,
+            LlmProvider::Anthropic(client) => {
+                client.create_message(request, retry_notifier, cancel).await
+            }
+            LlmProvider::OpenAI(client) => {
+                client.create_message(request, retry_notifier, cancel).await
+            }
         }
     }
 

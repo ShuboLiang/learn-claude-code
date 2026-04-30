@@ -94,6 +94,7 @@ impl AgentExecutor for RustAgentExecutor {
                     AgentEvent::TurnEnd { .. } => {}
                     AgentEvent::Done => {}
                     AgentEvent::Error { .. } => {}
+                    AgentEvent::Retrying { .. } => {}
                 }
             }
 
@@ -267,6 +268,7 @@ fn agent_event_to_stream_responses(
             })]
         }
         AgentEvent::Done => vec![],
+        AgentEvent::Retrying { .. } => vec![],
         AgentEvent::Error { code, message } => {
             vec![StreamResponse::StatusUpdate(TaskStatusUpdateEvent {
                 task_id: task_id.to_string(),

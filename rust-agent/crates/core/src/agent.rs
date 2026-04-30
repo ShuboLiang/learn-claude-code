@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
@@ -9,6 +10,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::AgentResult;
+use crate::api::retry::{CancelFlag, RetryNotification};
 use crate::api::types::{ApiMessage, ProviderRequest, ResponseContentBlock};
 use crate::bots::BotRegistry;
 use crate::context::ContextService;
@@ -43,6 +45,13 @@ pub enum AgentEvent {
     Error {
         code: String,
         message: String,
+    },
+    /// API 重试进行中，通知客户端当前进度
+    Retrying {
+        attempt: u32,
+        max_retries: u32,
+        wait_seconds: u64,
+        detail: String,
     },
 }
 
@@ -351,6 +360,12 @@ impl AgentApp {
         let mut api_call_count: usize = 0;
 
         for _ in 0..MAX_TOOL_ROUNDS {
+            // 检测客户端是否已断开（SSE 连接关闭时 event_rx 被丢弃）
+            if event_tx.is_closed() {
+                eprintln!("[Agent] 客户端已断开，任务终止");
+                return Ok("客户端已断开连接".to_owned());
+            }
+
             if last_micro_compact.elapsed() >= micro_compact_interval {
                 println!("[micro_compact 已触发]");
                 ctx.micro_compact();
@@ -375,12 +390,63 @@ impl AgentApp {
                 tools: &tools,
                 max_tokens: self.max_tokens,
             };
-            let response = match self.client.create_message(&request).await {
+
+            // 创建重试通知通道：API 层重试时通过此通道向客户端推送进度
+            let (retry_tx, mut retry_rx) = mpsc::unbounded_channel::<RetryNotification>();
+            let event_tx_for_retry = Arc::clone(event_tx);
+            tokio::spawn(async move {
+                while let Some(notif) = retry_rx.recv().await {
+                    let _ = event_tx_for_retry
+                        .send(AgentEvent::Retrying {
+                            attempt: notif.attempt,
+                            max_retries: notif.max_retries,
+                            wait_seconds: notif.wait_seconds,
+                            detail: notif.detail,
+                        })
+                        .await;
+                }
+            });
+
+            // 创建取消标志：当客户端断开 SSE 连接时，监控任务设置此标志
+            // API 层的重试循环检测到后立即终止，避免浪费 API 配额
+            // 使用 Weak 引用避免阻止 channel 关闭（强引用会导致 SSE 流永不结束）
+            let cancelled: CancelFlag = Arc::new(AtomicBool::new(false));
+            let cancelled_clone = Arc::clone(&cancelled);
+            let event_tx_weak = Arc::downgrade(event_tx);
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    match event_tx_weak.upgrade() {
+                        Some(tx) => {
+                            if tx.is_closed() {
+                                cancelled_clone.store(true, Ordering::SeqCst);
+                                eprintln!("[Agent] 检测到客户端断开，设置取消标志");
+                                break;
+                            }
+                        }
+                        None => {
+                            // 所有强引用已释放，sender 已被丢弃
+                            cancelled_clone.store(true, Ordering::SeqCst);
+                            break;
+                        }
+                    }
+                }
+            });
+
+            let response = match self
+                .client
+                .create_message(&request, Some(&retry_tx), Some(&cancelled))
+                .await
+            {
                 Ok(resp) => {
+                    // API 调用成功，关闭重试通知通道
+                    drop(retry_tx);
                     self.token_tracker.record(&self.model, &resp.usage);
                     resp
                 }
                 Err(e) => {
+                    // API 调用失败，关闭重试通知通道
+                    drop(retry_tx);
                     let code = if let Some(api_err) = e.downcast_ref::<crate::api::error::LlmApiError>() {
                         if api_err.is_rate_limited() {
                             "rate_limited"

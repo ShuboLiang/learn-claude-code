@@ -47,6 +47,8 @@ struct ChatRequest {
 #[derive(Deserialize)]
 struct Message {
     role: String,
+    /// OpenAI 协议中 assistant 消息可仅有 tool_calls 而无 content
+    #[serde(default)]
     content: serde_json::Value,
 }
 

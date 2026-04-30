@@ -13,7 +13,7 @@ use anyhow::{Context, anyhow};
 use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use tokio::time::sleep;
 
-use super::retry;
+use super::retry::{self, CancelFlag, RetryNotifier};
 use super::types::{
     MessagesRequest, MessagesResponse, ProviderRequest, ProviderResponse, TokenUsage,
 };
@@ -92,6 +92,8 @@ impl AnthropicClient {
     pub(crate) async fn create_message_raw(
         &self,
         request: &MessagesRequest<'_>,
+        retry_notifier: Option<&RetryNotifier>,
+        cancel: Option<&CancelFlag>,
     ) -> AgentResult<MessagesResponse> {
         let url = format!("{}/v1/messages", self.base_url.trim_end_matches('/'));
 
@@ -108,14 +110,15 @@ impl AnthropicClient {
                 Ok(resp) => resp,
                 Err(e) => {
                     let is_retryable = e.is_timeout() || e.is_connect();
-                    if is_retryable && attempt < self.max_retries {
+                    if is_retryable && attempt < self.max_retries && !retry::is_cancelled(cancel) {
                         let backoff = retry::calculate_backoff(None, attempt);
-                        retry::log_retry(
+                        retry::notify_retry(
                             "Anthropic",
                             &format!("请求失败: {}", retry::format_reqwest_error(&e)),
                             backoff,
                             attempt,
                             self.max_retries,
+                            retry_notifier,
                         );
                         sleep(backoff).await;
                         continue;
@@ -136,8 +139,16 @@ impl AnthropicClient {
             let body_bytes = match response.bytes().await {
                 Ok(bytes) => bytes,
                 Err(e) => {
-                    if attempt < self.max_retries {
+                    if attempt < self.max_retries && !retry::is_cancelled(cancel) {
                         let backoff = retry::calculate_backoff(retry_after, attempt);
+                        retry::notify_retry(
+                            "Anthropic",
+                            "读取 Anthropic 响应体失败",
+                            backoff,
+                            attempt,
+                            self.max_retries,
+                            retry_notifier,
+                        );
                         sleep(backoff).await;
                         continue;
                     }
@@ -152,15 +163,16 @@ impl AnthropicClient {
                 return parse_messages_response(&body);
             }
 
-            // 对可重试状态码进行重试（429, 529, 5xx）
-            if retry::is_retryable_status(status, &[529]) && attempt < self.max_retries {
+            // 对可重试状态码进行重试（429, 529, 5xx），但客户端已断开则立即终止
+            if retry::is_retryable_status(status, &[529]) && attempt < self.max_retries && !retry::is_cancelled(cancel) {
                 let backoff = retry::calculate_backoff(retry_after, attempt);
-                retry::log_retry(
+                retry::notify_retry(
                     "Anthropic",
                     &format!("返回 {status}"),
                     backoff,
                     attempt,
                     self.max_retries,
+                    retry_notifier,
                 );
                 sleep(backoff).await;
                 continue;
@@ -183,6 +195,8 @@ impl AnthropicClient {
     pub async fn create_message(
         &self,
         request: &ProviderRequest<'_>,
+        retry_notifier: Option<&RetryNotifier>,
+        cancel: Option<&CancelFlag>,
     ) -> AgentResult<ProviderResponse> {
         let raw_request = MessagesRequest {
             model: request.model,
@@ -192,7 +206,7 @@ impl AnthropicClient {
             max_tokens: request.max_tokens,
         };
 
-        let raw_response = self.create_message_raw(&raw_request).await?;
+        let raw_response = self.create_message_raw(&raw_request, retry_notifier, cancel).await?;
 
         // 统一 stop_reason：将 Anthropic 的 "tool_use" 映射为 "tool_calls"
         let stop_reason = match raw_response.stop_reason.as_deref() {
@@ -375,7 +389,7 @@ mod tests {
             max_tokens: 100,
         };
 
-        let result = client.create_message_raw(&request).await;
+        let result = client.create_message_raw(&request, None, None).await;
         assert!(result.is_ok(), "应在第二次请求时成功: {:?}", result);
         assert_eq!(
             counter.load(Ordering::SeqCst),
@@ -411,7 +425,7 @@ mod tests {
         };
 
         let start = std::time::Instant::now();
-        let result = client.create_message_raw(&request).await;
+        let result = client.create_message_raw(&request, None, None).await;
         let elapsed = start.elapsed();
 
         assert!(result.is_ok(), "应在第二次请求时成功: {:?}", result);
@@ -443,7 +457,7 @@ mod tests {
             max_tokens: 100,
         };
 
-        let result = client.create_message_raw(&request).await;
+        let result = client.create_message_raw(&request, None, None).await;
         assert!(result.is_err(), "400 错误应直接失败，不应重试");
         assert_eq!(counter.load(Ordering::SeqCst), 1, "400 错误不应触发重试");
     }

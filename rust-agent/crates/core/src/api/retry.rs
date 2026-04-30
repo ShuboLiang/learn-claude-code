@@ -6,8 +6,39 @@
 //! - 默认请求超时 10 分钟（可通过 `RUST_AGENT_API_TIMEOUT_MS` 覆盖，单位毫秒）
 //! - 对 429（限流）、5xx（服务器错误）、连接错误进行指数退避重试
 //! - 429 响应优先解析 `Retry-After` 响应头
+//! - 支持通过 `RetryNotifier` 向客户端实时推送重试进度
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+use tokio::sync::mpsc;
+
+/// 重试进度通知，由 API 层发送给上层以便推送给客户端
+#[derive(Debug, Clone)]
+pub struct RetryNotification {
+    /// 当前重试次数（0 表示第 1 次重试）
+    pub attempt: u32,
+    /// 最大重试次数
+    pub max_retries: u32,
+    /// 本次等待秒数
+    pub wait_seconds: u64,
+    /// 重试原因描述（如 "返回 429 Too Many Requests"）
+    pub detail: String,
+}
+
+/// 重试通知发送器（无界通道，避免阻塞 API 调用）
+pub type RetryNotifier = mpsc::UnboundedSender<RetryNotification>;
+
+/// 客户端取消标志，由上层 Agent 设置，API 层在重试循环中检查
+///
+/// 当 HTTP SSE 客户端断开连接时，Agent 层将此标志设为 true，
+/// API 层的重试循环检测到后立即终止，避免浪费 API 配额。
+pub type CancelFlag = Arc<AtomicBool>;
+
+/// 检查取消标志，如果已取消则返回 true
+pub fn is_cancelled(cancel: Option<&CancelFlag>) -> bool {
+    cancel.map_or(false, |f| f.load(Ordering::Relaxed))
+}
 
 /// 默认最大重试次数（对齐 Claude Code）
 pub const DEFAULT_MAX_RETRIES: u32 = 10;
@@ -89,6 +120,26 @@ pub fn log_retry(provider: &str, detail: &str, backoff: Duration, attempt: u32, 
         attempt + 1,
         total = max_retries + 1
     );
+}
+
+/// 打印重试日志并向客户端发送通知（如果提供了 notifier）
+pub fn notify_retry(
+    provider: &str,
+    detail: &str,
+    backoff: Duration,
+    attempt: u32,
+    max_retries: u32,
+    notifier: Option<&RetryNotifier>,
+) {
+    log_retry(provider, detail, backoff, attempt, max_retries);
+    if let Some(tx) = notifier {
+        let _ = tx.send(RetryNotification {
+            attempt,
+            max_retries,
+            wait_seconds: backoff.as_secs(),
+            detail: detail.to_string(),
+        });
+    }
 }
 
 #[cfg(test)]

@@ -12,6 +12,7 @@ interface ChatProps {
   currentReply: string;
   isLoading: boolean;
   activeBot?: string | null;
+  retryStatus?: string | null;
 }
 
 // 解析 tool_call JSON，提取工具名和简短描述
@@ -100,6 +101,7 @@ export default function Chat({
   currentReply,
   isLoading,
   activeBot,
+  retryStatus,
 }: ChatProps) {
   return (
     <Box flexDirection="column" flexGrow={1}>
@@ -113,6 +115,15 @@ export default function Chat({
         <Box>
           <Text dimColor>
             {activeBot ? `[@${activeBot}] 执行中...` : "思考中..."}
+          </Text>
+        </Box>
+      )}
+
+      {/* 重试状态提示 */}
+      {retryStatus && (
+        <Box>
+          <Text color="yellow" dimColor>
+            {retryStatus}
           </Text>
         </Box>
       )}

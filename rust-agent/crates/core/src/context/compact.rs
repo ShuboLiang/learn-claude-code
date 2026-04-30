@@ -181,7 +181,7 @@ pub async fn auto_compact(
         max_tokens: 2000,
     };
 
-    let response = client.create_message(&request).await?;
+    let response = client.create_message(&request, None, None).await?;
     let summary = response.final_text();
 
     Ok(vec![ApiMessage::user_text(format!(

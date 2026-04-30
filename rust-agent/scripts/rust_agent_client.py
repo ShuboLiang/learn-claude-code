@@ -17,7 +17,12 @@
 from __future__ import annotations
 
 import json
+import sys
 import uuid
+
+# Windows 控制台默认编码为 GBK，导致 print() 输出中文时出现乱码
+# 强制 stdout 使用 UTF-8 编码，确保中文正常显示
+sys.stdout.reconfigure(encoding='utf-8')
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Generator, Iterable, List, Optional
 
@@ -234,6 +239,9 @@ class RustAgentClient:
             json_data={"content": content},
             stream=True,
         )
+        # 服务端 SSE 响应的 Content-Type 不含 charset=utf-8，
+        # 导致 requests 默认用 ISO-8859-1 解码，中文出现乱码
+        resp.encoding = 'utf-8'
         try:
             for line in resp.iter_lines(decode_unicode=True):
                 if line is not None:
@@ -352,6 +360,9 @@ class RustAgentClient:
             json_data={"content": content},
             stream=True,
         )
+        # 服务端 SSE 响应的 Content-Type 不含 charset=utf-8，
+        # 导致 requests 默认用 ISO-8859-1 解码，中文出现乱码
+        resp.encoding = 'utf-8'
         try:
             for line in resp.iter_lines(decode_unicode=True):
                 if line is not None:

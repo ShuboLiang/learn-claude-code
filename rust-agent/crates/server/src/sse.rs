@@ -49,5 +49,21 @@ pub fn agent_event_to_sse(event: AgentEvent) -> Event {
         AgentEvent::Error { code, message } => Event::default()
             .event("error")
             .data(json!({ "code": code, "message": message }).to_string()),
+        AgentEvent::Retrying {
+            attempt,
+            max_retries,
+            wait_seconds,
+            detail,
+        } => Event::default()
+            .event("retrying")
+            .data(
+                json!({
+                    "attempt": attempt,
+                    "max_retries": max_retries,
+                    "wait_seconds": wait_seconds,
+                    "detail": detail,
+                })
+                .to_string(),
+            ),
     }
 }

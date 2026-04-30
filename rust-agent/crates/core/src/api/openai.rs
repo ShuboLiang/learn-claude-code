@@ -15,7 +15,7 @@ use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue, USER_
 use serde::{Deserialize, Serialize};
 use tokio::time::sleep;
 
-use super::retry;
+use super::retry::{self, CancelFlag, RetryNotifier};
 use super::types::{
     ApiMessage, ProviderRequest, ProviderResponse, ResponseContentBlock, TokenUsage,
 };
@@ -193,7 +193,12 @@ impl OpenAIClient {
     /// 调用 OpenAI Chat Completions API
     ///
     /// 支持对 429（限流）、5xx（服务器错误）、连接错误的指数退避重试。
-    async fn call_api(&self, request: &OpenAIRequest) -> AgentResult<OpenAIResponse> {
+    async fn call_api(
+        &self,
+        request: &OpenAIRequest,
+        retry_notifier: Option<&RetryNotifier>,
+        cancel: Option<&CancelFlag>,
+    ) -> AgentResult<OpenAIResponse> {
         let url = format!(
             "{}/v1/chat/completions",
             self.base_url.trim_end_matches('/')
@@ -214,14 +219,15 @@ impl OpenAIClient {
                 Ok(resp) => resp,
                 Err(e) => {
                     let is_retryable = e.is_timeout() || e.is_connect();
-                    if is_retryable && attempt < self.max_retries {
+                    if is_retryable && attempt < self.max_retries && !retry::is_cancelled(cancel) {
                         let backoff = retry::calculate_backoff(None, attempt);
-                        retry::log_retry(
+                        retry::notify_retry(
                             "OpenAI",
                             &format!("请求失败: {}", retry::format_reqwest_error(&e)),
                             backoff,
                             attempt,
                             self.max_retries,
+                            retry_notifier,
                         );
                         sleep(backoff).await;
                         continue;
@@ -242,8 +248,16 @@ impl OpenAIClient {
             let body_bytes = match response.bytes().await {
                 Ok(bytes) => bytes,
                 Err(e) => {
-                    if attempt < self.max_retries {
+                    if attempt < self.max_retries && !retry::is_cancelled(cancel) {
                         let backoff = retry::calculate_backoff(retry_after, attempt);
+                        retry::notify_retry(
+                            "OpenAI",
+                            "读取 OpenAI 响应体失败",
+                            backoff,
+                            attempt,
+                            self.max_retries,
+                            retry_notifier,
+                        );
                         sleep(backoff).await;
                         continue;
                     }
@@ -258,15 +272,16 @@ impl OpenAIClient {
                 return serde_json::from_str(&body).context("解析 OpenAI 响应 JSON 失败");
             }
 
-            // 对可重试状态码进行重试（429, 5xx）
-            if retry::is_retryable_status(status, &[]) && attempt < self.max_retries {
+            // 对可重试状态码进行重试（429, 5xx），但客户端已断开则立即终止
+            if retry::is_retryable_status(status, &[]) && attempt < self.max_retries && !retry::is_cancelled(cancel) {
                 let backoff = retry::calculate_backoff(retry_after, attempt);
-                retry::log_retry(
+                retry::notify_retry(
                     "OpenAI",
                     &format!("返回 {status}"),
                     backoff,
                     attempt,
                     self.max_retries,
+                    retry_notifier,
                 );
                 sleep(backoff).await;
                 continue;
@@ -287,6 +302,8 @@ impl OpenAIClient {
     pub async fn create_message(
         &self,
         request: &ProviderRequest<'_>,
+        retry_notifier: Option<&RetryNotifier>,
+        cancel: Option<&CancelFlag>,
     ) -> AgentResult<ProviderResponse> {
         let messages = convert_messages(request.system, request.messages);
         let tools = convert_tools(request.tools);
@@ -298,7 +315,7 @@ impl OpenAIClient {
             max_tokens: request.max_tokens,
         };
 
-        let openai_response = self.call_api(&openai_request).await?;
+        let openai_response = self.call_api(&openai_request, retry_notifier, cancel).await?;
         Ok(convert_response(openai_response))
     }
 }
