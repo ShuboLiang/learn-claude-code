@@ -4,6 +4,7 @@
 //! 从 `~/.rust-agent/config.json` 的 profile 加载配置。
 
 pub mod anthropic;
+pub mod error;
 pub mod openai;
 pub mod retry;
 pub mod types;

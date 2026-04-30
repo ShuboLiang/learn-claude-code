@@ -381,11 +381,20 @@ impl AgentApp {
                     resp
                 }
                 Err(e) => {
+                    let code = if let Some(api_err) = e.downcast_ref::<crate::api::error::LlmApiError>() {
+                        if api_err.is_rate_limited() {
+                            "rate_limited"
+                        } else {
+                            "llm_api_error"
+                        }
+                    } else {
+                        "llm_api_error"
+                    };
                     eprintln!("[Agent] create_message 失败！错误: {e:#}");
                     if config.emit_events {
                         let _ = event_tx
                             .send(AgentEvent::Error {
-                                code: "llm_api_error".to_owned(),
+                                code: code.to_owned(),
                                 message: format!("{e:#}"),
                             })
                             .await;

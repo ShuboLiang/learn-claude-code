@@ -166,7 +166,12 @@ impl AnthropicClient {
                 continue;
             }
 
-            return Err(anyhow!("Anthropic API 错误 {status}: {body}"));
+            return Err(crate::api::error::LlmApiError {
+                status: status.as_u16(),
+                body,
+                retry_after,
+            }
+            .into());
         }
 
         unreachable!()

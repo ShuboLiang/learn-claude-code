@@ -220,8 +220,13 @@ pub async fn chat_completions(
                 }
             }
             rust_agent_core::agent::AgentEvent::Error { code, message } => {
+                let status = if code == "rate_limited" {
+                    StatusCode::TOO_MANY_REQUESTS
+                } else {
+                    StatusCode::SERVICE_UNAVAILABLE
+                };
                 return (
-                    StatusCode::SERVICE_UNAVAILABLE,
+                    status,
                     Json(json!({
                         "error": {
                             "message": message,

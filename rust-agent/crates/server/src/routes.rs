@@ -177,12 +177,15 @@ async fn send_message(
             .handle_user_turn(&mut ctx, &content, event_tx.clone())
             .await
         {
-            let _ = event_tx
-                .send(rust_agent_core::agent::AgentEvent::Error {
-                    code: "agent_error".to_owned(),
-                    message: format!("{e:#}"),
-                })
-                .await;
+            // LLM API 错误（如 429 限流）已在 agent.rs 中发送过事件，避免重复发送
+            if e.downcast_ref::<rust_agent_core::api::error::LlmApiError>().is_none() {
+                let _ = event_tx
+                    .send(rust_agent_core::agent::AgentEvent::Error {
+                        code: "agent_error".to_owned(),
+                        message: format!("{e:#}"),
+                    })
+                    .await;
+            }
         }
         store.update(&session_id, ctx);
     });
@@ -286,12 +289,15 @@ async fn bot_task(
             .handle_user_turn(&mut ctx, &body.content, event_tx.clone())
             .await
         {
-            let _ = event_tx
-                .send(rust_agent_core::agent::AgentEvent::Error {
-                    code: "bot_agent_error".to_owned(),
-                    message: format!("{e:#}"),
-                })
-                .await;
+            // LLM API 错误（如 429 限流）已在 agent.rs 中发送过事件，避免重复发送
+            if e.downcast_ref::<rust_agent_core::api::error::LlmApiError>().is_none() {
+                let _ = event_tx
+                    .send(rust_agent_core::agent::AgentEvent::Error {
+                        code: "bot_agent_error".to_owned(),
+                        message: format!("{e:#}"),
+                    })
+                    .await;
+            }
         }
     });
 
