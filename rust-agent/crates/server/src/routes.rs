@@ -34,19 +34,12 @@ pub struct BotTaskRequest {
 #[derive(Clone)]
 pub struct AppState {
     pub store: SessionStore,
+    pub agent: Arc<AgentApp>,
     pub bot_registry: Arc<BotRegistry>,
 }
 
 /// 构建所有 API 路由
-pub fn routes(store: SessionStore) -> Router {
-    // 服务启动时加载 Bot 注册表
-    let bot_registry = BotRegistry::load().unwrap_or_default();
-
-    let app_state = AppState {
-        store: store.clone(),
-        bot_registry: Arc::new(bot_registry),
-    };
-
+pub fn routes(app_state: AppState) -> Router {
     Router::new()
         .route("/", get(health_check))
         .route("/sessions", post(create_session))
@@ -69,23 +62,18 @@ async fn health_check() -> Json<serde_json::Value> {
 
 /// POST /sessions — 创建新会话
 async fn create_session(State(state): State<AppState>) -> impl IntoResponse {
-    let _ = dotenvy::dotenv();
-    let agent = match AgentApp::from_env().await {
-        Ok(a) => a,
-        Err(e) => return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(
-                serde_json::json!({ "error": { "code": "init_failed", "message": e.to_string() } }),
-            ),
-        )
-            .into_response(),
-    };
-    let model = agent.model().to_owned();
-    let session = state.store.create(Arc::new(agent));
+    let session_arc = state.store.create().await;
+    let session = session_arc.read().await;
+    let model = state.agent.model().to_owned();
+    let id = session.id.clone();
+    let created_at = session.created_at.to_rfc3339();
+    drop(session);
+    state.store.persist(&id).await;
+
     Json(serde_json::json!({
-        "id": session.id,
+        "id": id,
         "model": model,
-        "created_at": session.created_at.to_rfc3339(),
+        "created_at": created_at,
     }))
     .into_response()
 }
@@ -93,13 +81,16 @@ async fn create_session(State(state): State<AppState>) -> impl IntoResponse {
 /// GET /sessions/:id — 查询会话状态
 async fn get_session(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     match state.store.get(&id) {
-        Some(session) => Json(serde_json::json!({
-            "id": session.id,
-            "message_count": session.context.len(),
-            "created_at": session.created_at.to_rfc3339(),
-            "last_active": session.last_active.to_rfc3339(),
-        }))
-        .into_response(),
+        Some(session_arc) => {
+            let session = session_arc.read().await;
+            Json(serde_json::json!({
+                "id": session.id,
+                "message_count": session.context.len(),
+                "created_at": session.created_at.to_rfc3339(),
+                "last_active": session.last_active.to_rfc3339(),
+            }))
+            .into_response()
+        }
         None => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({
@@ -115,7 +106,7 @@ async fn delete_session(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    if state.store.remove(&id) {
+    if state.store.remove(&id).await {
         StatusCode::NO_CONTENT.into_response()
     } else {
         (
@@ -130,16 +121,22 @@ async fn delete_session(
 
 /// POST /sessions/:id/clear — 清空会话的对话上下文
 async fn clear_session(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
-    if state.store.clear_context(&id) {
-        Json(serde_json::json!({ "status": "cleared" })).into_response()
-    } else {
-        (
+    match state.store.get(&id) {
+        Some(session_arc) => {
+            let mut session = session_arc.write().await;
+            session.context = ContextService::new();
+            session.last_active = chrono::Utc::now();
+            drop(session);
+            state.store.persist(&id).await;
+            Json(serde_json::json!({ "status": "cleared" })).into_response()
+        }
+        None => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({
                 "error": { "code": "session_not_found", "message": "会话不存在" }
             })),
         )
-            .into_response()
+            .into_response(),
     }
 }
 
@@ -149,7 +146,7 @@ async fn send_message(
     Path(id): Path<String>,
     Json(body): Json<SendMessageRequest>,
 ) -> impl IntoResponse {
-    let session = match state.store.get(&id) {
+    let session_arc = match state.store.get(&id) {
         Some(s) => s,
         None => {
             return (
@@ -163,20 +160,17 @@ async fn send_message(
     };
 
     let (event_tx, event_rx) = mpsc::channel(64);
-
-    // 在后台启动 agent
-    let agent = session.agent.clone();
-    let mut ctx = session.context.clone();
+    let agent = state.agent.clone();
     let content = body.content;
     let session_id = id;
     let store = state.store.clone();
 
     tokio::spawn(async move {
+        let mut session = session_arc.write().await;
         if let Err(e) = agent
-            .handle_user_turn(&mut ctx, &content, event_tx.clone())
+            .handle_user_turn(&mut session.context, &content, event_tx.clone())
             .await
         {
-            // LLM API 错误（如 429 限流）已在 agent.rs 中发送过事件，避免重复发送
             if e.downcast_ref::<rust_agent_core::api::error::LlmApiError>().is_none() {
                 let _ = event_tx
                     .send(rust_agent_core::agent::AgentEvent::Error {
@@ -186,7 +180,9 @@ async fn send_message(
                     .await;
             }
         }
-        store.update(&session_id, ctx);
+        session.last_active = chrono::Utc::now();
+        drop(session);
+        store.persist(&session_id).await;
     });
 
     // 将 AgentEvent 流转换为 SSE 流
@@ -257,60 +253,41 @@ async fn bot_task(
         }
     };
 
-    // 构建 Bot 的 system prompt
-    let nickname = if bot.metadata.nickname.is_empty() {
-        &bot.metadata.name
-    } else {
-        &bot.metadata.nickname
-    };
-    let role = if bot.metadata.role.is_empty() {
-        "智能助手"
-    } else {
-        &bot.metadata.role
-    };
-
-    let skills_desc = bot.skills.descriptions_for_system_prompt();
-
-    let system_prompt = format!(
-        "你是 {nickname}({role})。\n\
-         工作目录：当前项目根目录。\n\n\
-         可用技能：\n{skills_desc}\n\n\
-         --- 专属指令 ---\n\
-         {body}\n\n\
-         ---\n\
-         仅使用上述专属指令和技能执行用户任务。\
-         完成后给出清晰的总结。",
-        body = bot.body
-    );
-
-    // 创建独立上下文（不预填 user_text，由 handle_bot_turn 负责）
-    let mut ctx = ContextService::new();
-
     let (event_tx, event_rx) = mpsc::channel(64);
 
-    // 在后台启动 agent（使用主 agent 的模型/profile）
-    let _store = state.store.clone();
+    let agent = state.agent.clone();
     let user_content = body.content.clone();
-    let bot_skills = bot.skills.clone(); // 提前 clone，避免 move 问题
+    let bot_skills = bot.skills.clone();
+
     tokio::spawn(async move {
-        let _ = dotenvy::dotenv();
-        let agent = match AgentApp::from_env().await {
-            Ok(a) => a,
-            Err(e) => {
-                let _ = event_tx
-                    .send(rust_agent_core::agent::AgentEvent::Error {
-                        code: "bot_init_failed".to_owned(),
-                        message: format!("Bot 初始化失败: {e:#}"),
-                    })
-                    .await;
-                return;
-            }
+        let bot_agent = agent.as_ref().clone().with_skills(bot_skills);
+        let mut ctx = ContextService::new();
+
+        let nickname = if bot.metadata.nickname.is_empty() {
+            &bot.metadata.name
+        } else {
+            &bot.metadata.nickname
+        };
+        let role = if bot.metadata.role.is_empty() {
+            "智能助手"
+        } else {
+            &bot.metadata.role
         };
 
-        // 克隆 Agent 并将技能替换为 Bot 专属技能（隔离全局技能）
-        let bot_agent = agent.clone().with_skills(bot_skills);
+        let skills_desc = bot.skills.descriptions_for_system_prompt();
 
-        // 使用 handle_bot_turn：禁止嵌套 task，使用自定义 system prompt
+        let system_prompt = format!(
+            "你是 {nickname}({role})。\n\
+             工作目录：当前项目根目录。\n\n\
+             可用技能：\n{skills_desc}\n\n\
+             --- 专属指令 ---\n\
+             {body}\n\n\
+             ---\n\
+             仅使用上述专属指令和技能执行用户任务。\
+             完成后给出清晰的总结。",
+            body = bot.body
+        );
+
         if let Err(e) = bot_agent
             .handle_bot_turn(&mut ctx, &user_content, system_prompt, event_tx.clone())
             .await

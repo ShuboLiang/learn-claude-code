@@ -432,7 +432,17 @@ impl AgentApp {
                     .await
                 {
                     Ok(new_messages) => ctx.replace(new_messages),
-                    Err(e) => error!("[auto_compact 失败: {e:#}]"),
+                    Err(e) => {
+                        error!("[auto_compact 失败: {e:#}]");
+                        if config.emit_events {
+                            let _ = event_tx
+                                .send(AgentEvent::Error {
+                                    code: "compact_failed".to_owned(),
+                                    message: format!("自动压缩失败: {e:#}"),
+                                })
+                                .await;
+                        }
+                    }
                 }
             }
 
@@ -861,22 +871,34 @@ impl AgentApp {
                         return Err(e);
                     }
                 }
-                let _ = event_tx
-                    .send(AgentEvent::TurnEnd {
-                        api_calls: api_call_count,
-                        token_usage: Some(self.token_tracker.snapshot().total),
-                    })
-                    .await;
+                if config.emit_events {
+                    let _ = event_tx
+                        .send(AgentEvent::TextDelta("对话已手动压缩。".to_owned()))
+                        .await;
+                    let _ = event_tx
+                        .send(AgentEvent::TurnEnd {
+                            api_calls: api_call_count,
+                            token_usage: Some(self.token_tracker.snapshot().total),
+                        })
+                        .await;
+                }
                 return Ok("对话已手动压缩。".to_owned());
             }
         }
 
-        let _ = event_tx
-            .send(AgentEvent::TurnEnd {
-                api_calls: api_call_count,
-                token_usage: Some(self.token_tracker.snapshot().total),
-            })
-            .await;
+        if config.emit_events {
+            let _ = event_tx
+                .send(AgentEvent::TextDelta(
+                    "已达到工具调用轮数安全上限（30轮），自动停止。".to_owned(),
+                ))
+                .await;
+            let _ = event_tx
+                .send(AgentEvent::TurnEnd {
+                    api_calls: api_call_count,
+                    token_usage: Some(self.token_tracker.snapshot().total),
+                })
+                .await;
+        }
         Ok("已达到工具调用轮数安全上限，自动停止。".to_owned())
     }
 

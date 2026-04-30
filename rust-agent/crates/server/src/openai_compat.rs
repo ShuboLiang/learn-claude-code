@@ -7,7 +7,6 @@ use axum::{Json, extract::State, http::StatusCode, response::IntoResponse};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use rust_agent_core::agent::AgentApp;
 use rust_agent_core::context::ContextService;
 use rust_agent_core::mpsc;
 
@@ -139,27 +138,10 @@ fn extract_user_input(messages: &[ChatMessage]) -> String {
 
 /// POST /v1/chat/completions — OpenAI 兼容端点
 pub async fn chat_completions(
-    State(_state): State<crate::routes::AppState>,
+    State(state): State<crate::routes::AppState>,
     Json(body): Json<ChatCompletionRequest>,
 ) -> impl IntoResponse {
-    let _ = dotenvy::dotenv();
-
-    let agent = match AgentApp::from_env().await {
-        Ok(a) => a,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "error": {
-                        "message": e.to_string(),
-                        "type": "server_error",
-                        "code": "init_failed"
-                    }
-                })),
-            )
-                .into_response();
-        }
-    };
+    let agent = state.agent.as_ref().clone();
 
     let model = std::env::var("MODEL_ID").unwrap_or_else(|_| "unknown".to_owned());
     let user_input = extract_user_input(&body.messages);

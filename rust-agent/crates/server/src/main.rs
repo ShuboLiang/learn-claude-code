@@ -1,9 +1,14 @@
+use std::sync::Arc;
+
 use axum::Router;
 use tower_http::cors::CorsLayer;
 use tracing::info;
 use tracing_subscriber::filter::EnvFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
+
+use rust_agent_core::agent::AgentApp;
+use rust_agent_core::bots::BotRegistry;
 
 mod openai_compat;
 mod routes;
@@ -59,9 +64,23 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|p| p.parse().ok())
         .unwrap_or(3000);
 
-    let store = SessionStore::new();
+    let agent = Arc::new(AgentApp::from_env().await?);
+
+    let data_dir = dirs::home_dir()
+        .map(|p| p.join(".rust-agent").join("sessions"))
+        .unwrap_or_else(|| std::path::PathBuf::from("./sessions"));
+    let store = SessionStore::new(data_dir).await;
+
+    let bot_registry = Arc::new(BotRegistry::load().unwrap_or_default());
+
+    let app_state = routes::AppState {
+        store,
+        agent,
+        bot_registry,
+    };
+
     let app = Router::new()
-        .merge(routes::routes(store))
+        .merge(routes::routes(app_state))
         .layer(CorsLayer::permissive());
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}")).await?;
