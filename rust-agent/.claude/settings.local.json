@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Skill(rust-best-practices)"
+      "Skill(rust-best-practices)",
+      "Skill(tavily-search)",
+      "Bash(cargo test:*)"
     ]
   }
 }

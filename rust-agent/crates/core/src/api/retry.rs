@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::sync::mpsc;
+use tracing::warn;
 
 /// 重试进度通知，由 API 层发送给上层以便推送给客户端
 #[derive(Debug, Clone)]
@@ -115,7 +116,7 @@ pub fn api_timeout_ms_from_env() -> u64 {
 
 /// 打印重试日志到 stderr
 pub fn log_retry(provider: &str, detail: &str, backoff: Duration, attempt: u32, max_retries: u32) {
-    eprintln!(
+    warn!(
         "[{provider} API 重试] {detail}，等待 {backoff:?} 后重试 ({}/{total})",
         attempt + 1,
         total = max_retries + 1

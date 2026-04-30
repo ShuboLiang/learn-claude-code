@@ -7,6 +7,7 @@ use std::process::Stdio;
 
 use anyhow::Context;
 use tokio::process::Command;
+use tracing::{info, warn};
 
 use crate::AgentResult;
 
@@ -20,10 +21,10 @@ pub async fn ensure_cli_installed() -> bool {
         return true;
     }
 
-    println!("SkillHub CLI 未安装，正在自动安装...");
+    info!("SkillHub CLI 未安装，正在自动安装...");
 
     if cfg!(windows) {
-        eprintln!(
+        warn!(
             "提示：Windows 平台暂不支持自动安装 SkillHub CLI。\n\
              请手动执行：curl -fsSL {INSTALL_URL} | bash -s -- --cli-only"
         );
@@ -34,17 +35,17 @@ pub async fn ensure_cli_installed() -> bool {
 
     match run_shell_command(&install_cmd, None).await {
         Ok(output) => {
-            println!("{}", output);
+            info!("{}", output);
             if is_cli_available().await {
-                println!("SkillHub CLI 安装成功。");
+                info!("SkillHub CLI 安装成功。");
                 true
             } else {
-                eprintln!("SkillHub CLI 安装后仍不可用，请检查安装日志。");
+                warn!("SkillHub CLI 安装后仍不可用，请检查安装日志。");
                 false
             }
         }
         Err(e) => {
-            eprintln!("SkillHub CLI 安装失败：{e}");
+            warn!("SkillHub CLI 安装失败：{e}");
             false
         }
     }

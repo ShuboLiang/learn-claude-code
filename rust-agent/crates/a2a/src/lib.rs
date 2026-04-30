@@ -9,6 +9,7 @@ use axum::body::{Body, to_bytes};
 use axum::{Extension, Json, extract::Request, middleware::Next, response::Response};
 use rust_agent_core::agent::AgentApp;
 use serde_json::json;
+use tracing::info;
 
 use crate::executor::RustAgentExecutor;
 
@@ -35,12 +36,12 @@ async fn log_request(req: Request, next: Next) -> Response {
     let resp_bytes = to_bytes(body, MAX_BODY_SIZE).await.unwrap_or_default();
     let resp_body_str = String::from_utf8_lossy(&resp_bytes).to_string();
 
-    println!("[A2A] {} {} -> {}", method, uri, status.as_u16());
+    info!("[A2A] {} {} -> {}", method, uri, status.as_u16());
     if !req_body_str.is_empty() {
-        println!("[A2A] Request Body:\n{}", req_body_str);
+        info!("[A2A] Request Body:\n{}", req_body_str);
     }
     if !resp_body_str.is_empty() {
-        println!("[A2A] Response Body:\n{}", resp_body_str);
+        info!("[A2A] Response Body:\n{}", resp_body_str);
     }
 
     // 重建响应

@@ -6,6 +6,7 @@
 
 use std::fs;
 use std::path::PathBuf;
+use tracing::error;
 
 /// 工具结果超过此字符数时触发持久化
 const PERSIST_THRESHOLD: usize = 50_000;
@@ -52,7 +53,7 @@ pub fn maybe_persist(tool_use_id: &str, content: &str) -> String {
     let path = dir.join(format!("{safe_id}.txt"));
 
     if let Err(e) = fs::write(&path, content) {
-        eprintln!("[tool_result_storage] 写入失败: {e}");
+        error!("[tool_result_storage] 写入失败: {e}");
         return content.to_owned();
     }
 

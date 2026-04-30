@@ -9,6 +9,7 @@ use anyhow::{anyhow, bail};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tracing::warn;
 
 use crate::AgentResult;
 use crate::infra::config::AppConfig;
@@ -70,7 +71,7 @@ fn parse_blacklist(items: &[String]) -> Vec<BlacklistEntry> {
                 match Regex::new(pattern) {
                     Ok(re) => Some(BlacklistEntry::Regex(Arc::new(re))),
                     Err(e) => {
-                        eprintln!("[curl] 黑名单正则编译失败 '{}': {e}", trimmed);
+                        warn!("[curl] 黑名单正则编译失败 '{}': {e}", trimmed);
                         None
                     }
                 }

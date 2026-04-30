@@ -11,6 +11,7 @@ pub mod types;
 
 use crate::AgentResult;
 pub use types::{ApiMessage, ProviderRequest, ProviderResponse, ResponseContentBlock};
+use tracing::info;
 
 use retry::{CancelFlag, RetryNotifier};
 
@@ -77,7 +78,7 @@ pub fn create_provider() -> AgentResult<ProviderInfo> {
     let config = crate::infra::config::AppConfig::load()?;
     let profile = config.current_profile()?;
 
-    println!(
+    info!(
         "[配置] 使用 profile: {} ({} / {})",
         profile.name, profile.provider, profile.model
     );

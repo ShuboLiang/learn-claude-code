@@ -11,6 +11,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use serde_json::Value;
+use tracing::info;
 
 use super::history::Conversation;
 use crate::AgentResult;
@@ -156,7 +157,7 @@ pub async fn auto_compact(
             writeln!(file, "{line}")?;
         }
     }
-    println!("[transcript 已保存: {}]", transcript_path.display());
+    info!("[transcript 已保存: {}]", transcript_path.display());
 
     let conversation_text = serde_json::to_string(conv.messages())?;
     let truncated: &str = if conversation_text.len() > 80_000 {

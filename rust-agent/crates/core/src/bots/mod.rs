@@ -294,8 +294,10 @@ impl BotRegistry {
 /// BOT.md 使用与 SKILL.md 相同的 frontmatter 格式。
 /// frontmatter 中的字段映射到 `BotMetadata`，正文作为 Bot 的自定义 system prompt。
 pub fn parse_bot_file(raw: &str) -> AgentResult<ParsedBotFile> {
-    if !raw.starts_with("---\n") {
-        // 没有 frontmatter，全部内容作为正文，使用空元数据
+    // 处理 UTF-8 BOM
+    let raw = raw.strip_prefix("\u{feff}").unwrap_or(raw);
+
+    if !raw.starts_with("---\n") && !raw.starts_with("---\r\n") {
         return Ok(ParsedBotFile {
             metadata: BotMetadata::default(),
             body: raw.trim().to_owned(),
@@ -303,17 +305,31 @@ pub fn parse_bot_file(raw: &str) -> AgentResult<ParsedBotFile> {
     }
 
     let rest = &raw[4..];
-    if let Some(index) = rest.find("\n---\n") {
-        let frontmatter = &rest[..index];
-        let body = &rest[index + 5..];
-        let metadata: BotMetadata = serde_yaml::from_str(frontmatter).unwrap_or_default();
-        return Ok(ParsedBotFile {
-            metadata,
-            body: body.trim().to_owned(),
-        });
+    // 灵活匹配 \n---\n 或 \r\n---\r\n 或 \n---\r\n 等
+    let marker = if rest.contains("\r\n---\r\n") {
+        "\r\n---\r\n"
+    } else if rest.contains("\n---\n") {
+        "\n---\n"
+    } else if rest.contains("\r\n---\n") {
+        "\r\n---\n"
+    } else if rest.contains("\n---\r\n") {
+        "\n---\r\n"
+    } else {
+        ""
+    };
+
+    if !marker.is_empty() {
+        if let Some(index) = rest.find(marker) {
+            let frontmatter = &rest[..index];
+            let body = &rest[index + marker.len()..];
+            let metadata: BotMetadata = serde_yaml::from_str(frontmatter).unwrap_or_default();
+            return Ok(ParsedBotFile {
+                metadata,
+                body: body.trim().to_owned(),
+            });
+        }
     }
 
-    // 有起始 `---` 但没有结束标记，整个内容作为正文
     Ok(ParsedBotFile {
         metadata: BotMetadata::default(),
         body: raw.trim().to_owned(),

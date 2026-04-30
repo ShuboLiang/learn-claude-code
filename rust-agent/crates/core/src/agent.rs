@@ -8,6 +8,7 @@ use async_recursion::async_recursion;
 use dotenvy::dotenv;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
+use tracing::{info, error, warn};
 
 use crate::AgentResult;
 use crate::api::retry::{CancelFlag, RetryNotification};
@@ -167,7 +168,7 @@ impl AgentApp {
 
         let skillhub_available = skillhub::ensure_cli_installed().await;
         if skillhub_available {
-            println!("SkillHub CLI 已就绪。");
+            info!("SkillHub CLI 已就绪。");
         }
 
         // 技能目录优先级：AGENT_SKILLS_DIRS 环境变量 > config.json skills_dirs > 默认目录
@@ -192,7 +193,7 @@ impl AgentApp {
         };
 
         for dir in &skill_dirs {
-            println!("[Agent] 技能目录: {}", dir.display());
+            info!("[Agent] 技能目录: {}", dir.display());
         }
 
         let skills = SkillLoader::load_from_dirs(
@@ -203,9 +204,9 @@ impl AgentApp {
 
         let bots = BotRegistry::load()?;
         if bots.is_empty() {
-            println!("[Agent] 未找到任何 Bot 定义");
+            info!("[Agent] 未找到任何 Bot 定义");
         } else {
-            println!("[Agent] 已加载 {} 个 Bot", bots.len());
+            info!("[Agent] 已加载 {} 个 Bot", bots.len());
         }
 
         Ok(Self {
@@ -415,23 +416,23 @@ impl AgentApp {
         for _ in 0..MAX_TOOL_ROUNDS {
             // 检测客户端是否已断开（SSE 连接关闭时 event_rx 被丢弃）
             if event_tx.is_closed() {
-                eprintln!("[Agent] 客户端已断开，任务终止");
+                warn!("[Agent] 客户端已断开，任务终止");
                 return Ok("客户端已断开连接".to_owned());
             }
 
             if last_micro_compact.elapsed() >= micro_compact_interval {
-                println!("[micro_compact 已触发]");
+                info!("[micro_compact 已触发]");
                 ctx.micro_compact();
                 last_micro_compact = Instant::now();
             }
             if ctx.estimate_tokens() > compact::TOKEN_THRESHOLD {
-                println!("[auto_compact 已触发]");
+                info!("[auto_compact 已触发]");
                 match ctx
                     .auto_compact(&self.client, &self.model, &self.workspace_root)
                     .await
                 {
                     Ok(new_messages) => ctx.replace(new_messages),
-                    Err(e) => eprintln!("[auto_compact 失败: {e:#}]"),
+                    Err(e) => error!("[auto_compact 失败: {e:#}]"),
                 }
             }
 
@@ -473,7 +474,7 @@ impl AgentApp {
                         Some(tx) => {
                             if tx.is_closed() {
                                 cancelled_clone.store(true, Ordering::SeqCst);
-                                eprintln!("[Agent] 检测到客户端断开，设置取消标志");
+                                warn!("[Agent] 检测到客户端断开，设置取消标志");
                                 break;
                             }
                         }
@@ -509,7 +510,7 @@ impl AgentApp {
                     } else {
                         "llm_api_error"
                     };
-                    eprintln!("[Agent] create_message 失败！错误: {e:#}");
+                    error!("[Agent] create_message 失败！错误: {e:#}");
                     if config.emit_events {
                         let _ = event_tx
                             .send(AgentEvent::Error {
@@ -525,6 +526,14 @@ impl AgentApp {
             let stop_reason = response.stop_reason.clone();
             ctx.push(ApiMessage::assistant_blocks(&response.content)?);
 
+            // 即使接下来要调用工具，也要把本轮模型生成的文本发给客户端
+            if config.emit_events {
+                let text = response.final_text();
+                if !text.is_empty() && text != "（本轮未生成可见回复，但已执行相关工具操作）" {
+                    let _ = event_tx.send(AgentEvent::TextDelta(text)).await;
+                }
+            }
+
             if stop_reason != "tool_calls" {
                 let text = response.final_text();
                 // 兜底：如果模型未生成可见文本（如仅有 Thinking 或空回复），
@@ -536,7 +545,6 @@ impl AgentApp {
                 };
                 // 将文本响应通过 SSE 通道发送给客户端（子 agent 静默）
                 if config.emit_events {
-                    let _ = event_tx.send(AgentEvent::TextDelta(text.clone())).await;
                     let _ = event_tx
                         .send(AgentEvent::TurnEnd {
                             api_calls: api_call_count,
@@ -836,14 +844,14 @@ impl AgentApp {
             ctx.push_user_blocks(results);
 
             if manual_compact {
-                println!("[手动压缩]");
+                info!("[手动压缩]");
                 match ctx
                     .auto_compact(&self.client, &self.model, &self.workspace_root)
                     .await
                 {
                     Ok(new_messages) => ctx.replace(new_messages),
                     Err(e) => {
-                        eprintln!("[手动压缩失败: {e:#}]");
+                        error!("[手动压缩失败: {e:#}]");
                         let _ = event_tx
                             .send(AgentEvent::TurnEnd {
                                 api_calls: api_call_count,
@@ -1083,7 +1091,7 @@ fn build_system_prompt(
     };
 
     format!(
-        "{identity_line}\n工作目录：{}。\n平台：{platform}\n\n\
+        "{identity_line}\n工作目录：{}。\n平台：{platform}{bot_section}\n\n\
         ## 2. 任务执行流程\n\
         每个任务必须遵循：**探索 -> 合成 -> 委派 -> 验证**：\n\
         0. **探索**：读取目录结构和关键文件，建立心理模型。不读代码不提建议。\n\

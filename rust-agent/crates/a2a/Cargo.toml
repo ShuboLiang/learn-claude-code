@@ -23,7 +23,10 @@ uuid = { version = "1", features = ["v4", "serde"] }
 tokio-stream = "0.1"
 futures = "0.3"
 dotenvy = "0.15"
+tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+dirs = "6"
 async-trait = "0.1"
 
 [dev-dependencies]

@@ -4,6 +4,7 @@
 
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::warn;
 
 /// 对话日志记录器，在 `~/.rust-agent/logs/` 下创建以时间戳命名的日志文件
 pub struct ConversationLogger {
@@ -19,7 +20,7 @@ impl ConversationLogger {
         };
 
         if let Err(e) = std::fs::create_dir_all(&log_dir) {
-            eprintln!("创建日志目录失败: {e}");
+            warn!("创建日志目录失败: {e}");
             return Self { file: None };
         }
 
@@ -34,7 +35,7 @@ impl ConversationLogger {
         let unique_suffix = now.as_nanos() % 1_000_000;
         let filename = log_dir.join(format!("{datetime}_{unique_suffix:06}.log"));
         let file = std::fs::File::create(&filename)
-            .map_err(|e| eprintln!("创建日志文件失败: {e}"))
+            .map_err(|e| warn!("创建日志文件失败: {e}"))
             .ok();
 
         Self { file }
