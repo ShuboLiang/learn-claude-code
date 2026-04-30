@@ -86,7 +86,7 @@ async fn health_check() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "status": "ok" }))
 }
 
-/// POST /sessions — 创建新会话
+/// POST /sessions — 创建新会话（仅在内存中创建，首次对话时才持久化到磁盘）
 async fn create_session(State(state): State<AppState>) -> impl IntoResponse {
     let session_arc = state.store.create().await;
     let session = session_arc.read().await;
@@ -94,7 +94,8 @@ async fn create_session(State(state): State<AppState>) -> impl IntoResponse {
     let id = session.id.clone();
     let created_at = session.created_at.to_rfc3339();
     drop(session);
-    state.store.persist(&id).await;
+    // 不在此处 persist，避免产生空会话文件
+    // 文件将在首次 send_message 时（有实际对话内容后）才写入磁盘
 
     Json(serde_json::json!({
         "id": id,

@@ -11,6 +11,7 @@ import {
   fetchSessions,
   fetchSessionMessages,
   setSessionId,
+  getConfig,
 } from "./api";
 import { transformMessages } from "./session-utils";
 import Chat from "./chat";
@@ -65,13 +66,7 @@ export default function App({ serverUrl }: { serverUrl: string }) {
   useEffect(() => {
     (async () => {
       init(serverUrl, "");
-      try {
-        const { id, model } = await createSession();
-        setSessionIdState(id);
-        setModel(model);
-      } catch (err) {
-        setError(`会话创建失败: ${err}`);
-      }
+      // 不再在启动时创建会话，改为首次对话时懒创建（避免产生空会话文件）
       // 加载 Bot 列表
       try {
         const botList = await fetchBots();
@@ -200,7 +195,7 @@ export default function App({ serverUrl }: { serverUrl: string }) {
 
   const handleSubmit = useCallback(
     async (input: string) => {
-      if (!input.trim() || isLoading || !sessionId) return;
+      if (!input.trim() || isLoading) return;
 
       let actualInput = input;
 
@@ -357,6 +352,18 @@ export default function App({ serverUrl }: { serverUrl: string }) {
         return;
       }
 
+      // 懒创建会话：首次对话时才创建，避免启动时产生空会话文件
+      if (!sessionId) {
+        try {
+          const { id, model: m } = await createSession();
+          setSessionIdState(id);
+          setModel(m);
+        } catch (err) {
+          setError(`会话创建失败: ${err}`);
+          return;
+        }
+      }
+
       setError(null);
       setMessages((prev) => [...prev, { role: "user", content: input }]);
       setIsLoading(true);
@@ -505,7 +512,10 @@ export default function App({ serverUrl }: { serverUrl: string }) {
       { role: "system", content: "═══ 以上对话已被清除 ═══" },
     ]);
     setCurrentReply("");
-    clearSession().catch(() => {});
+    // 仅在已有会话时才请求清除
+    if (getConfig().sessionId) {
+      clearSession().catch(() => {});
+    }
   }, []);
 
   return (
