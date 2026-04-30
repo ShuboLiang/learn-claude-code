@@ -3,7 +3,7 @@ use std::sync::Arc;
 use axum::{
     Json, Router,
     extract::{Path, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
 };
@@ -11,7 +11,6 @@ use serde::Deserialize;
 use tokio_stream::StreamExt;
 
 use rust_agent_core::agent::AgentApp;
-use rust_agent_core::api::types::ApiMessage;
 use rust_agent_core::bots::BotRegistry;
 use rust_agent_core::context::ContextService;
 use rust_agent_core::mpsc;
@@ -211,11 +210,37 @@ async fn list_bots(State(state): State<AppState>) -> Json<serde_json::Value> {
 ///
 /// Bot 拥有独立的身份、专属技能和自定义 system prompt。
 /// 任务在独立上下文中执行，不污染主会话上下文。
+///
+/// **安全限制**：
+/// - 需要 `SERVER_API_KEY` 环境变量鉴权（Header: `Authorization: Bearer <key>`）
+/// - 禁止嵌套 task 工具（`allow_task: false`），防止无限嵌套消耗配额
 async fn bot_task(
     State(state): State<AppState>,
     Path(name): Path<String>,
+    headers: HeaderMap,
     Json(body): Json<BotTaskRequest>,
 ) -> impl IntoResponse {
+    // ── 鉴权：校验 SERVER_API_KEY ──
+    if let Ok(expected_key) = std::env::var("SERVER_API_KEY") {
+        let provided = headers
+            .get("authorization")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .unwrap_or("");
+        if provided != expected_key {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({
+                    "error": {
+                        "code": "unauthorized",
+                        "message": "缺少或无效的 API key，请在 Authorization 头中提供 Bearer token"
+                    }
+                })),
+            )
+                .into_response();
+        }
+    } // 未设置 SERVER_API_KEY 则在开发模式下允许所有请求
+
     let bot = match state.bot_registry.find(&name) {
         Some(b) => b.clone(),
         None => {
@@ -258,18 +283,15 @@ async fn bot_task(
         body = bot.body
     );
 
-    // 创建独立上下文并注入系统提示
+    // 创建独立上下文（不预填 user_text，由 handle_bot_turn 负责）
     let mut ctx = ContextService::new();
-    ctx.push(ApiMessage {
-        role: "system".to_owned(),
-        content: serde_json::Value::String(system_prompt),
-    });
-    ctx.push_user_text(&body.content);
 
     let (event_tx, event_rx) = mpsc::channel(64);
 
     // 在后台启动 agent（使用主 agent 的模型/profile）
     let _store = state.store.clone();
+    let user_content = body.content.clone();
+    let bot_skills = bot.skills.clone(); // 提前 clone，避免 move 问题
     tokio::spawn(async move {
         let _ = dotenvy::dotenv();
         let agent = match AgentApp::from_env().await {
@@ -285,11 +307,14 @@ async fn bot_task(
             }
         };
 
-        if let Err(e) = agent
-            .handle_user_turn(&mut ctx, &body.content, event_tx.clone())
+        // 克隆 Agent 并将技能替换为 Bot 专属技能（隔离全局技能）
+        let bot_agent = agent.clone().with_skills(bot_skills);
+
+        // 使用 handle_bot_turn：禁止嵌套 task，使用自定义 system prompt
+        if let Err(e) = bot_agent
+            .handle_bot_turn(&mut ctx, &user_content, system_prompt, event_tx.clone())
             .await
         {
-            // LLM API 错误（如 429 限流）已在 agent.rs 中发送过事件，避免重复发送
             if e.downcast_ref::<rust_agent_core::api::error::LlmApiError>().is_none() {
                 let _ = event_tx
                     .send(rust_agent_core::agent::AgentEvent::Error {

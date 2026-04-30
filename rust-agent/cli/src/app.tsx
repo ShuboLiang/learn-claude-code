@@ -193,18 +193,32 @@ export default function App({ serverUrl }: { serverUrl: string }) {
     async (input: string) => {
       if (!input.trim() || isLoading || !sessionId) return;
 
-      // /@botname command: dispatch subagent task
+      let actualInput = input;
+
+      // /@botname command: 转为 call_bot 指令通过主 agent 执行（保持 session 上下文）
       const botMatch = input.trim().match(/^\/@(\S+)\s+(.*)/);
       if (botMatch) {
-        handleBotTask(botMatch[1], botMatch[2]);
-        return;
+        const botName = botMatch[1];
+        const task = botMatch[2];
+        const displayName = bots.find((b) => b.name === botName)?.nickname || botName;
+        setMessages((prev) => [
+          ...prev,
+          { role: "bot_call", content: `@${displayName}: ${task}` },
+        ]);
+        actualInput = `请使用 call_bot 工具，bot 名称为 "${botMatch[1]}"，执行以下任务：\n\n${task}`;
+        setActiveBot(displayName);
       }
 
-      // /@@botname command (double @): dispatch subagent task
+      // /@@botname command (double @): 同上
       const botMatch2 = input.trim().match(/^\/@@(\S+)\s+(.*)/);
       if (botMatch2) {
-        handleBotTask(botMatch2[1], botMatch2[2]);
-        return;
+        const displayName = bots.find((b) => b.name === botMatch2[1])?.nickname || botMatch2[1];
+        setMessages((prev) => [
+          ...prev,
+          { role: "bot_call", content: `@${displayName}: ${botMatch2[2]}` },
+        ]);
+        actualInput = `请使用 call_bot 工具，bot 名称为 "${botMatch2[1]}"，执行以下任务：\n\n${botMatch2[2]}`;
+        setActiveBot(displayName);
       }
 
       // /bots command: list available bots
@@ -236,7 +250,7 @@ export default function App({ serverUrl }: { serverUrl: string }) {
       abortControllerRef.current = new AbortController();
       try {
         for await (const event of sendMessage(
-          input,
+          actualInput,
           abortControllerRef.current.signal,
         )) {
           switch (event.event) {
@@ -253,10 +267,20 @@ export default function App({ serverUrl }: { serverUrl: string }) {
                   { role: "assistant", content: reply },
                 ]);
               }
-              setMessages((prev) => [
-                ...prev,
-                { role: "tool_call", content: JSON.stringify(event.data) },
-              ]);
+              // call_bot 工具使用 bot 专用样式，其余工具通用显示
+              if (event.data.name === "call_bot") {
+                const botName = event.data.input?.name || "unknown";
+                const task = event.data.input?.task || "";
+                setMessages((prev) => [
+                  ...prev,
+                  { role: "bot_call", content: `@${botName}: ${task}` },
+                ]);
+              } else {
+                setMessages((prev) => [
+                  ...prev,
+                  { role: "tool_call", content: JSON.stringify(event.data) },
+                ]);
+              }
               break;
             }
             case "tool_result":
@@ -339,6 +363,7 @@ export default function App({ serverUrl }: { serverUrl: string }) {
         setIsLoading(false);
         setCurrentReply("");
         currentReplyRef.current = "";
+        setActiveBot(null);
         setRetryStatus(null);
         abortControllerRef.current = null;
       }

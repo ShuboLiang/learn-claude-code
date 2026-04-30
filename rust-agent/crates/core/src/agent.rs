@@ -144,6 +144,14 @@ impl AgentRunConfig {
             emit_events: false,
         }
     }
+    /// HTTP Bot API 端点专用配置：禁止嵌套 task，但允许向客户端发送事件
+    fn bot_api() -> Self {
+        Self {
+            allow_task: false,
+            use_todo_reminder: true,
+            emit_events: true,
+        }
+    }
 }
 
 impl AgentApp {
@@ -235,6 +243,12 @@ impl AgentApp {
         self
     }
 
+    /// 注入 Bot 专属技能（替换全局技能，用于 Bot 沙箱隔离）
+    pub fn with_skills(mut self, skills: crate::skills::SkillLoader) -> Self {
+        self.skills = Arc::new(RwLock::new(skills));
+        self
+    }
+
     /// 设置 Agent 身份信息
     pub fn with_identity(mut self, identity: AgentIdentity) -> Self {
         self.identity = identity;
@@ -322,6 +336,45 @@ impl AgentApp {
                 ctx,
                 system_prompt,
                 AgentRunConfig::parent(),
+                &mut logger,
+                &event_tx,
+            )
+            .await;
+
+        match &result {
+            Ok(text) => logger.log(&format!("=== 助手 ===\n{text}")),
+            Err(e) => logger.log(&format!("=== 错误 ===\n{e}")),
+        }
+
+        result
+    }
+
+    /// Bot 子代理入口（供 HTTP API 端点调用）
+    ///
+    /// 与 `handle_user_turn` 的区别：
+    /// - 禁止嵌套 task（`allow_task: false`），防止通过 HTTP API 无限嵌套
+    /// - 使用调用方提供的 system_prompt（而非通用提示词）
+    /// - 不重复推送 user_text（调用方已负责构造上下文）
+    pub async fn handle_bot_turn(
+        &self,
+        ctx: &mut ContextService,
+        user_input: &str,
+        system_prompt: String,
+        event_tx: mpsc::Sender<AgentEvent>,
+    ) -> AgentResult<String> {
+        let mut logger = ConversationLogger::create();
+
+        ctx.push_user_text(user_input);
+        logger.log(&format!("=== 用户 ===\n{user_input}"));
+        logger.log(&format!("=== 系统提示词 ===\n{system_prompt}"));
+
+        let event_tx = Arc::new(event_tx);
+
+        let result = self
+            .run_agent_loop(
+                ctx,
+                system_prompt,
+                AgentRunConfig::bot_api(),
                 &mut logger,
                 &event_tx,
             )
@@ -997,14 +1050,15 @@ fn build_system_prompt(
     bot_list: &str,
 ) -> String {
     let platform = if cfg!(windows) {
-        "Windows (PowerShell)。"
+        "Windows (PowerShell)"
     } else {
         "Unix (bash)"
     };
+    
     let identity_line = if identity.nickname.is_empty() && identity.role.is_empty() {
-        format!("你是 {model}，一个编程助手。")
+        format!("你是 {model}，一名首席软件工程协调员 (Lead Coordinator)。")
     } else if identity.role.is_empty() {
-        format!("你是 {model}，昵称是 {}。", identity.nickname)
+        format!("你是 {model}，昵称是 {}，担任首席协调员。", identity.nickname)
     } else if identity.nickname.is_empty() {
         format!("你是 {model}，担任{}。", identity.role)
     } else {
@@ -1019,58 +1073,36 @@ fn build_system_prompt(
     } else {
         format!(
             "\n\n\
-            ## Bot 子代理（专业领域专家）\n\
-            Bot 是拥有专属技能的专家子代理，优先级高于普通技能。\n\
-            **委派规则**：当任务匹配某个 Bot 的职责范围时，优先调用 call_bot 委派，不要改用技能。\n\
-            **多轮编排**：复杂任务可分多轮委派：先调用数据收集 Bot → 拿到结果 → 调用分析/总结 Bot。\n\
-            **并行调度**：多个独立的子任务可在同一轮并行调用多个 Bot（上限 5 个）。\n\
-            **存在依赖**的任务必须串行：等上一个 Bot 返回后再调用下一个。\n\n\
-            可用 Bot：\n{bot_list}"
+            ## 1. Bot 子代理（领域专家）\n\
+            Bot 是拥有专属技能的专家，你的职责是协调他们。当你调用 call_bot 时：\n\
+            - **必须完成「合成 (Synthesis)」**：你必须先读懂研究结果，并在 task 参数中提供包含具体文件路径、行号和修改逻辑的详细 Spec。严禁说“参考之前的研究”。\n\
+            - **目的陈述**：明确告知 Bot 任务背景（如：“此研究是为了修复生产环境的内存泄漏”）。\n\
+            - **转发反问**：如果 Bot 向用户提问，你**必须**原封不动转发给用户，不得代为决策。\n\n\
+            可用 Bot 列表：\n{bot_list}"
         )
     };
 
     format!(
-        "{identity_line}\n工作目录：{}。\n平台：{platform}\n优先使用工具解决问题，避免冗长解释。{bot_section}\n\n\
-            任务执行流程 — 每个任务必须按以下顺序执行：\n\
-            0. 先了解项目：读取目录结构和关键文件，理解项目上下文。\n\
-            1. 检查任务是否匹配某个 Bot 的职责范围。如果匹配，直接调用 call_bot 委派。\n\
-               **不可用技能替代 Bot，Bot 优先级高于技能。**\n\
-            2. 检查已安装的技能是否覆盖当前任务。如果有，调用 load_skill。\n\
-            3. 如果任务需要领域知识但没有匹配的已安装技能，调用 search_skillhub 搜索。\n\
-               简单操作（文件读写、命令执行、搜索等）可直接跳过此步骤。\n\
-            4. 如果 search_skillhub 返回了相关技能，调用 install_skill 安装它。\n\
-            5. 只有在步骤 0-4 完成后，才能使用 bash 或其他工具执行具体操作。\n\
-            6. 绝对不能跳过 Bot/技能检查直接使用 bash/curl 等工具（简单文件操作除外）。\n\
-            7. 在完成 Bot/技能流程之前，绝对不能声称无法完成任务。\n\n\
-            脚本执行规则：\n\
-            - 已安装技能的脚本（已在 skills/ 目录下）→ 用 bash 直接从技能目录运行。\n\
-            - 只有凭空生成的临时代码片段才使用 exec_script 工具执行。\n\
-            - 禁止 write_file 写临时脚本到工作区再用 bash 执行。\n\n\
-            输出规则：\n\
-            - **交付产物优先**：在将某个任务步骤标记为完成（completed）时，你必须在同一条回复中展示该步骤产出的核心数据（如解析后的 JSON、代码、分析结论等）。\n\
-            - **禁止隐瞒结果**：严禁在未展示关键数据的情况下仅回复“已完成”。\n\
-            - **结果记录**：调用 todo 工具更新状态时，务必在 result_summary 字段中填入该任务产出的简要描述或数据预览，以便于后续流程引用。\n\
-            - 研究类任务：收集完资料后必须输出完整内容，不能只说整理完毕。\n\
-            - 长篇内容（>500字）应写入文件并告知用户文件路径。\n\
-            - 如果工具结果被持久化到磁盘（包含 <persisted-output> 标签），可以随时用 read_file 读取完整内容。\n\n\
-            子代理并行执行规则：\n\
-            - 你可以在一次响应中返回多个 task 或 call_bot 调用来并行执行多个子代理/Bot。\n\
-            - **并行执行条件**（需全部满足）：2+ 个独立任务、任务间无依赖、无共享文件冲突。\n\
-            - **串行执行条件**（任一触发）：任务间有依赖、共享文件/状态、范围不明确需先了解。\n\
-            - 典型并行场景：同时研究多个不相关主题、同时探索不同模块、同时分析多个文件。\n\
-            - 典型串行场景：先调研再实现、先写 schema 再写 API、当任务需要前一步结果才能决定下一步。\n\
-            - 并行上限为 5 个子代理/Bot，超出部分将被忽略。\n\n\
-            Bot 子代理结果处理规则（极其重要）：\n\
-            - **多轮编排**：复杂任务可分多轮委派：先调用数据收集 Bot → 拿到结果 → 调用分析/总结 Bot。\n\
-            - **存在依赖**的任务必须串行：等上一个 Bot 返回后再调用下一个。\n\
-            - **Bot 反问必须转发给用户**：如果 call_bot 返回的结果中包含 Bot 向用户提出的问题（如\"请选择评分方案\"、\"请确认以下选项\"、\"请告诉我...\"），你**必须**原封不动地将问题转发给用户，并等待用户明确回复后再继续。**严禁**替用户做决定（包括选择默认值、推荐选项等）。\n\
-            - **区分 Bot 完成 vs Bot 反问**：Bot 返回\"任务已完成，结果是...\"则不转发问题直接处理结果；Bot 返回\"请选择 A/B/C\"则必须停下来转发给用户。\n\
-            - **禁止预设 Bot 能力限制**：在构造 call_bot 的 task 参数时，**严禁**加入类似\"当前环境不支持X\"、\"只需生成内容即可\"、\"不要实际发送\"等对 Bot 能力的假设性限制。Bot 拥有专属技能和工具，它的能力边界你无法预知。如果 Bot 真的缺乏某项能力（如 SMTP 未配置），Bot 自己会报告。**在 task 中预设限制等于剥夺 Bot 的核心功能。**\n\n\
-            其他工具：\n\
-            - 使用 todo 工具规划多步骤工作。\n\
-            - 使用 task 工具委派普通子任务（子代理拥有独立上下文，支持并行）。\n\
-            - 使用 call_bot 工具将专业任务委派给拥有专属技能的 Bot 子代理。\n\n\
-            可用技能：\n{skills_desc}",
+        "{identity_line}\n工作目录：{}。\n平台：{platform}\n\n\
+        ## 2. 任务执行流程\n\
+        每个任务必须遵循：**探索 -> 合成 -> 委派 -> 验证**：\n\
+        0. **探索**：读取目录结构和关键文件，建立心理模型。不读代码不提建议。\n\
+        1. **合成**：将探索发现转化为具体的执行规格说明（Spec）。你绝不将“理解代码”的工作外包给子代理。\n\
+        2. **委派优先级**：Bot 子代理 > 已安装技能 > 搜索 SkillHub > 原生工具。简单文件操作可直接使用原生工具。\n\
+        3. **验证**：证明代码有效，而非确认其存在。运行测试时必须覆盖边界情况。\n\n\
+        ## 3. 真正的验证 (Deep Verification)\n\
+        - **怀疑态度**：即使 Bot 报告成功，你也要重新读取关键文件进行独立审查。\n\
+        - **全量检查**：检查类型安全、错误日志和潜在的副作用，不仅仅是“Pass”。\n\
+        - **不妥协**：如果验证不彻底，该步骤不视为完成。\n\n\
+        ## 4. 输出规则 (Conciseness)\n\
+        - **直奔主题**：先给出答案或行动结果，再进行极简解释。跳过所有客套话和过渡词。\n\
+        - **禁止总结**：严禁在回复末尾复述已完成的工作（用户可以看 diff 或日志）。\n\
+        - **精准引用**：引用代码时务必使用 `file_path:line_number` 格式。\n\n\
+        ## 5. 并行调度规则\n\
+        - 支持在单次回复中返回最多 5 个并行任务（task/call_bot）。\n\
+        - **并行条件**：任务间无文件冲突、无逻辑依赖（如：同时研究两个不相关的模块）。\n\
+        - **串行条件**：后一步依赖前一步结果（如：先写 Schema 再写 API 实现）。\n\n\
+        可用技能：\n{skills_desc}",
         workspace_root.display(),
     )
 }
