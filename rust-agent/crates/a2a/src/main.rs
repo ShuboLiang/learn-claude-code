@@ -5,6 +5,15 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 /// 初始化日志：文件层 + stderr 层
+struct LocalTimer;
+
+impl tracing_subscriber::fmt::time::FormatTime for LocalTimer {
+    fn format_time(&self, w: &mut tracing_subscriber::fmt::format::Writer<'_>) -> std::fmt::Result {
+        let now = chrono::Local::now();
+        write!(w, "{}", now.format("%Y-%m-%d %H:%M:%S"))
+    }
+}
+
 fn init_logging() {
     let log_dir = dirs::home_dir()
         .map(|p| p.join(".rust-agent").join("logs"))
@@ -12,7 +21,9 @@ fn init_logging() {
 
     let _ = std::fs::create_dir_all(&log_dir);
 
-    let file_appender = tracing_appender::rolling::daily(&log_dir, "a2a.log");
+    let now = chrono::Local::now();
+    let log_filename = format!("a2a-{}.log", now.format("%Y-%m-%d"));
+    let file_appender = tracing_appender::rolling::never(&log_dir, log_filename);
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
     Box::leak(Box::new(guard));
 
@@ -20,11 +31,13 @@ fn init_logging() {
         .unwrap_or_else(|_| EnvFilter::new("info"));
 
     let file_layer = tracing_subscriber::fmt::layer()
+        .with_timer(LocalTimer)
         .with_writer(non_blocking)
         .with_ansi(false)
         .with_target(false);
 
     let stderr_layer = tracing_subscriber::fmt::layer()
+        .with_timer(LocalTimer)
         .with_writer(std::io::stderr)
         .with_target(false);
 

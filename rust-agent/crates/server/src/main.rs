@@ -18,6 +18,15 @@ mod sse;
 use session::SessionStore;
 
 /// 初始化日志：文件层（始终写入）+ 控制台层（AGENT_LOG 环境变量控制级别）
+struct LocalTimer;
+
+impl tracing_subscriber::fmt::time::FormatTime for LocalTimer {
+    fn format_time(&self, w: &mut tracing_subscriber::fmt::format::Writer<'_>) -> std::fmt::Result {
+        let now = chrono::Local::now();
+        write!(w, "{}", now.format("%Y-%m-%d %H:%M:%S"))
+    }
+}
+
 fn init_logging() {
     let log_dir = dirs::home_dir()
         .map(|p| p.join(".rust-agent").join("logs"))
@@ -25,8 +34,10 @@ fn init_logging() {
 
     let _ = std::fs::create_dir_all(&log_dir);
 
-    // 文件层：按日滚动
-    let file_appender = tracing_appender::rolling::daily(&log_dir, "server.log");
+    // 文件层：始终写入 server-YYYY-MM-DD.log
+    let now = chrono::Local::now();
+    let log_filename = format!("server-{}.log", now.format("%Y-%m-%d"));
+    let file_appender = tracing_appender::rolling::never(&log_dir, log_filename);
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
     // guard 必须存到 static 保持 alive，否则 writer 会关闭
     Box::leak(Box::new(guard));
@@ -36,11 +47,13 @@ fn init_logging() {
 
     // 组合：文件 + stderr
     let file_layer = tracing_subscriber::fmt::layer()
+        .with_timer(LocalTimer)
         .with_writer(non_blocking)
         .with_ansi(false)
         .with_target(false);
 
     let stderr_layer = tracing_subscriber::fmt::layer()
+        .with_timer(LocalTimer)
         .with_writer(std::io::stderr)
         .with_target(false);
 
