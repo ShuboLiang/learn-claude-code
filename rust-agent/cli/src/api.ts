@@ -3,6 +3,14 @@ export interface ServerConfig {
   sessionId: string;
 }
 
+export interface SessionSummary {
+  id: string;
+  created_at: string;
+  last_active: string;
+  message_count: number;
+  preview: string;
+}
+
 let config: ServerConfig | null = null;
 
 export function getConfig(): ServerConfig {
@@ -180,4 +188,35 @@ export async function* sendBotTask(
     }
     if (done) break;
   }
+}
+
+export async function fetchSessions(): Promise<SessionSummary[]> {
+  const res = await fetch(`${getConfig().baseUrl}/sessions`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(
+      `获取会话列表失败 (${res.status}): ${data?.error?.message || res.statusText}`,
+    );
+  }
+  const data = await res.json();
+  return data.sessions || [];
+}
+
+export async function fetchSessionMessages(
+  id: string,
+): Promise<Array<{ role: string; content: any }>> {
+  const res = await fetch(`${getConfig().baseUrl}/sessions/${id}/messages`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(
+      `获取会话消息失败 (${res.status}): ${data?.error?.message || res.statusText}`,
+    );
+  }
+  const data = await res.json();
+  return data.messages || [];
+}
+
+export function setSessionId(sessionId: string) {
+  if (!config) throw new Error("API 未初始化");
+  config.sessionId = sessionId;
 }

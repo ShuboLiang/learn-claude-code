@@ -49,6 +49,44 @@ impl SessionRecord {
     }
 }
 
+#[derive(Serialize)]
+pub struct SessionSummary {
+    pub id: String,
+    pub created_at: DateTime<Utc>,
+    pub last_active: DateTime<Utc>,
+    pub message_count: usize,
+    pub preview: String,
+}
+
+fn extract_preview(messages: &[rust_agent_core::api::types::ApiMessage]) -> String {
+    for msg in messages {
+        if msg.role != "user" {
+            continue;
+        }
+        let text = match &msg.content {
+            serde_json::Value::String(s) => s.clone(),
+            serde_json::Value::Array(arr) => {
+                arr.iter()
+                    .filter_map(|b| {
+                        if b.get("type")?.as_str()? == "text" {
+                            b.get("text")?.as_str().map(String::from)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("")
+            }
+            _ => continue,
+        };
+        let trimmed = text.trim();
+        if !trimmed.is_empty() {
+            return trimmed.chars().take(30).collect();
+        }
+    }
+    "(无预览)".to_owned()
+}
+
 #[derive(Clone)]
 pub struct SessionStore {
     sessions: Arc<DashMap<String, Arc<RwLock<Session>>>>,
@@ -187,6 +225,31 @@ impl SessionStore {
         }
         removed
     }
+
+    pub async fn list(&self) -> Vec<SessionSummary> {
+        let mut summaries = Vec::with_capacity(self.sessions.len());
+        for entry in self.sessions.iter() {
+            let session = entry.read().await;
+            summaries.push(SessionSummary {
+                id: session.id.clone(),
+                created_at: session.created_at,
+                last_active: session.last_active,
+                message_count: session.context.len(),
+                preview: extract_preview(session.context.messages()),
+            });
+        }
+        summaries.sort_by(|a, b| b.last_active.cmp(&a.last_active));
+        summaries
+    }
+
+    pub async fn get_messages(
+        &self,
+        id: &str,
+    ) -> Option<Vec<rust_agent_core::api::types::ApiMessage>> {
+        let entry = self.sessions.get(id)?;
+        let session = entry.read().await;
+        Some(session.context.messages().to_vec())
+    }
 }
 
 #[cfg(test)]
@@ -250,6 +313,61 @@ mod tests {
         assert!(store.remove(&id).await);
         assert!(store.get(&id).is_none());
         assert!(!tmp.join(format!("{id}.json")).exists());
+
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+    }
+
+    #[tokio::test]
+    async fn session_store_list_returns_sorted_summaries() {
+        let tmp = std::env::temp_dir().join(format!("rust-agent-test-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&tmp).await.unwrap();
+
+        let store = SessionStore::new(tmp.clone()).await;
+        let s1 = store.create().await;
+        let s2 = store.create().await;
+
+        {
+            let mut s1_locked = s1.write().await;
+            s1_locked.context.push_user_text("first session");
+            s1_locked.last_active = Utc::now() - chrono::Duration::hours(1);
+        }
+        {
+            let mut s2_locked = s2.write().await;
+            s2_locked.context.push_user_text("second session");
+        }
+
+        store.persist(&s1.read().await.id).await;
+        store.persist(&s2.read().await.id).await;
+
+        let list = store.list().await;
+        assert_eq!(list.len(), 2);
+        assert!(list[0].last_active >= list[1].last_active);
+        assert_eq!(list[0].preview, "second session");
+        assert_eq!(list[1].preview, "first session");
+
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+    }
+
+    #[tokio::test]
+    async fn session_store_get_messages_returns_history() {
+        let tmp = std::env::temp_dir().join(format!("rust-agent-test-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&tmp).await.unwrap();
+
+        let store = SessionStore::new(tmp.clone()).await;
+        let session = store.create().await;
+        let id = session.read().await.id.clone();
+        {
+            let mut s = session.write().await;
+            s.context.push_user_text("hello");
+        }
+        store.persist(&id).await;
+
+        let messages = store.get_messages(&id).await.unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].role, "user");
+
+        let missing = store.get_messages("nonexistent").await;
+        assert!(missing.is_none());
 
         let _ = tokio::fs::remove_dir_all(&tmp).await;
     }

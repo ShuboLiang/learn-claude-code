@@ -42,9 +42,9 @@ pub struct AppState {
 pub fn routes(app_state: AppState) -> Router {
     Router::new()
         .route("/", get(health_check))
-        .route("/sessions", post(create_session))
+        .route("/sessions", get(list_sessions).post(create_session))
         .route("/sessions/{id}", get(get_session).delete(delete_session))
-        .route("/sessions/{id}/messages", post(send_message))
+        .route("/sessions/{id}/messages", get(get_session_messages).post(send_message))
         .route("/sessions/{id}/clear", post(clear_session))
         .route(
             "/v1/chat/completions",
@@ -53,6 +53,32 @@ pub fn routes(app_state: AppState) -> Router {
         .route("/bots", get(list_bots))
         .route("/bots/{name}/task", post(bot_task))
         .with_state(app_state)
+}
+
+/// GET /sessions — 列出所有会话摘要
+async fn list_sessions(State(state): State<AppState>) -> impl IntoResponse {
+    let sessions = state.store.list().await;
+    Json(serde_json::json!({ "sessions": sessions })).into_response()
+}
+
+/// GET /sessions/:id/messages — 获取会话消息历史
+async fn get_session_messages(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match state.store.get_messages(&id).await {
+        Some(messages) => Json(serde_json::json!({ "messages": messages })).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": {
+                    "code": "session_not_found",
+                    "message": "会话不存在或已过期"
+                }
+            })),
+        )
+            .into_response(),
+    }
 }
 
 /// GET / — 健康检查

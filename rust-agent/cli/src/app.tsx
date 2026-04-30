@@ -8,7 +8,11 @@ import {
   fetchBots,
   sendBotTask,
   BotInfo,
+  fetchSessions,
+  fetchSessionMessages,
+  setSessionId,
 } from "./api";
+import { transformMessages } from "./session-utils";
 import Chat from "./chat";
 import Input from "./input";
 
@@ -24,7 +28,7 @@ function formatTokens(n: number): string {
 
 export default function App({ serverUrl }: { serverUrl: string }) {
   const { exit } = useApp();
-  const [sessionId, setSessionId] = useState("");
+  const [sessionId, setSessionIdState] = useState("");
   const [model, setModel] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -45,6 +49,11 @@ export default function App({ serverUrl }: { serverUrl: string }) {
 
   const abortControllerRef = useRef<AbortController | null>(null);
 
+  // 历史会话列表缓存（供 /load 命令使用序号恢复）
+  const sessionListRef = useRef<
+    Array<{ id: string; message_count: number; preview: string; last_active: string }>
+  >([]);
+
   // ESC 中断正在进行的对话
   useInput((_input, key) => {
     if (key.escape && abortControllerRef.current) {
@@ -58,7 +67,7 @@ export default function App({ serverUrl }: { serverUrl: string }) {
       init(serverUrl, "");
       try {
         const { id, model } = await createSession();
-        setSessionId(id);
+        setSessionIdState(id);
         setModel(model);
       } catch (err) {
         setError(`会话创建失败: ${err}`);
@@ -237,6 +246,111 @@ export default function App({ serverUrl }: { serverUrl: string }) {
             {
               role: "system",
               content: `可用 Subagent:\n${botList}\n\n使用 /@@botname 任务描述 来委派任务`,
+            },
+          ]);
+        }
+        return;
+      }
+
+      // /sessions command: list historical sessions
+      if (input.trim().toLowerCase() === "/sessions") {
+        try {
+          const sessions = await fetchSessions();
+          sessionListRef.current = sessions;
+          if (sessions.length === 0) {
+            setMessages((prev) => [
+              ...prev,
+              { role: "system", content: "═══ 暂无历史会话 ═══" },
+            ]);
+            return;
+          }
+          const lines = sessions.map((s, i) => {
+            const date = new Date(s.last_active).toLocaleString("zh-CN", {
+              month: "2-digit",
+              day: "2-digit",
+              hour: "2-digit",
+              minute: "2-digit",
+            });
+            return `[${i + 1}] ${date}  (${s.message_count} 条)  ${s.preview}`;
+          });
+          const text = `═══ 历史会话 ═══\n${lines.join("\n")}\n════════════════\n使用 /load <序号> 或 /load <uuid> 恢复`;
+          setMessages((prev) => [...prev, { role: "system", content: text }]);
+        } catch (err) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "system",
+              content: `获取历史会话失败: ${err}`,
+            },
+          ]);
+        }
+        return;
+      }
+
+      // /load command: recover a historical session
+      const loadMatch = input.trim().match(/^\/load\s+(.+)$/);
+      if (loadMatch) {
+        if (isLoading) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "system",
+              content: "当前有进行中的对话，请等待结束后再加载。",
+            },
+          ]);
+          return;
+        }
+        const arg = loadMatch[1].trim();
+        let targetId: string | undefined;
+        const index = parseInt(arg, 10);
+        if (
+          !isNaN(index) &&
+          index > 0 &&
+          index <= sessionListRef.current.length
+        ) {
+          targetId = sessionListRef.current[index - 1].id;
+        } else if (!isNaN(index)) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "system",
+              content: "无效序号，先用 /sessions 查看列表。",
+            },
+          ]);
+          return;
+        } else {
+          targetId = arg;
+        }
+
+        if (!targetId) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "system",
+              content: "无效序号或 UUID，先用 /sessions 查看列表。",
+            },
+          ]);
+          return;
+        }
+
+        try {
+          const apiMessages = await fetchSessionMessages(targetId);
+          const newMessages = transformMessages(apiMessages);
+          setSessionId(targetId);
+          setSessionIdState(targetId);
+          const preview =
+            sessionListRef.current.find((s) => s.id === targetId)?.preview ||
+            targetId.slice(0, 8);
+          setMessages([
+            ...newMessages,
+            { role: "system", content: `═══ 已恢复会话 ${preview} ═══` },
+          ]);
+        } catch (err) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "system",
+              content: `加载会话失败: ${err}`,
             },
           ]);
         }
