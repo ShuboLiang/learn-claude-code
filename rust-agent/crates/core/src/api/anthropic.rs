@@ -15,8 +15,9 @@ use tokio::time::sleep;
 
 use super::retry::{self, CancelFlag, RetryNotifier};
 use super::types::{
-    MessagesRequest, MessagesResponse, ProviderRequest, ProviderResponse, TokenUsage,
+    LlmStreamChunk, MessagesRequest, MessagesResponse, ProviderRequest, ProviderResponse, TokenUsage,
 };
+use futures::stream::BoxStream;
 use crate::AgentResult;
 
 fn parse_messages_response(body: &str) -> AgentResult<MessagesResponse> {
@@ -191,6 +192,16 @@ impl AnthropicClient {
 }
 
 impl AnthropicClient {
+    /// 流式发送消息（stub，待实现）
+    pub(crate) async fn stream_message(
+        &self,
+        _request: &ProviderRequest<'_>,
+        _retry_notifier: Option<&RetryNotifier>,
+        _cancel: Option<&CancelFlag>,
+    ) -> AgentResult<BoxStream<'static, AgentResult<LlmStreamChunk>>> {
+        todo!("Anthropic streaming implementation")
+    }
+
     /// 发送消息并获取统一的 ProviderResponse
     pub async fn create_message(
         &self,

@@ -10,10 +10,11 @@ pub mod retry;
 pub mod types;
 
 use crate::AgentResult;
-pub use types::{ApiMessage, ProviderRequest, ProviderResponse, ResponseContentBlock};
+pub use types::{ApiMessage, LlmStreamChunk, ProviderRequest, ProviderResponse, ResponseContentBlock};
 use tracing::info;
 
 use retry::{CancelFlag, RetryNotifier};
+use futures::stream::BoxStream;
 
 /// LLM Provider 枚举，封装不同的 LLM 后端
 #[derive(Clone, Debug)]
@@ -41,6 +42,23 @@ impl LlmProvider {
             }
             LlmProvider::OpenAI(client) => {
                 client.create_message(request, retry_notifier, cancel).await
+            }
+        }
+    }
+
+    /// 流式发送消息，返回 chunk stream
+    pub async fn stream_message(
+        &self,
+        request: &ProviderRequest<'_>,
+        retry_notifier: Option<&RetryNotifier>,
+        cancel: Option<&CancelFlag>,
+    ) -> AgentResult<BoxStream<'static, AgentResult<LlmStreamChunk>>> {
+        match self {
+            LlmProvider::Anthropic(client) => {
+                client.stream_message(request, retry_notifier, cancel).await
+            }
+            LlmProvider::OpenAI(client) => {
+                client.stream_message(request, retry_notifier, cancel).await
             }
         }
     }

@@ -17,8 +17,9 @@ use tokio::time::sleep;
 
 use super::retry::{self, CancelFlag, RetryNotifier};
 use super::types::{
-    ApiMessage, ProviderRequest, ProviderResponse, ResponseContentBlock, TokenUsage,
+    ApiMessage, LlmStreamChunk, ProviderRequest, ProviderResponse, ResponseContentBlock, TokenUsage,
 };
+use futures::stream::BoxStream;
 use crate::AgentResult;
 
 // ── OpenAI 请求/响应类型（用于序列化和反序列化） ──
@@ -141,6 +142,16 @@ pub struct OpenAIClient {
 }
 
 impl OpenAIClient {
+    /// 流式发送消息（stub，待实现）
+    pub(crate) async fn stream_message(
+        &self,
+        _request: &ProviderRequest<'_>,
+        _retry_notifier: Option<&RetryNotifier>,
+        _cancel: Option<&CancelFlag>,
+    ) -> AgentResult<BoxStream<'static, AgentResult<LlmStreamChunk>>> {
+        todo!("OpenAI streaming implementation")
+    }
+
     /// 使用给定的 API 密钥和基础 URL 创建客户端
     pub fn new(api_key: &str, base_url: &str) -> AgentResult<Self> {
         Self::build_client(api_key, base_url)
