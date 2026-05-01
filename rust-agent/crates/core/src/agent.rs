@@ -12,7 +12,7 @@ use tracing::{info, error, warn};
 
 use crate::AgentResult;
 use crate::api::retry::{CancelFlag, RetryNotification};
-use crate::api::types::{ApiMessage, ProviderRequest, ResponseContentBlock};
+use crate::api::types::{ApiMessage, ProviderRequest};
 use crate::bots::BotRegistry;
 use crate::context::ContextService;
 use crate::context::compact;
