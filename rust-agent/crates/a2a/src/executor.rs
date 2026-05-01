@@ -96,6 +96,7 @@ impl AgentExecutor for RustAgentExecutor {
                     AgentEvent::TurnEnd { .. } => {}
                     AgentEvent::Done => {}
                     AgentEvent::Error { .. } => {}
+                    AgentEvent::ThinkingDelta(_) => {} // 思考内容不混入 buffer
                     AgentEvent::Retrying { .. } => {}
                 }
             }
@@ -271,6 +272,7 @@ fn agent_event_to_stream_responses(
                 metadata: None,
             })]
         }
+        AgentEvent::ThinkingDelta(_) => vec![], // 思考内容不发送到 A2A 流
         AgentEvent::Done => vec![],
         AgentEvent::Retrying { .. } => vec![],
         AgentEvent::Error { code, message } => {

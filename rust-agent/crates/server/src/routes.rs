@@ -46,7 +46,10 @@ pub fn routes(app_state: AppState) -> Router {
         .route("/", get(health_check))
         .route("/sessions", get(list_sessions).post(create_session))
         .route("/sessions/{id}", get(get_session).delete(delete_session))
-        .route("/sessions/{id}/messages", get(get_session_messages).post(send_message))
+        .route(
+            "/sessions/{id}/messages",
+            get(get_session_messages).post(send_message),
+        )
         .route("/sessions/{id}/clear", post(clear_session))
         .route(
             "/v1/chat/completions",
@@ -195,23 +198,30 @@ async fn send_message(
     let store = state.store.clone();
 
     tokio::spawn(async move {
+        tracing::info!("[send_message] 等待获取 session 写锁...");
         let mut session = session_arc.write().await;
+        tracing::info!("[send_message] 获取写锁成功，开始调用 handle_user_turn");
         if let Err(e) = agent
             .handle_user_turn(&mut session.context, &content, event_tx.clone())
             .await
         {
-            if e.downcast_ref::<rust_agent_core::api::error::LlmApiError>().is_none() {
-                let _ = event_tx
-                    .send(rust_agent_core::agent::AgentEvent::Error {
-                        code: "agent_error".to_owned(),
-                        message: format!("{e:#}"),
-                    })
-                    .await;
-            }
+            tracing::error!("[send_message] handle_user_turn 失败: {e:#}");
+            let _ = event_tx
+                .send(rust_agent_core::agent::AgentEvent::Error {
+                    code: "agent_error".to_owned(),
+                    message: format!("{e:#}"),
+                })
+                .await;
         }
+        tracing::info!("[send_message] handle_user_turn 完成");
         session.last_active = chrono::Utc::now();
         drop(session);
         store.persist(&session_id).await;
+        // 无论成功还是失败，都发送 Done 事件，让客户端知道 SSE 流已结束
+        let _ = event_tx
+            .send(rust_agent_core::agent::AgentEvent::Done)
+            .await;
+        tracing::info!("[send_message] Done 事件已发送");
     });
 
     // 将 AgentEvent 流转换为 SSE 流
@@ -323,15 +333,17 @@ async fn bot_task(
             .handle_bot_turn(&mut ctx, &user_content, system_prompt, event_tx.clone())
             .await
         {
-            if e.downcast_ref::<rust_agent_core::api::error::LlmApiError>().is_none() {
-                let _ = event_tx
-                    .send(rust_agent_core::agent::AgentEvent::Error {
-                        code: "bot_agent_error".to_owned(),
-                        message: format!("{e:#}"),
-                    })
-                    .await;
-            }
+            let _ = event_tx
+                .send(rust_agent_core::agent::AgentEvent::Error {
+                    code: "bot_agent_error".to_owned(),
+                    message: format!("{e:#}"),
+                })
+                .await;
         }
+        // 无论成功还是失败，都发送 Done 事件，让客户端知道 SSE 流已结束
+        let _ = event_tx
+            .send(rust_agent_core::agent::AgentEvent::Done)
+            .await;
     });
 
     // 将 AgentEvent 流转换为 SSE 流

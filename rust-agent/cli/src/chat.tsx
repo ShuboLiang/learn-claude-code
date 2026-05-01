@@ -10,6 +10,7 @@ interface Message {
 interface ChatProps {
   messages: Message[];
   currentReply: string;
+  currentThinking: string;
   isLoading: boolean;
   activeBot?: string | null;
   retryStatus?: string | null;
@@ -85,6 +86,17 @@ function renderMessage(msg: Message, index: number) {
         </Box>
       );
     }
+    case "thinking":
+      return (
+        <Box key={`msg-${index}`} flexDirection="column">
+          <Text color="gray" dimColor>
+            💭{" "}
+            {msg.content.length > 200
+              ? msg.content.slice(0, 200) + "..."
+              : msg.content}
+          </Text>
+        </Box>
+      );
     case "system":
       return (
         <Box key={`msg-${index}`}>
@@ -99,6 +111,7 @@ function renderMessage(msg: Message, index: number) {
 export default function Chat({
   messages,
   currentReply,
+  currentThinking,
   isLoading,
   activeBot,
   retryStatus,
@@ -110,8 +123,27 @@ export default function Chat({
         {(msg, index) => renderMessage(msg, index)}
       </Static>
 
-      {/* 加载指示器 */}
-      {isLoading && (
+      {/* 正在思考的内容（实时流式显示） */}
+      {currentThinking && (
+        <Box flexDirection="column">
+          <Text color="gray" dimColor>
+            💭{" "}
+            {currentThinking.length > 200
+              ? currentThinking.slice(0, 200) + "..."
+              : currentThinking}
+          </Text>
+        </Box>
+      )}
+
+      {/* 正在生成的回复（实时流式显示） */}
+      {currentReply && (
+        <Box flexDirection="column">
+          <Markdown content={currentReply} />
+        </Box>
+      )}
+
+      {/* 加载指示器（仅在无内容时显示） */}
+      {isLoading && !currentReply && !currentThinking && (
         <Box>
           <Text dimColor>
             {activeBot ? `[@${activeBot}] 执行中...` : "思考中..."}

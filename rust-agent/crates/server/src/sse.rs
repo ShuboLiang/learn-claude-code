@@ -8,6 +8,9 @@ pub fn agent_event_to_sse(event: AgentEvent) -> Event {
         AgentEvent::TextDelta(content) => Event::default()
             .event("text_delta")
             .data(json!({ "content": content }).to_string()),
+        AgentEvent::ThinkingDelta(content) => Event::default()
+            .event("thinking_delta")
+            .data(json!({ "content": content }).to_string()),
         AgentEvent::ToolCall {
             id,
             name,
@@ -15,7 +18,9 @@ pub fn agent_event_to_sse(event: AgentEvent) -> Event {
             parallel_index,
         } => {
             let mut data = json!({ "name": name, "input": input });
-            if let Some(id) = id { data["id"] = json!(id); }
+            if let Some(id) = id {
+                data["id"] = json!(id);
+            }
             if let Some((idx, total)) = parallel_index {
                 data["parallel_index"] = json!({ "index": idx, "total": total });
             }
@@ -28,7 +33,9 @@ pub fn agent_event_to_sse(event: AgentEvent) -> Event {
             parallel_index,
         } => {
             let mut data = json!({ "name": name, "output": output });
-            if let Some(id) = id { data["id"] = json!(id); }
+            if let Some(id) = id {
+                data["id"] = json!(id);
+            }
             if let Some((idx, total)) = parallel_index {
                 data["parallel_index"] = json!({ "index": idx, "total": total });
             }
@@ -58,16 +65,14 @@ pub fn agent_event_to_sse(event: AgentEvent) -> Event {
             max_retries,
             wait_seconds,
             detail,
-        } => Event::default()
-            .event("retrying")
-            .data(
-                json!({
-                    "attempt": attempt,
-                    "max_retries": max_retries,
-                    "wait_seconds": wait_seconds,
-                    "detail": detail,
-                })
-                .to_string(),
-            ),
+        } => Event::default().event("retrying").data(
+            json!({
+                "attempt": attempt,
+                "max_retries": max_retries,
+                "wait_seconds": wait_seconds,
+                "detail": detail,
+            })
+            .to_string(),
+        ),
     }
 }

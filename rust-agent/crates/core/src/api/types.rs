@@ -187,18 +187,18 @@ impl ProviderResponse {
 }
 
 /// LLM 流式响应中的单个数据块
-/// 
+///
 /// Provider 层把上游 SSE 解析为统一的本地方块，Agent 层据此转发事件。
 #[derive(Clone, Debug)]
 pub enum LlmStreamChunk {
     /// 文本增量（真正的 token delta，不是完整文本）
     TextDelta(String),
 
+    /// 思考内容增量（Kimi 等兼容层返回的 reasoning_content）
+    ThinkingDelta(String),
+
     /// 工具调用开始（收到 tool name 和 id）
-    ToolUseStart {
-        id: String,
-        name: String,
-    },
+    ToolUseStart { id: String, name: String },
 
     /// 工具调用参数增量（JSON 片段）
     ToolUseDelta {
@@ -207,9 +207,7 @@ pub enum LlmStreamChunk {
     },
 
     /// 工具调用结束（参数已完整）
-    ToolUseEnd {
-        id: String,
-    },
+    ToolUseEnd { id: String },
 
     /// 停止原因（用于 Agent 层判断是否需要调用工具）
     StopReason(String),

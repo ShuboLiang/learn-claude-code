@@ -8,7 +8,7 @@ use async_recursion::async_recursion;
 use dotenvy::dotenv;
 use serde_json::{Value, json};
 use tokio::sync::mpsc;
-use tracing::{info, error, warn};
+use tracing::{error, info, warn};
 
 use crate::AgentResult;
 use crate::api::retry::{CancelFlag, RetryNotification};
@@ -28,6 +28,8 @@ use crate::tools::extension::ToolExtension;
 #[derive(Clone, Debug)]
 pub enum AgentEvent {
     TextDelta(String),
+    /// 思考内容增量（Kimi 等兼容层返回的 reasoning_content）
+    ThinkingDelta(String),
     ToolCall {
         id: Option<String>,
         name: String,
@@ -515,15 +517,16 @@ impl AgentApp {
                 Ok(s) => s,
                 Err(e) => {
                     drop(retry_tx);
-                    let code = if let Some(api_err) = e.downcast_ref::<crate::api::error::LlmApiError>() {
-                        if api_err.is_rate_limited() {
-                            "rate_limited"
+                    let code =
+                        if let Some(api_err) = e.downcast_ref::<crate::api::error::LlmApiError>() {
+                            if api_err.is_rate_limited() {
+                                "rate_limited"
+                            } else {
+                                "llm_api_error"
+                            }
                         } else {
                             "llm_api_error"
-                        }
-                    } else {
-                        "llm_api_error"
-                    };
+                        };
                     error!("[Agent] stream_message 失败！错误: {e:#}");
                     if config.emit_events {
                         let _ = event_tx
@@ -558,10 +561,12 @@ impl AgentApp {
                     Err(e) => {
                         error!("[Agent] stream 中断: {e:#}");
                         if config.emit_events {
-                            let _ = event_tx.send(AgentEvent::Error {
-                                code: "stream_error".to_owned(),
-                                message: format!("流式响应中断: {e:#}"),
-                            }).await;
+                            let _ = event_tx
+                                .send(AgentEvent::Error {
+                                    code: "stream_error".to_owned(),
+                                    message: format!("流式响应中断: {e:#}"),
+                                })
+                                .await;
                         }
                         return Err(e);
                     }
@@ -574,6 +579,12 @@ impl AgentApp {
                             let _ = event_tx.send(AgentEvent::TextDelta(text)).await;
                         }
                     }
+                    crate::api::types::LlmStreamChunk::ThinkingDelta(thinking) => {
+                        // 思考内容不混入 current_text，单独作为 ThinkingDelta 事件发送
+                        if config.emit_events && !thinking.is_empty() {
+                            let _ = event_tx.send(AgentEvent::ThinkingDelta(thinking)).await;
+                        }
+                    }
                     crate::api::types::LlmStreamChunk::ToolUseStart { id, name } => {
                         tool_accumulators.push(ToolUseAccumulator {
                             id: id.clone(),
@@ -581,15 +592,20 @@ impl AgentApp {
                             input_json: String::new(),
                         });
                         if config.emit_events {
-                            let _ = event_tx.send(AgentEvent::ToolCall {
-                                id: Some(id),
-                                name,
-                                input: serde_json::json!({}),
-                                parallel_index: None,
-                            }).await;
+                            let _ = event_tx
+                                .send(AgentEvent::ToolCall {
+                                    id: Some(id),
+                                    name,
+                                    input: serde_json::json!({}),
+                                    parallel_index: None,
+                                })
+                                .await;
                         }
                     }
-                    crate::api::types::LlmStreamChunk::ToolUseDelta { id, input_json_delta } => {
+                    crate::api::types::LlmStreamChunk::ToolUseDelta {
+                        id,
+                        input_json_delta,
+                    } => {
                         if let Some(tool) = tool_accumulators.iter_mut().find(|t| t.id == id) {
                             tool.input_json.push_str(&input_json_delta);
                         }
@@ -597,14 +613,18 @@ impl AgentApp {
                     crate::api::types::LlmStreamChunk::ToolUseEnd { id } => {
                         if config.emit_events {
                             if let Some(tool) = tool_accumulators.iter().find(|t| t.id == id) {
-                                let input = serde_json::from_str(&tool.input_json)
-                                    .unwrap_or_else(|_| serde_json::Value::String(tool.input_json.clone()));
-                                let _ = event_tx.send(AgentEvent::ToolCall {
-                                    id: Some(tool.id.clone()),
-                                    name: tool.name.clone(),
-                                    input,
-                                    parallel_index: None,
-                                }).await;
+                                let input =
+                                    serde_json::from_str(&tool.input_json).unwrap_or_else(|_| {
+                                        serde_json::Value::String(tool.input_json.clone())
+                                    });
+                                let _ = event_tx
+                                    .send(AgentEvent::ToolCall {
+                                        id: Some(tool.id.clone()),
+                                        name: tool.name.clone(),
+                                        input,
+                                        parallel_index: None,
+                                    })
+                                    .await;
                             }
                         }
                     }
@@ -761,10 +781,10 @@ impl AgentApp {
                                 let _ = event_tx
                                     .send(AgentEvent::ToolResult {
                                         id: None,
-                                name: tc.name.clone(),
-                                output: msg.clone(),
-                                parallel_index: None,
-                            })
+                                        name: tc.name.clone(),
+                                        output: msg.clone(),
+                                        parallel_index: None,
+                                    })
                                     .await;
                             }
                             msg
@@ -1062,14 +1082,21 @@ impl AgentApp {
             )
         };
 
-        let platform = if cfg!(windows) { "Windows (PowerShell)" } else { "Unix (bash)" };
+        let platform = if cfg!(windows) {
+            "Windows (PowerShell)"
+        } else {
+            "Unix (bash)"
+        };
 
         // 将 BOT.md 的 body 内容（行为指令）注入 system prompt
         // body 可能为空（BOT.md 只有 frontmatter 没有正文）
         let bot_body_section = if bot.body.trim().is_empty() {
             String::new()
         } else {
-            format!("\n## 行为指令（来自 BOT.md）\n\n{bot_body}\n", bot_body = bot.body)
+            format!(
+                "\n## 行为指令（来自 BOT.md）\n\n{bot_body}\n",
+                bot_body = bot.body
+            )
         };
 
         let system_prompt = format!(
@@ -1181,11 +1208,14 @@ fn build_system_prompt(
     } else {
         "Unix (bash)"
     };
-    
+
     let identity_line = if identity.nickname.is_empty() && identity.role.is_empty() {
         format!("你是 {model}，一名首席软件工程协调员 (Lead Coordinator)。")
     } else if identity.role.is_empty() {
-        format!("你是 {model}，昵称是 {}，担任首席协调员。", identity.nickname)
+        format!(
+            "你是 {model}，昵称是 {}，担任首席协调员。",
+            identity.nickname
+        )
     } else if identity.nickname.is_empty() {
         format!("你是 {model}，担任{}。", identity.role)
     } else {

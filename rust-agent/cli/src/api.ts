@@ -94,7 +94,10 @@ export async function* sendMessage(
         const data = line.slice(line.charAt(5) === " " ? 6 : 5);
         if (data === "[DONE]") return;
         try {
-          yield { event: currentEvent, data: JSON.parse(data) };
+          const parsed = JSON.parse(data);
+          yield { event: currentEvent, data: parsed };
+          // 收到 done 事件后立即退出，不等待服务器关闭连接
+          if (currentEvent === "done") return;
         } catch {}
         currentEvent = "";
       }
@@ -181,7 +184,10 @@ export async function* sendBotTask(
         const data = line.slice(line.charAt(5) === " " ? 6 : 5);
         if (data === "[DONE]") return;
         try {
-          yield { event: currentEvent, data: JSON.parse(data) };
+          const parsed = JSON.parse(data);
+          yield { event: currentEvent, data: parsed };
+          // 收到 done 事件后立即退出，不等待服务器关闭连接
+          if (currentEvent === "done") return;
         } catch {}
         currentEvent = "";
       }

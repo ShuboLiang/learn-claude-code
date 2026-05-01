@@ -37,6 +37,7 @@ export default function App({ serverUrl }: { serverUrl: string }) {
     Array<{ role: string; content: string }>
   >([]);
   const [currentReply, setCurrentReply] = useState("");
+  const [currentThinking, setCurrentThinking] = useState("");
   const [bots, setBots] = useState<BotInfo[]>([]);
   const [botsLoaded, setBotsLoaded] = useState(false);
   // 当前正在执行的 bot 名称（用于 subagent 模式下的 UI 指示）
@@ -44,15 +45,22 @@ export default function App({ serverUrl }: { serverUrl: string }) {
   // 重试状态提示（API 限流/网络错误时显示）
   const [retryStatus, setRetryStatus] = useState<string | null>(null);
 
-  // 使用 ref 追踪 currentReply，避免 stale closure
+  // 使用 ref 追踪 currentReply / currentThinking，避免 stale closure
   const currentReplyRef = useRef(currentReply);
   currentReplyRef.current = currentReply;
+  const currentThinkingRef = useRef(currentThinking);
+  currentThinkingRef.current = currentThinking;
 
   const abortControllerRef = useRef<AbortController | null>(null);
 
   // 历史会话列表缓存（供 /load 命令使用序号恢复）
   const sessionListRef = useRef<
-    Array<{ id: string; message_count: number; preview: string; last_active: string }>
+    Array<{
+      id: string;
+      message_count: number;
+      preview: string;
+      last_active: string;
+    }>
   >([]);
 
   // ESC 中断正在进行的对话
@@ -95,8 +103,10 @@ export default function App({ serverUrl }: { serverUrl: string }) {
       setIsLoading(true);
       setActiveBot(displayName);
       setCurrentReply("");
+      setCurrentThinking("");
       abortControllerRef.current = new AbortController();
 
+      let streamDone = false;
       try {
         for await (const event of sendBotTask(
           botName,
@@ -104,9 +114,22 @@ export default function App({ serverUrl }: { serverUrl: string }) {
           abortControllerRef.current.signal,
         )) {
           switch (event.event) {
-            case "text_delta":
+            case "thinking_delta":
+              setCurrentThinking((prev) => prev + event.data.content);
+              break;
+            case "text_delta": {
+              // 思考结束，将思考内容保存为消息
+              const thinking = currentThinkingRef.current;
+              if (thinking) {
+                setMessages((prev) => [
+                  ...prev,
+                  { role: "thinking", content: thinking },
+                ]);
+                setCurrentThinking("");
+              }
               setCurrentReply((prev) => prev + event.data.content);
               break;
+            }
             case "tool_call":
               setMessages((prev) => [
                 ...prev,
@@ -156,30 +179,46 @@ export default function App({ serverUrl }: { serverUrl: string }) {
               setRetryStatus(null);
               break;
             }
+            case "done": {
+              setCurrentReply("");
+              currentReplyRef.current = "";
+              streamDone = true;
+              // 主动 abort 强制关闭底层 fetch 流，让 for await 循环立即退出
+              if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+              }
+              break;
+            }
           }
+          if (streamDone) break;
         }
       } catch (err) {
-        const isAbort = err instanceof Error && err.name === "AbortError";
-        const isTerminated =
-          err instanceof TypeError && String(err).includes("terminated");
-        if (isAbort || isTerminated) {
-          const reply = currentReplyRef.current;
-          if (reply) {
+        // streamDone=true 时的 abort 是正常结束，不需要显示错误
+        if (streamDone) {
+          // 正常结束，忽略 abort 错误
+        } else {
+          const isAbort = err instanceof Error && err.name === "AbortError";
+          const isTerminated =
+            err instanceof TypeError && String(err).includes("terminated");
+          if (isAbort || isTerminated) {
+            const reply = currentReplyRef.current;
+            if (reply) {
+              setMessages((prev) => [
+                ...prev,
+                { role: "assistant", content: reply },
+              ]);
+            }
             setMessages((prev) => [
               ...prev,
-              { role: "assistant", content: reply },
+              {
+                role: "system",
+                content: isAbort ? "── 已中断 ──" : "── 连接已断开 ──",
+              },
             ]);
+          } else {
+            setError(String(err));
+            setRetryStatus(null);
           }
-          setMessages((prev) => [
-            ...prev,
-            {
-              role: "system",
-              content: isAbort ? "── 已中断 ──" : "── 连接已断开 ──",
-            },
-          ]);
-        } else {
-          setError(String(err));
-          setRetryStatus(null);
         }
       } finally {
         setIsLoading(false);
@@ -204,7 +243,8 @@ export default function App({ serverUrl }: { serverUrl: string }) {
       if (botMatch) {
         const botName = botMatch[1];
         const task = botMatch[2];
-        const displayName = bots.find((b) => b.name === botName)?.nickname || botName;
+        const displayName =
+          bots.find((b) => b.name === botName)?.nickname || botName;
         setMessages((prev) => [
           ...prev,
           { role: "bot_call", content: `@${displayName}: ${task}` },
@@ -216,7 +256,8 @@ export default function App({ serverUrl }: { serverUrl: string }) {
       // /@@botname command (double @): 同上
       const botMatch2 = input.trim().match(/^\/@@(\S+)\s+(.*)/);
       if (botMatch2) {
-        const displayName = bots.find((b) => b.name === botMatch2[1])?.nickname || botMatch2[1];
+        const displayName =
+          bots.find((b) => b.name === botMatch2[1])?.nickname || botMatch2[1];
         setMessages((prev) => [
           ...prev,
           { role: "bot_call", content: `@${displayName}: ${botMatch2[2]}` },
@@ -368,16 +409,31 @@ export default function App({ serverUrl }: { serverUrl: string }) {
       setMessages((prev) => [...prev, { role: "user", content: input }]);
       setIsLoading(true);
       setCurrentReply("");
+      setCurrentThinking("");
       abortControllerRef.current = new AbortController();
+      let streamDone = false;
       try {
         for await (const event of sendMessage(
           actualInput,
           abortControllerRef.current.signal,
         )) {
           switch (event.event) {
-            case "text_delta":
+            case "thinking_delta":
+              setCurrentThinking((prev) => prev + event.data.content);
+              break;
+            case "text_delta": {
+              // 思考结束，将思考内容保存为消息
+              const thinking = currentThinkingRef.current;
+              if (thinking) {
+                setMessages((prev) => [
+                  ...prev,
+                  { role: "thinking", content: thinking },
+                ]);
+                setCurrentThinking("");
+              }
               setCurrentReply((prev) => prev + event.data.content);
               break;
+            }
             case "tool_call": {
               const reply = currentReplyRef.current;
               setCurrentReply("");
@@ -454,31 +510,42 @@ export default function App({ serverUrl }: { serverUrl: string }) {
             case "done": {
               setCurrentReply("");
               currentReplyRef.current = "";
+              streamDone = true;
+              // 主动 abort 强制关闭底层 fetch 流，让 for await 循环立即退出
+              if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+              }
               break;
             }
           }
+          if (streamDone) break;
         }
       } catch (err) {
-        const isAbort = err instanceof Error && err.name === "AbortError";
-        const isTerminated =
-          err instanceof TypeError && String(err).includes("terminated");
-        if (isAbort || isTerminated) {
-          const reply = currentReplyRef.current;
-          if (reply) {
+        // streamDone=true 时的 abort 是正常结束，不需要显示错误
+        if (streamDone) {
+          // 正常结束，忽略 abort 错误
+        } else {
+          const isAbort = err instanceof Error && err.name === "AbortError";
+          const isTerminated =
+            err instanceof TypeError && String(err).includes("terminated");
+          if (isAbort || isTerminated) {
+            const reply = currentReplyRef.current;
+            if (reply) {
+              setMessages((prev) => [
+                ...prev,
+                { role: "assistant", content: reply },
+              ]);
+            }
             setMessages((prev) => [
               ...prev,
-              { role: "assistant", content: reply },
+              {
+                role: "system",
+                content: isAbort ? "── 已中断 ──" : "── 连接已断开 ──",
+              },
             ]);
+          } else {
+            setError(String(err));
           }
-          setMessages((prev) => [
-            ...prev,
-            {
-              role: "system",
-              content: isAbort ? "── 已中断 ──" : "── 连接已断开 ──",
-            },
-          ]);
-        } else {
-          setError(String(err));
         }
       } finally {
         setIsLoading(false);
@@ -523,6 +590,7 @@ export default function App({ serverUrl }: { serverUrl: string }) {
       <Chat
         messages={messages}
         currentReply={currentReply}
+        currentThinking={currentThinking}
         isLoading={isLoading}
         activeBot={activeBot}
         retryStatus={retryStatus}

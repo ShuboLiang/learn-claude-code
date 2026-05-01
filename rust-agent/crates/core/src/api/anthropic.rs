@@ -19,9 +19,9 @@ use super::types::{
     LlmStreamChunk, MessagesRequest, MessagesResponse, ProviderRequest, ProviderResponse,
     ResponseContentBlock, TokenUsage,
 };
-use futures::stream::{self, BoxStream};
-use futures::StreamExt;
 use crate::AgentResult;
+use futures::StreamExt;
+use futures::stream::{self, BoxStream};
 
 // ── Anthropic SSE 流式事件类型 ──
 
@@ -34,11 +34,24 @@ struct AnthropicMessageStart {
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum AnthropicStreamEvent {
-    MessageStart { message: AnthropicMessageStart },
-    ContentBlockStart { index: u32, content_block: AnthropicContentBlock },
-    ContentBlockDelta { index: u32, delta: AnthropicDelta },
-    ContentBlockStop { index: u32 },
-    MessageDelta { delta: AnthropicMessageDelta, usage: AnthropicStreamUsage },
+    MessageStart {
+        message: AnthropicMessageStart,
+    },
+    ContentBlockStart {
+        index: u32,
+        content_block: AnthropicContentBlock,
+    },
+    ContentBlockDelta {
+        index: u32,
+        delta: AnthropicDelta,
+    },
+    ContentBlockStop {
+        index: u32,
+    },
+    MessageDelta {
+        delta: AnthropicMessageDelta,
+        usage: AnthropicStreamUsage,
+    },
     MessageStop,
     Ping,
 }
@@ -102,35 +115,31 @@ impl AnthropicStreamParser {
             AnthropicStreamEvent::MessageStart { message } => {
                 self.usage.input_tokens = message.usage.input_tokens;
             }
-            AnthropicStreamEvent::ContentBlockStart { content_block, .. } => {
-                match content_block {
-                    AnthropicContentBlock::ToolUse { id, name } => {
-                        self.current_tool = Some(ToolUseBuilder {
-                            id: id.clone(),
-                            name: name.clone(),
-                            input_json: String::new(),
+            AnthropicStreamEvent::ContentBlockStart { content_block, .. } => match content_block {
+                AnthropicContentBlock::ToolUse { id, name } => {
+                    self.current_tool = Some(ToolUseBuilder {
+                        id: id.clone(),
+                        name: name.clone(),
+                        input_json: String::new(),
+                    });
+                    chunks.push(LlmStreamChunk::ToolUseStart { id, name });
+                }
+                AnthropicContentBlock::Text { .. } => {}
+            },
+            AnthropicStreamEvent::ContentBlockDelta { delta, .. } => match delta {
+                AnthropicDelta::TextDelta { text } => {
+                    chunks.push(LlmStreamChunk::TextDelta(text));
+                }
+                AnthropicDelta::InputJsonDelta { partial_json } => {
+                    if let Some(ref mut tool) = self.current_tool {
+                        tool.input_json.push_str(&partial_json);
+                        chunks.push(LlmStreamChunk::ToolUseDelta {
+                            id: tool.id.clone(),
+                            input_json_delta: partial_json,
                         });
-                        chunks.push(LlmStreamChunk::ToolUseStart { id, name });
-                    }
-                    AnthropicContentBlock::Text { .. } => {}
-                }
-            }
-            AnthropicStreamEvent::ContentBlockDelta { delta, .. } => {
-                match delta {
-                    AnthropicDelta::TextDelta { text } => {
-                        chunks.push(LlmStreamChunk::TextDelta(text));
-                    }
-                    AnthropicDelta::InputJsonDelta { partial_json } => {
-                        if let Some(ref mut tool) = self.current_tool {
-                            tool.input_json.push_str(&partial_json);
-                            chunks.push(LlmStreamChunk::ToolUseDelta {
-                                id: tool.id.clone(),
-                                input_json_delta: partial_json,
-                            });
-                        }
                     }
                 }
-            }
+            },
             AnthropicStreamEvent::ContentBlockStop { .. } => {
                 if let Some(tool) = self.current_tool.take() {
                     chunks.push(LlmStreamChunk::ToolUseEnd { id: tool.id });
@@ -166,12 +175,20 @@ impl AnthropicStreamParser {
 }
 
 /// 解析 Anthropic SSE 单行数据
+///
+/// 兼容两种格式：
+/// - 标准 SSE：`data: {...}`（冒号后有空格）
+/// - 非标准 SSE：`data:{...}`（冒号后无空格，部分兼容层使用）
 fn parse_anthropic_sse_line(line: &str) -> Option<AnthropicStreamEvent> {
     let line = line.trim();
-    if !line.starts_with("data: ") {
+    // 兼容 "data: " 和 "data:" 两种格式
+    let json = if let Some(rest) = line.strip_prefix("data: ") {
+        rest
+    } else if let Some(rest) = line.strip_prefix("data:") {
+        rest
+    } else {
         return None;
-    }
-    let json = &line["data: ".len()..];
+    };
     if json == "[DONE]" {
         return None;
     }
@@ -323,7 +340,10 @@ impl AnthropicClient {
             }
 
             // 对可重试状态码进行重试（429, 529, 5xx），但客户端已断开则立即终止
-            if retry::is_retryable_status(status, &[529]) && attempt < self.max_retries && !retry::is_cancelled(cancel) {
+            if retry::is_retryable_status(status, &[529])
+                && attempt < self.max_retries
+                && !retry::is_cancelled(cancel)
+            {
                 let backoff = retry::calculate_backoff(retry_after, attempt);
                 retry::notify_retry(
                     "Anthropic",
@@ -367,8 +387,7 @@ impl AnthropicClient {
             max_tokens: request.max_tokens,
         };
 
-        let mut body = serde_json::to_value(&raw_request)
-            .context("序列化 Anthropic 请求体失败")?;
+        let mut body = serde_json::to_value(&raw_request).context("序列化 Anthropic 请求体失败")?;
         body["stream"] = serde_json::Value::Bool(true);
 
         for attempt in 0..=self.max_retries {
@@ -582,7 +601,9 @@ impl AnthropicClient {
             max_tokens: request.max_tokens,
         };
 
-        let raw_response = self.create_message_raw(&raw_request, retry_notifier, cancel).await?;
+        let raw_response = self
+            .create_message_raw(&raw_request, retry_notifier, cancel)
+            .await?;
 
         // 统一 stop_reason：将 Anthropic 的 "tool_use" 映射为 "tool_calls"
         let stop_reason = match raw_response.stop_reason.as_deref() {
@@ -947,9 +968,7 @@ mod tests {
         assert!(
             matches!(&chunks[2], LlmStreamChunk::ToolUseDelta { id, input_json_delta } if id == "toolu_123" && input_json_delta == r#""Shanghai"}"#)
         );
-        assert!(
-            matches!(&chunks[3], LlmStreamChunk::ToolUseEnd { id } if id == "toolu_123")
-        );
+        assert!(matches!(&chunks[3], LlmStreamChunk::ToolUseEnd { id } if id == "toolu_123"));
         assert!(matches!(&chunks[4], LlmStreamChunk::StopReason(r) if r == "tool_calls"));
         assert!(
             matches!(&chunks[5], LlmStreamChunk::Usage(u) if u.input_tokens == 20 && u.output_tokens == 15)

@@ -20,8 +20,8 @@ use super::retry::{self, CancelFlag, RetryNotifier};
 use super::types::{
     ApiMessage, LlmStreamChunk, ProviderRequest, ProviderResponse, ResponseContentBlock, TokenUsage,
 };
-use futures::stream::{self, BoxStream, StreamExt};
 use crate::AgentResult;
+use futures::stream::{self, BoxStream, StreamExt};
 
 // ── OpenAI 请求/响应类型（用于序列化和反序列化） ──
 
@@ -156,6 +156,9 @@ struct OpenAIStreamDelta {
     content: Option<String>,
     #[serde(default)]
     tool_calls: Option<Vec<OpenAIStreamToolCallDelta>>,
+    /// 思考内容增量（Kimi 等兼容层返回）
+    #[serde(default)]
+    reasoning_content: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Default)]
@@ -244,7 +247,10 @@ impl OpenAIClient {
                         break;
                     }
                     let retry_after = retry::parse_retry_after(&r);
-                    if retry::is_retryable_status(status, &[]) && attempt < self.max_retries && !retry::is_cancelled(cancel) {
+                    if retry::is_retryable_status(status, &[])
+                        && attempt < self.max_retries
+                        && !retry::is_cancelled(cancel)
+                    {
                         let backoff = retry::calculate_backoff(retry_after, attempt);
                         retry::notify_retry(
                             "OpenAI",
@@ -262,7 +268,8 @@ impl OpenAIClient {
                         status: status.as_u16(),
                         body,
                         retry_after,
-                    }.into());
+                    }
+                    .into());
                 }
                 Err(e) => {
                     let is_retryable = e.is_timeout() || e.is_connect();
@@ -300,7 +307,8 @@ impl OpenAIClient {
             // 非 SSE 回退到阻塞解析
             let body_bytes = response.bytes().await.context("读取响应体失败")?;
             let body = String::from_utf8_lossy(&body_bytes);
-            let openai_response: OpenAIResponse = serde_json::from_str(&body).context("解析 OpenAI 响应 JSON 失败")?;
+            let openai_response: OpenAIResponse =
+                serde_json::from_str(&body).context("解析 OpenAI 响应 JSON 失败")?;
             let provider_response = convert_response(openai_response);
 
             let mut chunks = Vec::new();
@@ -312,16 +320,24 @@ impl OpenAIClient {
                         }
                     }
                     ResponseContentBlock::ToolUse { id, name, input } => {
-                        chunks.push(Ok(LlmStreamChunk::ToolUseStart { id: id.clone(), name }));
+                        chunks.push(Ok(LlmStreamChunk::ToolUseStart {
+                            id: id.clone(),
+                            name,
+                        }));
                         let json = input.to_string();
-                        chunks.push(Ok(LlmStreamChunk::ToolUseDelta { id: id.clone(), input_json_delta: json }));
+                        chunks.push(Ok(LlmStreamChunk::ToolUseDelta {
+                            id: id.clone(),
+                            input_json_delta: json,
+                        }));
                         chunks.push(Ok(LlmStreamChunk::ToolUseEnd { id }));
                     }
                     _ => {}
                 }
             }
             if !provider_response.stop_reason.is_empty() {
-                chunks.push(Ok(LlmStreamChunk::StopReason(provider_response.stop_reason)));
+                chunks.push(Ok(LlmStreamChunk::StopReason(
+                    provider_response.stop_reason,
+                )));
             }
             chunks.push(Ok(LlmStreamChunk::Done));
             return Ok(stream::iter(chunks).boxed());
@@ -331,12 +347,29 @@ impl OpenAIClient {
         let bytes_stream = response.bytes_stream();
 
         let stream = futures::stream::unfold(
-            (bytes_stream, String::new(), OpenAIStreamParser::new(), Vec::new()),
-            |(mut bytes_stream, mut buffer, mut parser, mut pending): (_, _, _, Vec<AgentResult<LlmStreamChunk>>)| async move {
+            (
+                bytes_stream,
+                String::new(),
+                OpenAIStreamParser::new(),
+                Vec::new(),
+                false, // finished: 收到 [DONE] 后设为 true，流不再读取更多数据
+            ),
+            |(mut bytes_stream, mut buffer, mut parser, mut pending, mut finished): (
+                _,
+                _,
+                _,
+                Vec<AgentResult<LlmStreamChunk>>,
+                bool,
+            )| async move {
                 loop {
                     if !pending.is_empty() {
                         let chunk = pending.remove(0);
-                        return Some((chunk, (bytes_stream, buffer, parser, pending)));
+                        return Some((chunk, (bytes_stream, buffer, parser, pending, finished)));
+                    }
+
+                    // 如果已经发出 Done，流结束
+                    if finished {
+                        return None;
                     }
 
                     // 尝试从缓冲区提取完整 SSE 事件
@@ -344,12 +377,23 @@ impl OpenAIClient {
                         let event = buffer[..pos].to_string();
                         buffer = buffer[pos + 2..].to_string();
 
+                        let mut got_done = false;
                         for line in event.split('\n') {
-                            if let Some(raw) = parse_openai_sse_line(line) {
-                                if let Some(chunks) = parser.feed_chunk(raw) {
-                                    pending.extend(chunks.into_iter().map(Ok));
+                            match parse_openai_sse_line(line) {
+                                SseLineResult::Chunk(raw) => {
+                                    if let Some(chunks) = parser.feed_chunk(raw) {
+                                        pending.extend(chunks.into_iter().map(Ok));
+                                    }
                                 }
+                                SseLineResult::Done => {
+                                    got_done = true;
+                                }
+                                SseLineResult::Skip => {}
                             }
+                        }
+                        if got_done {
+                            pending.extend(parser.finish().into_iter().map(Ok));
+                            finished = true;
                         }
                         continue;
                     }
@@ -360,20 +404,33 @@ impl OpenAIClient {
                             buffer.push_str(&String::from_utf8_lossy(&bytes));
                         }
                         Some(Err(e)) => {
-                            return Some((Err(anyhow!("SSE 流读取错误: {}", e)), (bytes_stream, buffer, parser, pending)));
+                            return Some((
+                                Err(anyhow!("SSE 流读取错误: {}", e)),
+                                (bytes_stream, buffer, parser, pending, finished),
+                            ));
                         }
                         None => {
                             // 流结束，处理剩余数据
                             if !buffer.is_empty() {
                                 for line in buffer.split('\n') {
-                                    if let Some(raw) = parse_openai_sse_line(line) {
-                                        if let Some(chunks) = parser.feed_chunk(raw) {
-                                            pending.extend(chunks.into_iter().map(Ok));
+                                    match parse_openai_sse_line(line) {
+                                        SseLineResult::Chunk(raw) => {
+                                            if let Some(chunks) = parser.feed_chunk(raw) {
+                                                pending.extend(chunks.into_iter().map(Ok));
+                                            }
                                         }
+                                        SseLineResult::Done => {
+                                            pending.extend(parser.finish().into_iter().map(Ok));
+                                            finished = true;
+                                        }
+                                        SseLineResult::Skip => {}
                                     }
                                 }
                             }
-                            pending.extend(parser.finish().into_iter().map(Ok));
+                            if !finished {
+                                pending.extend(parser.finish().into_iter().map(Ok));
+                                finished = true;
+                            }
                             if pending.is_empty() {
                                 return None;
                             }
@@ -381,7 +438,7 @@ impl OpenAIClient {
                         }
                     }
                 }
-            }
+            },
         );
 
         Ok(stream.boxed())
@@ -519,7 +576,10 @@ impl OpenAIClient {
             }
 
             // 对可重试状态码进行重试（429, 5xx），但客户端已断开则立即终止
-            if retry::is_retryable_status(status, &[]) && attempt < self.max_retries && !retry::is_cancelled(cancel) {
+            if retry::is_retryable_status(status, &[])
+                && attempt < self.max_retries
+                && !retry::is_cancelled(cancel)
+            {
                 let backoff = retry::calculate_backoff(retry_after, attempt);
                 retry::notify_retry(
                     "OpenAI",
@@ -563,7 +623,9 @@ impl OpenAIClient {
             stream_options: None,
         };
 
-        let openai_response = self.call_api(&openai_request, retry_notifier, cancel).await?;
+        let openai_response = self
+            .call_api(&openai_request, retry_notifier, cancel)
+            .await?;
         Ok(convert_response(openai_response))
     }
 }
@@ -596,6 +658,13 @@ impl OpenAIStreamParser {
             if let Some(content) = delta.content {
                 if !content.is_empty() {
                     chunks.push(LlmStreamChunk::TextDelta(content));
+                }
+            }
+
+            // 处理思考内容增量（Kimi 等兼容层返回 reasoning_content）
+            if let Some(reasoning) = delta.reasoning_content {
+                if !reasoning.is_empty() {
+                    chunks.push(LlmStreamChunk::ThinkingDelta(reasoning));
                 }
             }
 
@@ -680,17 +749,41 @@ impl OpenAIStreamParser {
     }
 }
 
+/// SSE 行解析结果
+enum SseLineResult {
+    /// 正常的 JSON 数据块
+    Chunk(OpenAIStreamChunkRaw),
+    /// 流结束标记 `data: [DONE]`
+    Done,
+    /// 空行或非数据行（忽略）
+    Skip,
+}
+
 /// 解析单行 SSE 数据
-fn parse_openai_sse_line(line: &str) -> Option<OpenAIStreamChunkRaw> {
+///
+/// 兼容两种格式：
+/// - 标准 SSE：`data: {...}`（冒号后有空格）
+/// - 非标准 SSE：`data:{...}`（冒号后无空格，Kimi 等兼容层使用）
+fn parse_openai_sse_line(line: &str) -> SseLineResult {
     let line = line.trim();
-    if line.is_empty() || !line.starts_with("data: ") {
-        return None;
+    if line.is_empty() {
+        return SseLineResult::Skip;
     }
-    let payload = &line[6..];
+    // 兼容 "data: " 和 "data:" 两种格式
+    let payload = if let Some(rest) = line.strip_prefix("data: ") {
+        rest
+    } else if let Some(rest) = line.strip_prefix("data:") {
+        rest
+    } else {
+        return SseLineResult::Skip;
+    };
     if payload == "[DONE]" {
-        return None;
+        return SseLineResult::Done;
     }
-    serde_json::from_str(payload).ok()
+    match serde_json::from_str(payload) {
+        Ok(chunk) => SseLineResult::Chunk(chunk),
+        Err(_) => SseLineResult::Skip,
+    }
 }
 
 /// 将内部 ApiMessage 列表转换为 OpenAI 消息列表
@@ -751,8 +844,7 @@ fn convert_messages(system: &str, messages: &[ApiMessage]) -> Vec<OpenAIMessage>
                 });
             }
             "assistant" => {
-                let (text, tool_calls, reasoning_content) =
-                    extract_assistant_parts(&msg.content);
+                let (text, tool_calls, reasoning_content) = extract_assistant_parts(&msg.content);
                 openai_messages.push(OpenAIMessage::Assistant {
                     content: if text.is_empty() { None } else { Some(text) },
                     tool_calls,
