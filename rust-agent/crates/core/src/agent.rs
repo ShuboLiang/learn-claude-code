@@ -137,7 +137,6 @@ impl std::fmt::Debug for AgentApp {
 #[derive(Clone, Copy, Debug)]
 struct AgentRunConfig {
     allow_task: bool,
-    use_todo_reminder: bool,
     /// 是否向客户端发送 SSE 事件（子 agent 静默执行，不输出到 CLI）
     emit_events: bool,
 }
@@ -146,14 +145,12 @@ impl AgentRunConfig {
     fn parent() -> Self {
         Self {
             allow_task: true,
-            use_todo_reminder: true,
             emit_events: true,
         }
     }
     fn child() -> Self {
         Self {
             allow_task: false,
-            use_todo_reminder: true,
             emit_events: false,
         }
     }
@@ -161,7 +158,6 @@ impl AgentRunConfig {
     fn bot_api() -> Self {
         Self {
             allow_task: false,
-            use_todo_reminder: true,
             emit_events: true,
         }
     }
@@ -418,7 +414,6 @@ impl AgentApp {
         if let Some(ext) = &self.tool_extension {
             toolbox = toolbox.with_extension(Arc::clone(ext));
         }
-        let mut rounds_since_todo = 0usize;
         let mut last_micro_compact = Instant::now();
         let mut breaker = ToolCircuitBreaker::new();
         let micro_compact_interval = Duration::from_secs(60 * 60);
@@ -543,6 +538,7 @@ impl AgentApp {
             api_call_count += 1;
 
             let mut current_text = String::new();
+            let mut current_thinking = String::new();
             let mut tool_accumulators: Vec<ToolUseAccumulator> = Vec::new();
             let mut stop_reason = String::new();
             let mut stream_usage = crate::api::types::TokenUsage::default();
@@ -581,6 +577,7 @@ impl AgentApp {
                     }
                     crate::api::types::LlmStreamChunk::ThinkingDelta(thinking) => {
                         // 思考内容不混入 current_text，单独作为 ThinkingDelta 事件发送
+                        current_thinking.push_str(&thinking);
                         if config.emit_events && !thinking.is_empty() {
                             let _ = event_tx.send(AgentEvent::ThinkingDelta(thinking)).await;
                         }
@@ -591,16 +588,6 @@ impl AgentApp {
                             name: name.clone(),
                             input_json: String::new(),
                         });
-                        if config.emit_events {
-                            let _ = event_tx
-                                .send(AgentEvent::ToolCall {
-                                    id: Some(id),
-                                    name,
-                                    input: serde_json::json!({}),
-                                    parallel_index: None,
-                                })
-                                .await;
-                        }
                     }
                     crate::api::types::LlmStreamChunk::ToolUseDelta {
                         id,
@@ -610,23 +597,9 @@ impl AgentApp {
                             tool.input_json.push_str(&input_json_delta);
                         }
                     }
-                    crate::api::types::LlmStreamChunk::ToolUseEnd { id } => {
-                        if config.emit_events {
-                            if let Some(tool) = tool_accumulators.iter().find(|t| t.id == id) {
-                                let input =
-                                    serde_json::from_str(&tool.input_json).unwrap_or_else(|_| {
-                                        serde_json::Value::String(tool.input_json.clone())
-                                    });
-                                let _ = event_tx
-                                    .send(AgentEvent::ToolCall {
-                                        id: Some(tool.id.clone()),
-                                        name: tool.name.clone(),
-                                        input,
-                                        parallel_index: None,
-                                    })
-                                    .await;
-                            }
-                        }
+                    crate::api::types::LlmStreamChunk::ToolUseEnd { .. } => {
+                        // 工具调用参数已收齐，但不在此处发送 ToolCall 事件。
+                        // 实际执行前（toolbox.dispatch 前）会统一发送一次，避免重复显示。
                     }
                     crate::api::types::LlmStreamChunk::StopReason(reason) => {
                         stop_reason = reason;
@@ -642,6 +615,11 @@ impl AgentApp {
             self.token_tracker.record(&self.model, &stream_usage);
 
             let mut assistant_blocks: Vec<crate::api::types::ResponseContentBlock> = Vec::new();
+            if !current_thinking.is_empty() {
+                assistant_blocks.push(crate::api::types::ResponseContentBlock::Thinking {
+                    thinking: current_thinking.clone(),
+                });
+            }
             if !current_text.is_empty() {
                 assistant_blocks.push(crate::api::types::ResponseContentBlock::Text {
                     text: current_text.clone(),
@@ -677,7 +655,6 @@ impl AgentApp {
             }
 
             let mut results = Vec::new();
-            let mut used_todo = false;
             let mut manual_compact = false;
 
             struct ToolCallInfo {
@@ -761,7 +738,6 @@ impl AgentApp {
                     match toolbox.dispatch(&tc.name, &tc.input).await {
                         Ok(dispatch) => {
                             breaker.record_success(&tc.name);
-                            used_todo |= dispatch.used_todo;
                             if config.emit_events {
                                 let _ = event_tx
                                     .send(AgentEvent::ToolResult {
@@ -959,13 +935,6 @@ impl AgentApp {
                         results.push(tool_result_block(tc_id, processed));
                     }
                 }
-            }
-
-            rounds_since_todo = if used_todo { 0 } else { rounds_since_todo + 1 };
-            if config.use_todo_reminder && rounds_since_todo >= 3 {
-                results.push(
-                    json!({ "type": "text", "text": "<reminder>请更新你的待办事项。</reminder>" }),
-                );
             }
 
             ctx.push_user_blocks(results);

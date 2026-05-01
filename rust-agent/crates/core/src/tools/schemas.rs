@@ -7,15 +7,21 @@ use serde_json::{Value, json};
 /// 生成所有工具的 JSON Schema 定义列表
 pub fn tool_schemas(allow_task: bool) -> Vec<Value> {
     let mut tools = vec![
-        json!({
-            "name": "bash",
-            "description": "执行 shell 命令。用于运行已有脚本（如已安装技能的脚本）或直接执行命令。禁止 write_file 写脚本后 bash 执行。多行临时代码片段使用 exec_script；已有独立脚本直接用 bash 从原路径运行。",
-            "input_schema": {
-                "type": "object",
-                "properties": { "command": { "type": "string", "description": "要执行的 shell 命令" } },
-                "required": ["command"]
-            }
-        }),
+        {
+            #[cfg(unix)]
+            let bash_desc = "执行 shell 命令（bash/sh）。用于运行已有脚本或直接执行命令。禁止 write_file 写脚本后 bash 执行。多行临时代码片段使用 exec_script；已有独立脚本直接用 bash 从原路径运行。";
+            #[cfg(windows)]
+            let bash_desc = "执行 shell 命令（Windows 上实际使用 PowerShell）。用于运行已有脚本或直接执行命令。禁止 write_file 写脚本后 bash 执行。多行临时代码片段使用 exec_script；已有独立脚本直接用 bash 从原路径运行。注意：Windows 上请使用 PowerShell 语法，例如 Get-ChildItem 代替 ls，Remove-Item 代替 rm。";
+            json!({
+                "name": "bash",
+                "description": bash_desc,
+                "input_schema": {
+                    "type": "object",
+                    "properties": { "command": { "type": "string", "description": "要执行的 shell 命令" } },
+                    "required": ["command"]
+                }
+            })
+        },
         json!({
             "name": "exec_script",
             "description": "执行凭空生成的临时代码片段（python、node、bash、powershell）。代码写入临时目录运行，执行后自动清理。仅用于 ad-hoc 脚本；已安装技能的现有脚本（已在磁盘上）应用 bash 从原目录运行，不要复制到 exec_script。执行前禁止检查环境，直接运行，失败再报告。",
@@ -85,7 +91,7 @@ pub fn tool_schemas(allow_task: bool) -> Vec<Value> {
         }),
         json!({
             "name": "todo",
-            "description": "更新任务列表。用于规划和跟踪多步骤任务的进度。当任务标记为 'completed' 时，务必在 result_summary 中提供该任务产出的关键结果摘要。",
+            "description": "更新当前会话的任务清单。主动使用此工具来规划和跟踪复杂任务进度。\n\n## 什么时候使用\n- 多步骤任务（3+ 个独立步骤）\n- 非平凡复杂任务（需要仔细规划或多个操作）\n- 用户明确要求创建 todo\n- 用户提供多个任务（编号或逗号分隔）\n- 开始执行某任务前，将其标记为 in_progress（同一时间只能有一个 in_progress）\n- 完成任务后立即标记为 completed，并在 result_summary 中提供关键结果摘要\n\n## 什么时候不使用\n- 单一简单任务（可直接完成，无需跟踪）\n- 纯对话或信息查询\n- 少于 3 个简单步骤的任务\n\n## 任务状态规则\n- pending: 未开始\n- in_progress: 正在进行（同时只能有一个）\n- completed: 已完成（必须提供 result_summary）",
             "input_schema": {
                 "type": "object",
                 "properties": {

@@ -28,8 +28,6 @@ use extension::ToolExtension;
 pub struct ToolDispatchResult {
     /// 工具执行后的文本输出
     pub output: String,
-    /// 本次调用是否是 `todo` 工具（用于 todo 提醒的计数器重置）
-    pub used_todo: bool,
 }
 
 /// Agent 工具箱：管理并提供所有可用的工具（bash、文件读写、todo、技能加载等）
@@ -126,7 +124,6 @@ impl AgentToolbox {
             let output = ext.dispatch(name, input).await?;
             return Ok(ToolDispatchResult {
                 output,
-                used_todo: false,
             });
         }
 
@@ -270,7 +267,6 @@ impl AgentToolbox {
 
         Ok(ToolDispatchResult {
             output,
-            used_todo: name == "todo",
         })
     }
 }
