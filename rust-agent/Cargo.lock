@@ -1881,6 +1881,7 @@ dependencies = [
  "dirs",
  "dotenvy",
  "encoding_rs",
+ "futures",
  "glob",
  "regex",
  "reqwest",
