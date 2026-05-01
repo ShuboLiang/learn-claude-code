@@ -81,7 +81,9 @@ pub struct AppConfig {
 }
 
 fn default_max_tokens() -> u32 {
-    16384
+    // 默认不设限：kimi-k2.6 等长上下文模型支持大输出
+    // 如需限制，可在 config.json 中单独配置 profile.max_tokens
+    100_000
 }
 
 impl AppConfig {
