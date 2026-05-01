@@ -67,6 +67,7 @@ impl AgentExecutor for RustAgentExecutor {
                 match &event {
                     AgentEvent::TextDelta(text) => buffer.push_str(text),
                     AgentEvent::ToolCall {
+                        id: _,
                         name,
                         input,
                         parallel_index,
@@ -81,6 +82,7 @@ impl AgentExecutor for RustAgentExecutor {
                         ));
                     }
                     AgentEvent::ToolResult {
+                        id: _,
                         name,
                         output,
                         parallel_index,
@@ -210,6 +212,7 @@ fn agent_event_to_stream_responses(
             })]
         }
         AgentEvent::ToolCall {
+            id: _,
             name,
             input,
             parallel_index,
@@ -231,6 +234,7 @@ fn agent_event_to_stream_responses(
             })]
         }
         AgentEvent::ToolResult {
+            id: _,
             name,
             output,
             parallel_index,

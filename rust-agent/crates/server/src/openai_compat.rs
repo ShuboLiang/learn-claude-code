@@ -180,12 +180,13 @@ pub async fn chat_completions(
                 final_text.push_str(&text);
             }
             rust_agent_core::agent::AgentEvent::ToolCall {
+                id,
                 name,
                 input,
                 parallel_index: _,
             } => {
                 tool_calls_collected.push(json!({
-                    "id": format!("call_{}", short_id()),
+                    "id": id.unwrap_or_else(|| format!("call_{}", short_id())),
                     "type": "function",
                     "function": {
                         "name": name,

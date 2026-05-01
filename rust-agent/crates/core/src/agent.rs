@@ -29,11 +29,13 @@ use crate::tools::extension::ToolExtension;
 pub enum AgentEvent {
     TextDelta(String),
     ToolCall {
+        id: Option<String>,
         name: String,
         input: serde_json::Value,
         parallel_index: Option<(usize, usize)>,
     },
     ToolResult {
+        id: Option<String>,
         name: String,
         output: String,
         parallel_index: Option<(usize, usize)>,
@@ -616,6 +618,7 @@ impl AgentApp {
                     if config.emit_events {
                         let _ = event_tx
                             .send(AgentEvent::ToolCall {
+                                id: None,
                                 name: tc.name.clone(),
                                 input: tc.input.clone(),
                                 parallel_index: None,
@@ -630,6 +633,7 @@ impl AgentApp {
                     if config.emit_events {
                         let _ = event_tx
                             .send(AgentEvent::ToolResult {
+                                id: None,
                                 name: tc.name.clone(),
                                 output: msg.clone(),
                                 parallel_index: None,
@@ -641,6 +645,7 @@ impl AgentApp {
                     if config.emit_events {
                         let _ = event_tx
                             .send(AgentEvent::ToolCall {
+                                id: None,
                                 name: tc.name.clone(),
                                 input: tc.input.clone(),
                                 parallel_index: None,
@@ -654,6 +659,7 @@ impl AgentApp {
                             if config.emit_events {
                                 let _ = event_tx
                                     .send(AgentEvent::ToolResult {
+                                        id: None,
                                         name: tc.name.clone(),
                                         output: preview_text(&dispatch.output, 200),
                                         parallel_index: None,
@@ -668,10 +674,11 @@ impl AgentApp {
                             if config.emit_events {
                                 let _ = event_tx
                                     .send(AgentEvent::ToolResult {
-                                        name: tc.name.clone(),
-                                        output: msg.clone(),
-                                        parallel_index: None,
-                                    })
+                                        id: None,
+                                name: tc.name.clone(),
+                                output: msg.clone(),
+                                parallel_index: None,
+                            })
                                     .await;
                             }
                             msg
@@ -697,6 +704,7 @@ impl AgentApp {
                     ));
                     let _ = event_tx
                         .send(AgentEvent::ToolCall {
+                            id: None,
                             name: "call_bot".to_owned(),
                             input: tc.input.clone(),
                             parallel_index: None,
@@ -734,6 +742,7 @@ impl AgentApp {
                     };
                     let _ = event_tx
                         .send(AgentEvent::ToolResult {
+                            id: None,
                             name: "call_bot".to_owned(),
                             output: preview_text(&output, 200),
                             parallel_index: if bot_calls.len() > 1 {
@@ -778,6 +787,7 @@ impl AgentApp {
                         ));
                         let _ = event_tx
                             .send(AgentEvent::ToolCall {
+                                id: None,
                                 name: "task".to_owned(),
                                 input: tc.input.clone(),
                                 parallel_index: if is_parallel {
@@ -823,6 +833,7 @@ impl AgentApp {
                     for (idx, (output, _sub_logger)) in sub_results.iter().enumerate() {
                         let _ = event_tx
                             .send(AgentEvent::ToolResult {
+                                id: None,
                                 name: "task".to_owned(),
                                 output: preview_text(output, 200),
                                 parallel_index: if is_parallel {

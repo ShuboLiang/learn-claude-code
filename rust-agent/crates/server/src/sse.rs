@@ -9,22 +9,26 @@ pub fn agent_event_to_sse(event: AgentEvent) -> Event {
             .event("text_delta")
             .data(json!({ "content": content }).to_string()),
         AgentEvent::ToolCall {
+            id,
             name,
             input,
             parallel_index,
         } => {
             let mut data = json!({ "name": name, "input": input });
+            if let Some(id) = id { data["id"] = json!(id); }
             if let Some((idx, total)) = parallel_index {
                 data["parallel_index"] = json!({ "index": idx, "total": total });
             }
             Event::default().event("tool_call").data(data.to_string())
         }
         AgentEvent::ToolResult {
+            id,
             name,
             output,
             parallel_index,
         } => {
             let mut data = json!({ "name": name, "output": output });
+            if let Some(id) = id { data["id"] = json!(id); }
             if let Some((idx, total)) = parallel_index {
                 data["parallel_index"] = json!({ "index": idx, "total": total });
             }
