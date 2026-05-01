@@ -1,10 +1,12 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::{
     Json, Router,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
+    response::sse::KeepAlive,
     routing::{get, post},
 };
 use serde::Deserialize;
@@ -217,7 +219,9 @@ async fn send_message(
         .map(agent_event_to_sse)
         .map(Ok::<_, std::convert::Infallible>);
 
-    axum::response::sse::Sse::new(stream).into_response()
+    axum::response::sse::Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+        .into_response()
 }
 
 /// GET /bots — 列出所有可用的 Bot
@@ -335,5 +339,7 @@ async fn bot_task(
         .map(agent_event_to_sse)
         .map(Ok::<_, std::convert::Infallible>);
 
-    axum::response::sse::Sse::new(stream).into_response()
+    axum::response::sse::Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+        .into_response()
 }
