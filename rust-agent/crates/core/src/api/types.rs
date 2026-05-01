@@ -185,3 +185,38 @@ impl ProviderResponse {
             .join("")
     }
 }
+
+/// LLM 流式响应中的单个数据块
+/// 
+/// Provider 层把上游 SSE 解析为统一的本地方块，Agent 层据此转发事件。
+#[derive(Clone, Debug)]
+pub enum LlmStreamChunk {
+    /// 文本增量（真正的 token delta，不是完整文本）
+    TextDelta(String),
+
+    /// 工具调用开始（收到 tool name 和 id）
+    ToolUseStart {
+        id: String,
+        name: String,
+    },
+
+    /// 工具调用参数增量（JSON 片段）
+    ToolUseDelta {
+        id: String,
+        input_json_delta: String,
+    },
+
+    /// 工具调用结束（参数已完整）
+    ToolUseEnd {
+        id: String,
+    },
+
+    /// 停止原因（用于 Agent 层判断是否需要调用工具）
+    StopReason(String),
+
+    /// Token 用量（通常在流末尾出现）
+    Usage(TokenUsage),
+
+    /// 流正常结束
+    Done,
+}
