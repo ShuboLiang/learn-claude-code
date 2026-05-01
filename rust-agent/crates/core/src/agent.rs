@@ -58,6 +58,14 @@ pub enum AgentEvent {
     },
 }
 
+/// 流式模式下累积 tool_use 参数的临时结构
+#[derive(Default)]
+struct ToolUseAccumulator {
+    id: String,
+    name: String,
+    input_json: String,
+}
+
 const MAX_TOOL_ROUNDS: usize = 30;
 const MAX_PARALLEL_TASKS: usize = 5;
 
@@ -499,19 +507,13 @@ impl AgentApp {
                 }
             });
 
-            let response = match self
+            let stream = match self
                 .client
-                .create_message(&request, Some(&retry_tx), Some(&cancelled))
+                .stream_message(&request, Some(&retry_tx), Some(&cancelled))
                 .await
             {
-                Ok(resp) => {
-                    // API 调用成功，关闭重试通知通道
-                    drop(retry_tx);
-                    self.token_tracker.record(&self.model, &resp.usage);
-                    resp
-                }
+                Ok(s) => s,
                 Err(e) => {
-                    // API 调用失败，关闭重试通知通道
                     drop(retry_tx);
                     let code = if let Some(api_err) = e.downcast_ref::<crate::api::error::LlmApiError>() {
                         if api_err.is_rate_limited() {
@@ -522,7 +524,7 @@ impl AgentApp {
                     } else {
                         "llm_api_error"
                     };
-                    error!("[Agent] create_message 失败！错误: {e:#}");
+                    error!("[Agent] stream_message 失败！错误: {e:#}");
                     if config.emit_events {
                         let _ = event_tx
                             .send(AgentEvent::Error {
@@ -534,28 +536,115 @@ impl AgentApp {
                     return Err(e);
                 }
             };
-            api_call_count += 1;
-            let stop_reason = response.stop_reason.clone();
-            ctx.push(ApiMessage::assistant_blocks(&response.content)?);
 
-            // 即使接下来要调用工具，也要把本轮模型生成的文本发给客户端
-            if config.emit_events {
-                let text = response.final_text();
-                if !text.is_empty() && text != "（本轮未生成可见回复，但已执行相关工具操作）" {
-                    let _ = event_tx.send(AgentEvent::TextDelta(text)).await;
+            api_call_count += 1;
+
+            let mut current_text = String::new();
+            let mut tool_accumulators: Vec<ToolUseAccumulator> = Vec::new();
+            let mut stop_reason = String::new();
+            let mut stream_usage = crate::api::types::TokenUsage::default();
+
+            use futures::StreamExt;
+            let mut stream = stream;
+
+            while let Some(chunk_result) = stream.next().await {
+                if event_tx.is_closed() {
+                    warn!("[Agent] 客户端已断开，终止 stream");
+                    return Ok("客户端已断开连接".to_owned());
+                }
+
+                let chunk = match chunk_result {
+                    Ok(c) => c,
+                    Err(e) => {
+                        error!("[Agent] stream 中断: {e:#}");
+                        if config.emit_events {
+                            let _ = event_tx.send(AgentEvent::Error {
+                                code: "stream_error".to_owned(),
+                                message: format!("流式响应中断: {e:#}"),
+                            }).await;
+                        }
+                        return Err(e);
+                    }
+                };
+
+                match chunk {
+                    crate::api::types::LlmStreamChunk::TextDelta(text) => {
+                        current_text.push_str(&text);
+                        if config.emit_events && !text.is_empty() {
+                            let _ = event_tx.send(AgentEvent::TextDelta(text)).await;
+                        }
+                    }
+                    crate::api::types::LlmStreamChunk::ToolUseStart { id, name } => {
+                        tool_accumulators.push(ToolUseAccumulator {
+                            id: id.clone(),
+                            name: name.clone(),
+                            input_json: String::new(),
+                        });
+                        if config.emit_events {
+                            let _ = event_tx.send(AgentEvent::ToolCall {
+                                id: Some(id),
+                                name,
+                                input: serde_json::json!({}),
+                                parallel_index: None,
+                            }).await;
+                        }
+                    }
+                    crate::api::types::LlmStreamChunk::ToolUseDelta { id, input_json_delta } => {
+                        if let Some(tool) = tool_accumulators.iter_mut().find(|t| t.id == id) {
+                            tool.input_json.push_str(&input_json_delta);
+                        }
+                    }
+                    crate::api::types::LlmStreamChunk::ToolUseEnd { id } => {
+                        if config.emit_events {
+                            if let Some(tool) = tool_accumulators.iter().find(|t| t.id == id) {
+                                let input = serde_json::from_str(&tool.input_json)
+                                    .unwrap_or_else(|_| serde_json::Value::String(tool.input_json.clone()));
+                                let _ = event_tx.send(AgentEvent::ToolCall {
+                                    id: Some(tool.id.clone()),
+                                    name: tool.name.clone(),
+                                    input,
+                                    parallel_index: None,
+                                }).await;
+                            }
+                        }
+                    }
+                    crate::api::types::LlmStreamChunk::StopReason(reason) => {
+                        stop_reason = reason;
+                    }
+                    crate::api::types::LlmStreamChunk::Usage(usage) => {
+                        stream_usage = usage;
+                    }
+                    crate::api::types::LlmStreamChunk::Done => {}
                 }
             }
 
+            drop(retry_tx);
+            self.token_tracker.record(&self.model, &stream_usage);
+
+            let mut assistant_blocks: Vec<crate::api::types::ResponseContentBlock> = Vec::new();
+            if !current_text.is_empty() {
+                assistant_blocks.push(crate::api::types::ResponseContentBlock::Text {
+                    text: current_text.clone(),
+                });
+            }
+            for tool in &tool_accumulators {
+                let input = serde_json::from_str(&tool.input_json)
+                    .unwrap_or_else(|_| serde_json::Value::String(tool.input_json.clone()));
+                assistant_blocks.push(crate::api::types::ResponseContentBlock::ToolUse {
+                    id: tool.id.clone(),
+                    name: tool.name.clone(),
+                    input,
+                });
+            }
+            ctx.push(ApiMessage::assistant_blocks(&assistant_blocks)?);
+
             if stop_reason != "tool_calls" {
-                let text = response.final_text();
-                // 兜底：如果模型未生成可见文本（如仅有 Thinking 或空回复），
-                // 给出默认提示，避免空字符串在调用链中传播导致 CLI 无输出
+                let text = current_text;
                 let text = if text.trim().is_empty() {
                     "（本轮未生成可见回复，但已执行相关工具操作）".to_owned()
                 } else {
                     text
                 };
-                // 将文本响应通过 SSE 通道发送给客户端（子 agent 静默）
                 if config.emit_events {
                     let _ = event_tx
                         .send(AgentEvent::TurnEnd {
@@ -577,18 +666,15 @@ impl AgentApp {
                 input: Value,
             }
 
-            let tool_calls: Vec<ToolCallInfo> = response
-                .content
+            let tool_calls: Vec<ToolCallInfo> = tool_accumulators
                 .iter()
-                .filter_map(|block| {
-                    if let ResponseContentBlock::ToolUse { id, name, input } = block {
-                        Some(ToolCallInfo {
-                            id: id.clone(),
-                            name: name.clone(),
-                            input: input.clone(),
-                        })
-                    } else {
-                        None
+                .map(|tool| {
+                    let input = serde_json::from_str(&tool.input_json)
+                        .unwrap_or_else(|_| Value::String(tool.input_json.clone()));
+                    ToolCallInfo {
+                        id: tool.id.clone(),
+                        name: tool.name.clone(),
+                        input,
                     }
                 })
                 .collect();
