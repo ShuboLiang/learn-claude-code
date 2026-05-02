@@ -4,6 +4,7 @@ pub mod bots;
 pub mod command;
 pub mod context;
 pub mod infra;
+pub mod mcp;
 pub mod skills;
 pub mod tools;
 
@@ -24,5 +25,6 @@ pub use command::{CommandDispatcher, CommandResult, UserCommand};
 pub use context::ContextService;
 pub use infra::todo::TodoManager;
 pub use infra::token_tracker::{TokenSnapshot, TokenTracker};
+pub use mcp::{McpExtension, McpManager, McpServerConfig, McpTransport};
 pub use skills::SkillLoader;
 pub use tools::extension::ToolExtension;

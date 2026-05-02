@@ -78,6 +78,52 @@ pub struct AppConfig {
     /// 支持精确匹配、通配符（*）、正则（regex:前缀）。
     #[serde(default)]
     pub curl_blacklist: Option<Vec<String>>,
+    /// 外部 MCP server 列表（可选）。启动时会并行连接，把工具暴露给 LLM。
+    #[serde(default)]
+    pub mcp_servers: Vec<McpServerConfig>,
+}
+
+/// 单个 MCP server 配置
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct McpServerConfig {
+    /// server 名称，用作工具前缀（mcp__{name}__{tool}）
+    pub name: String,
+    /// 是否启用，默认 true
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// 传输方式，按 type 字段区分
+    #[serde(flatten)]
+    pub transport: McpTransport,
+}
+
+/// MCP 传输协议
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum McpTransport {
+    /// 子进程 + stdio 通信
+    Stdio {
+        command: String,
+        #[serde(default)]
+        args: Vec<String>,
+        #[serde(default)]
+        env: HashMap<String, String>,
+    },
+    /// SSE 长连接（rmcp 1.6 起统一走 streamable http transport）
+    Sse {
+        url: String,
+        #[serde(default)]
+        headers: HashMap<String, String>,
+    },
+    /// Streamable HTTP（MCP 2025 规范）
+    Http {
+        url: String,
+        #[serde(default)]
+        headers: HashMap<String, String>,
+    },
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_max_tokens() -> u32 {

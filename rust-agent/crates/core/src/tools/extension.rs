@@ -2,6 +2,8 @@
 //!
 //! core 只定义通用 trait，具体业务工具由外部 crate 实现并注入。
 
+use std::sync::Arc;
+
 use serde_json::Value;
 
 use crate::AgentResult;
@@ -21,4 +23,38 @@ pub trait ToolExtension: Send + Sync {
 
     /// 执行工具，返回文本输出
     async fn dispatch(&self, name: &str, input: &Value) -> AgentResult<String>;
+}
+
+/// 把两个 ToolExtension 组合：先看 outer，未命中再 fallback 到 inner。
+/// schemas() 会合并两边的工具列表（outer 在前）。
+pub struct ChainedExtension {
+    outer: Arc<dyn ToolExtension>,
+    inner: Arc<dyn ToolExtension>,
+}
+
+impl ChainedExtension {
+    pub fn new(outer: Arc<dyn ToolExtension>, inner: Arc<dyn ToolExtension>) -> Self {
+        Self { outer, inner }
+    }
+}
+
+#[async_trait::async_trait]
+impl ToolExtension for ChainedExtension {
+    fn schemas(&self) -> Vec<Value> {
+        let mut v = self.outer.schemas();
+        v.extend(self.inner.schemas());
+        v
+    }
+
+    fn can_handle(&self, name: &str) -> bool {
+        self.outer.can_handle(name) || self.inner.can_handle(name)
+    }
+
+    async fn dispatch(&self, name: &str, input: &Value) -> AgentResult<String> {
+        if self.outer.can_handle(name) {
+            self.outer.dispatch(name, input).await
+        } else {
+            self.inner.dispatch(name, input).await
+        }
+    }
 }

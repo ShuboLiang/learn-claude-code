@@ -15,7 +15,6 @@ use crate::api::retry::{CancelFlag, RetryNotification};
 use crate::api::types::{ApiMessage, ProviderRequest};
 use crate::bots::BotRegistry;
 use crate::context::ContextService;
-use crate::context::compact;
 use crate::infra::circuit_breaker::ToolCircuitBreaker;
 use crate::infra::logging::ConversationLogger;
 use crate::infra::storage;
@@ -68,7 +67,7 @@ struct ToolUseAccumulator {
     input_json: String,
 }
 
-const MAX_TOOL_ROUNDS: usize = 30;
+const MAX_TOOL_ROUNDS: usize = 100;
 const MAX_PARALLEL_TASKS: usize = 5;
 
 /// Agent 身份信息
@@ -217,7 +216,7 @@ impl AgentApp {
             info!("[Agent] 已加载 {} 个 Bot", bots.len());
         }
 
-        Ok(Self {
+        let mut app = Self {
             client: info.provider,
             workspace_root,
             skills: Arc::new(RwLock::new(skills)),
@@ -228,7 +227,30 @@ impl AgentApp {
             identity,
             token_tracker: crate::infra::token_tracker::TokenTracker::new(),
             bots,
-        })
+        };
+
+        // 启动时连接所有配置的 MCP server，把工具暴露给 LLM
+        app.init_mcp().await;
+
+        Ok(app)
+    }
+
+    /// 从配置加载 MCP server 列表并并行连接。失败仅 warn，不阻塞。
+    /// 已连接的 MCP 工具会通过 ToolExtension 路径自动暴露给 LLM。
+    async fn init_mcp(&mut self) {
+        let mcp_servers = match crate::infra::config::AppConfig::load() {
+            Ok(cfg) => cfg.mcp_servers,
+            Err(_) => return,
+        };
+        if mcp_servers.is_empty() {
+            return;
+        }
+        let manager = crate::mcp::McpManager::connect_all(&mcp_servers).await;
+        let mcp_ext: Arc<dyn ToolExtension> = Arc::new(crate::mcp::McpExtension::new(
+            Arc::new(manager),
+            self.tool_extension.take(),
+        ));
+        self.tool_extension = Some(mcp_ext);
     }
 
     /// 获取 LLM Provider 的引用（供 /compact 等命令使用）
@@ -246,9 +268,15 @@ impl AgentApp {
         &self.workspace_root
     }
 
-    /// 注入外部工具扩展
+    /// 注入外部工具扩展。如果已有扩展（例如 from_env 自动连接的 MCP），
+    /// 则把传入的 ext 与已有扩展链式组合（新传入的优先，未命中再回退）。
     pub fn with_extension(mut self, ext: Arc<dyn ToolExtension>) -> Self {
-        self.tool_extension = Some(ext);
+        self.tool_extension = match self.tool_extension.take() {
+            None => Some(ext),
+            Some(existing) => Some(Arc::new(crate::tools::extension::ChainedExtension::new(
+                ext, existing,
+            ))),
+        };
         self
     }
 
@@ -432,26 +460,13 @@ impl AgentApp {
                 ctx.micro_compact();
                 last_micro_compact = Instant::now();
             }
-            if ctx.estimate_tokens() > compact::TOKEN_THRESHOLD {
-                info!("[auto_compact 已触发]");
-                match ctx
-                    .auto_compact(&self.client, &self.model, &self.workspace_root)
-                    .await
-                {
-                    Ok(new_messages) => ctx.replace(new_messages),
-                    Err(e) => {
-                        error!("[auto_compact 失败: {e:#}]");
-                        if config.emit_events {
-                            let _ = event_tx
-                                .send(AgentEvent::Error {
-                                    code: "compact_failed".to_owned(),
-                                    message: format!("自动压缩失败: {e:#}"),
-                                })
-                                .await;
-                        }
-                    }
-                }
-            }
+            // NOTE: auto_compact 已禁用。它会把多轮对话历史替换成单条摘要消息，
+            // 导致模型"失忆"、丢失工具调用上下文，任务走到一半就停了。
+            // 如需处理超长上下文，应改用更精细的滑动窗口或分片策略。
+            // if ctx.estimate_tokens() > compact::TOKEN_THRESHOLD {
+            //     info!("[auto_compact 已触发]");
+            //     ...
+            // }
 
             let tools = toolbox.tool_schemas(config.allow_task);
             let request = ProviderRequest {
@@ -637,7 +652,18 @@ impl AgentApp {
             ctx.push(ApiMessage::assistant_blocks(&assistant_blocks)?);
 
             if stop_reason != "tool_calls" {
-                let text = current_text;
+                let mut text = current_text;
+                // 检测因达到 max_tokens 而被截断的情况
+                if stop_reason == "length" || stop_reason == "max_tokens" {
+                    text.push_str("\n\n⚠️ 回复因达到 token 上限而被截断。如需继续，请简化输入或开启新的对话。");
+                    if config.emit_events {
+                        let _ = event_tx
+                            .send(AgentEvent::TextDelta(
+                                "\n\n⚠️ 回复因达到 token 上限而被截断。如需继续，请简化输入或开启新的对话。".to_owned(),
+                            ))
+                            .await;
+                    }
+                }
                 let text = if text.trim().is_empty() {
                     "（本轮未生成可见回复，但已执行相关工具操作）".to_owned()
                 } else {

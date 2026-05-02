@@ -22,3 +22,5 @@ termimad = "0.34"
 tracing = "0.1"
 async-trait = "0.1"
 futures = "0.3"
+rmcp = { version = "1.6", features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
+http = "1.4.0"
