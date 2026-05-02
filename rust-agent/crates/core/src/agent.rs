@@ -651,6 +651,14 @@ impl AgentApp {
             }
             ctx.push(ApiMessage::assistant_blocks(&assistant_blocks)?);
 
+            // 记录每轮模型输出（thinking + text），便于死循环 / 异常行为回溯
+            if !current_thinking.is_empty() {
+                logger.log(&format!("=== 思考 ===\n{current_thinking}"));
+            }
+            if !current_text.is_empty() {
+                logger.log(&format!("=== 助手 (中间轮) ===\n{current_text}"));
+            }
+
             if stop_reason != "tool_calls" {
                 let mut text = current_text;
                 // 检测因达到 max_tokens 而被截断的情况
@@ -739,6 +747,24 @@ impl AgentApp {
                     // 工具已熔断，直接返回提示信息，不执行
                     let count = breaker.failure_count(&tc.name);
                     let msg = ToolCircuitBreaker::blocked_message(&tc.name, count);
+                    if config.emit_events {
+                        let _ = event_tx
+                            .send(AgentEvent::ToolResult {
+                                id: None,
+                                name: tc.name.clone(),
+                                output: msg.clone(),
+                                parallel_index: None,
+                            })
+                            .await;
+                    }
+                    msg
+                } else if let Some(count) = breaker.record_input(&tc.name, &tc.input) {
+                    // 重复熔断：相同（归一化后）输入在最近窗口内重复 ≥ 阈值次数
+                    let msg = ToolCircuitBreaker::repeat_blocked_message(&tc.name, count);
+                    warn!(
+                        "[Agent] 工具 {} 输入重复 {} 次，触发重复熔断",
+                        tc.name, count
+                    );
                     if config.emit_events {
                         let _ = event_tx
                             .send(AgentEvent::ToolResult {
