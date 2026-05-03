@@ -55,9 +55,9 @@ impl super::AgentToolbox {
         let mut cmd = build_command(language, &temp_file)?;
 
         // 3. 执行（使用通用 shell 执行逻辑：超时、解码、截断）
-        // 但 run_shell_command 默认 120s 超时，这里允许自定义
-        let effective_timeout = timeout_secs.unwrap_or(120);
-        let output = if effective_timeout == 120 {
+        // 但 run_shell_command 默认 30s 超时，这里允许自定义
+        let effective_timeout = timeout_secs.unwrap_or(30);
+        let output = if effective_timeout == 30 {
             run_shell_command(cmd, &self.workspace_root).await
         } else {
             // 自定义超时时，手动管理 timeout

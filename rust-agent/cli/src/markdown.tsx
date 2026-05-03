@@ -1,12 +1,11 @@
-import React, { useMemo } from 'react';
-import { Box, Text } from 'ink';
-import { marked } from 'marked';
+import React, { useMemo } from "react";
+import { Box, Text } from "ink";
+import { marked } from "marked";
 // marked-terminal v7 导出 markedTerminal 函数
-// @ts-expect-error marked-terminal v7 的类型定义与 @types/marked-terminal v6 不匹配
-import { markedTerminal } from 'marked-terminal';
+import { markedTerminal } from "marked-terminal";
 
 // 使用 marked.use() 注册 marked-terminal 渲染扩展
-marked.use(markedTerminal());
+marked.use(markedTerminal() as any);
 
 interface MarkdownProps {
   content: string;

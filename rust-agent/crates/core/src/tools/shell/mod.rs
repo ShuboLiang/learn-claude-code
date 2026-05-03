@@ -28,10 +28,10 @@ pub async fn run_shell_command(mut cmd: Command, cwd: &Path) -> AgentResult<Stri
     cmd.current_dir(cwd)
         .env("PYTHONIOENCODING", "utf-8");
 
-    let output = timeout(Duration::from_secs(120), cmd.output()).await;
+    let output = timeout(Duration::from_secs(30), cmd.output()).await;
     let output = match output {
         Ok(result) => result.context("Failed to execute shell command")?,
-        Err(_) => return Err(anyhow::anyhow!("命令执行超时（120秒）")),
+        Err(_) => return Err(anyhow::anyhow!("命令执行超时（30秒）")),
     };
 
     let mut combined = String::new();
