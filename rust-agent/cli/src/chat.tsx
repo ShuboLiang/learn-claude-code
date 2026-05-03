@@ -135,10 +135,10 @@ export default function Chat({
         </Box>
       )}
 
-      {/* 正在生成的回复（实时流式显示） */}
+      {/* 正在生成的回复（实时流式显示，纯文本避免 Markdown 重解析闪烁） */}
       {currentReply && (
         <Box flexDirection="column">
-          <Markdown content={currentReply} />
+          <Text>{currentReply}</Text>
         </Box>
       )}
 
