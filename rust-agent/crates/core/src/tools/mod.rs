@@ -157,8 +157,9 @@ impl AgentToolbox {
             }
             "read_file" => {
                 let path = required_string(input, "path")?;
+                let offset = optional_u64(input, "offset")?.map(|value| value as usize);
                 let limit = optional_u64(input, "limit")?.map(|value| value as usize);
-                self.read_file(path, limit)?
+                self.read_file(path, offset, limit)?
             }
             "write_file" => self.write_file(
                 required_string(input, "path")?,

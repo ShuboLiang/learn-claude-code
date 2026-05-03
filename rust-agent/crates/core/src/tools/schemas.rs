@@ -58,7 +58,8 @@ pub fn tool_schemas(allow_task: bool) -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "path": { "type": "string", "description": "文件路径" },
-                    "limit": { "type": "integer", "description": "读取行数限制" }
+                    "offset": { "type": "integer", "description": "跳过的行数（从1开始计数，可选）" },
+                    "limit": { "type": "integer", "description": "读取行数限制（可选）" }
                 },
                 "required": ["path"]
             }

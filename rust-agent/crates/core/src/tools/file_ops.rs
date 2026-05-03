@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use anyhow::Context;
 
 use crate::AgentResult;
@@ -101,20 +103,71 @@ fn generate_unified_diff(old: &str, new: &str, filename: &str) -> String {
     diff
 }
 
+/// 计算两个字符串的 Levenshtein 编辑距离（用于模糊匹配诊断）
+fn levenshtein_distance(a: &str, b: &str) -> usize {
+    let a_chars: Vec<char> = a.chars().collect();
+    let b_chars: Vec<char> = b.chars().collect();
+    let m = a_chars.len();
+    let n = b_chars.len();
+
+    if m == 0 {
+        return n;
+    }
+    if n == 0 {
+        return m;
+    }
+
+    let mut prev = vec![0; n + 1];
+    let mut curr = vec![0; n + 1];
+
+    for j in 0..=n {
+        prev[j] = j;
+    }
+
+    for i in 1..=m {
+        curr[0] = i;
+        for j in 1..=n {
+            let cost = if a_chars[i - 1] == b_chars[j - 1] { 0 } else { 1 };
+            curr[j] = (curr[j - 1] + 1)
+                .min(prev[j] + 1)
+                .min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+
+    prev[n]
+}
+
 impl super::AgentToolbox {
     /// 读取指定文件的内容
     ///
     /// 路径会通过 `resolve_workspace_path` 安全校验。
-    /// 可选 `limit` 限制读取行数，超出部分会截断并显示剩余行数。
-    pub(crate) fn read_file(&self, path: &str, limit: Option<usize>) -> AgentResult<String> {
+    /// 可选 `offset` 跳过的行数（从 1 开始计数），可选 `limit` 限制读取行数，
+    /// 超出部分会截断并显示剩余行数。
+    pub(crate) fn read_file(
+        &self,
+        path: &str,
+        offset: Option<usize>,
+        limit: Option<usize>,
+    ) -> AgentResult<String> {
         let resolved = resolve_workspace_path(&self.workspace_root, path)?;
         let content = std::fs::read_to_string(&resolved)
             .with_context(|| format!("Failed to read {}", resolved.display()))?;
-        let mut lines = content.lines().map(str::to_owned).collect::<Vec<_>>();
+        let all_lines = content.lines().map(str::to_owned).collect::<Vec<_>>();
+
+        let skip = offset.unwrap_or(0).saturating_sub(1); // offset 从 1 开始
+        let total = all_lines.len();
+        let mut lines: Vec<String> = all_lines.into_iter().skip(skip).collect();
+
+        if lines.is_empty() && skip >= total && total > 0 {
+            return Ok(format!("... (文件共 {total} 行，offset 已超出范围)"));
+        }
+
+        let remaining_after_skip = total.saturating_sub(skip);
         if let Some(limit) = limit
             && limit < lines.len()
         {
-            let remaining = lines.len() - limit;
+            let remaining = remaining_after_skip - limit;
             lines.truncate(limit);
             lines.push(format!("... ({remaining} more lines)"));
         }
@@ -140,6 +193,9 @@ impl super::AgentToolbox {
     /// 使用二进制读写保留原始行尾（CRLF/LF），与 Python file_edit_tool.py 行为一致。
     /// `replace_all` 为 true 时替换所有匹配项，否则只替换首次出现。
     /// 如果 old_string 出现多次且 replace_all 为 false，返回错误要求消歧。
+    ///
+    /// **容错机制**：如果精确匹配失败，会自动尝试去除 old_string 首尾多余的
+    /// 换行符或空白字符后再匹配（LLM 复制代码时常犯此错误）。
     pub(crate) fn edit_file(
         &self,
         file_path: &str,
@@ -165,11 +221,16 @@ impl super::AgentToolbox {
         let content = String::from_utf8(raw_bytes)
             .with_context(|| format!("文件不是有效的 UTF-8：{}", resolved.display()))?;
 
-        // 检查 old_string 是否存在于文件中
-        let count = content.matches(old_string).count();
-        if count == 0 {
-            return Ok(format!("错误：在 {} 中未找到 old_string", file_path));
-        }
+        // 尝试精确匹配，失败时自动容错（处理首尾多余空白/换行）
+        let (effective_old, count, was_fuzzy) = match Self::resolve_old_string(old_string, &content) {
+            Ok(v) => v,
+            Err(diagnostic) => {
+                return Ok(format!(
+                    "错误：在 {} 中未找到 old_string。{}",
+                    file_path, diagnostic
+                ));
+            }
+        };
 
         // 重复检测：多次出现但未指定 replace_all 时报错要求消歧
         if count > 1 && !replace_all {
@@ -179,11 +240,31 @@ impl super::AgentToolbox {
             ));
         }
 
+        // 如果 old_string 与 effective_old 的差异仅在于换行符（\r\n vs \n），
+        // 则同步转换 new_string，避免把 LF 插入到 CRLF 文件中破坏行尾一致性
+        let new_string_normalized = {
+            let old_norm = old_string.replace("\r\n", "\n");
+            let eff_norm = effective_old.replace("\r\n", "\n");
+            if old_norm == eff_norm && old_string != effective_old.as_ref() {
+                if !old_string.contains("\r\n") && !new_string.contains("\r\n") {
+                    // old_string 和 new_string 都是 LF，但文件是 CRLF
+                    Cow::Owned(new_string.replace('\n', "\r\n"))
+                } else if old_string.contains("\r\n") && new_string.contains("\r\n") {
+                    // old_string 和 new_string 都是 CRLF，但文件是 LF
+                    Cow::Owned(new_string.replace("\r\n", "\n"))
+                } else {
+                    Cow::Borrowed(new_string)
+                }
+            } else {
+                Cow::Borrowed(new_string)
+            }
+        };
+
         // 执行替换
         let updated = if replace_all {
-            content.replace(old_string, new_string)
+            content.replace(effective_old.as_ref(), new_string_normalized.as_ref())
         } else {
-            content.replacen(old_string, new_string, 1)
+            content.replacen(effective_old.as_ref(), new_string_normalized.as_ref(), 1)
         };
 
         // 二进制写回保留原始行尾
@@ -192,13 +273,123 @@ impl super::AgentToolbox {
 
         // 生成 unified diff
         let diff = generate_unified_diff(&content, &updated, file_path);
-        let result = if diff.is_empty() {
+        let mut result = if diff.is_empty() {
             "文件已更新（无可视差异）".to_string()
         } else {
             diff
         };
 
+        if was_fuzzy {
+            result.push_str("\n[提示] old_string 与文件中的文本不完全一致，已自动忽略首尾空白/换行差异完成替换。建议下次使用 read_file 获取的精确文本。");
+        }
+
         Ok(truncate_text(&result, 50_000))
+    }
+
+    /// 解析 old_string，支持精确匹配和模糊容错匹配。
+    ///
+    /// 返回值：`(effective_old, match_count, was_fuzzy)`
+    fn resolve_old_string<'a>(
+        old_string: &'a str,
+        content: &'a str,
+    ) -> Result<(Cow<'a, str>, usize, bool), String> {
+        // 1. 精确匹配
+        let count = content.matches(old_string).count();
+        if count > 0 {
+            return Ok((Cow::Borrowed(old_string), count, false));
+        }
+
+        // 2. 精确匹配失败，尝试常见的 LLM 复制错误变体
+        let mut alternatives: Vec<Cow<'a, str>> = vec![];
+
+        // 先处理 read_file/edit_file 之间的换行符差异（更精确）：
+        // read_file 统一返回 LF，但 edit_file 二进制读取保留原始 CRLF
+        if !old_string.contains("\r\n") && content.contains("\r\n") {
+            alternatives.push(Cow::Owned(old_string.replace('\n', "\r\n")));
+        } else if old_string.contains("\r\n") && !content.contains("\r\n") {
+            alternatives.push(Cow::Owned(old_string.replace("\r\n", "\n")));
+        }
+
+        alternatives.push(Cow::Borrowed(
+            old_string.trim_start_matches('\n').trim_end_matches('\n'),
+        ));
+        alternatives.push(Cow::Borrowed(old_string.trim_start().trim_end()));
+
+        let mut best: Option<(Cow<'a, str>, usize)> = None;
+
+        for alt in alternatives {
+            if alt.is_empty() || alt == old_string {
+                continue;
+            }
+            let alt_count = content.matches(alt.as_ref()).count();
+            if alt_count == 0 {
+                continue;
+            }
+            // 优先选择匹配次数少的（最好是唯一匹配）
+            best = match best {
+                None => Some((alt, alt_count)),
+                Some((_, existing)) if alt_count < existing => Some((alt, alt_count)),
+                other => other,
+            };
+            if alt_count == 1 {
+                break; // 唯一匹配是最优解
+            }
+        }
+
+        if let Some((alt, alt_count)) = best {
+            return Ok((alt, alt_count, true));
+        }
+
+        // 3. 全部失败，生成诊断信息
+        Err(Self::diagnose_old_string_not_found(content, old_string))
+    }
+
+    /// 当 old_string 完全找不到时，生成诊断提示，帮助定位问题
+    fn diagnose_old_string_not_found(content: &str, old_string: &str) -> String {
+        let old_lines: Vec<&str> = old_string.lines().filter(|l| !l.trim().is_empty()).collect();
+        if old_lines.is_empty() {
+            return "old_string 为空或只包含空白字符，请提供有效的替换文本。".to_string();
+        }
+
+        let first_line = old_lines[0];
+        let content_lines: Vec<&str> = content.lines().collect();
+
+        // 在文件中搜索最相似的行
+        let mut best_idx = 0;
+        let mut best_score = usize::MAX;
+
+        for (idx, line) in content_lines.iter().enumerate() {
+            let dist = levenshtein_distance(first_line, line);
+            // 完全包含时给更强信号
+            let score = if line.contains(first_line) || first_line.contains(line) {
+                dist / 2
+            } else {
+                dist
+            };
+            if score < best_score {
+                best_score = score;
+                best_idx = idx;
+            }
+        }
+
+        if best_score <= 10 {
+            // 足够相似，给出具体提示
+            let mut ctx = String::new();
+            let start = best_idx.saturating_sub(2);
+            let end = (best_idx + 3).min(content_lines.len());
+            for i in start..end {
+                let marker = if i == best_idx { ">>> " } else { "    " };
+                ctx.push_str(&format!("{}{}\n", marker, content_lines[i]));
+            }
+            format!(
+                "文件中第 {} 行附近找到最相似的内容，请核对你的 old_string 是否与文件实际内容一致（注意空格、制表符、换行符）：\n```\n{}```",
+                best_idx + 1,
+                ctx
+            )
+        } else {
+            // 差距太大，给出通用建议
+            "请使用 read_file 工具重新确认文件当前内容，检查 old_string 是否存在拼写错误、多余空格或换行符差异。".to_string()
+        }
     }
 }
 
@@ -351,5 +542,61 @@ mod tests {
         // 应包含上下文行（以空格开头）
         assert!(result.contains(" C\n"), "应包含上下文行C：\n{result}");
         assert!(result.contains(" E\n"), "应包含上下文行E：\n{result}");
+    }
+
+    // ── 容错匹配测试 ──
+
+    #[test]
+    fn edit_file_自动去除old_string首尾换行符() {
+        let (tb, _tmp) = test_toolbox();
+        write_test_file(&tb, "test.txt", "hello world\n");
+        // old_string 首尾多了换行符，但文件中没有
+        let result = tb.edit_file("test.txt", "\nhello\n", "hi", false).unwrap();
+        assert!(result.contains("-hello"), "diff应包含删除行：\n{result}");
+        assert!(result.contains("+hi"), "diff应包含新增行：\n{result}");
+        assert!(result.contains("[提示]"), "应提示使用了模糊匹配：\n{result}");
+        assert_eq!(read_test_file(&tb, "test.txt"), "hi world\n");
+    }
+
+    #[test]
+    fn edit_file_自动去除old_string首尾空白() {
+        let (tb, _tmp) = test_toolbox();
+        write_test_file(&tb, "test.txt", "hello world\n");
+        // old_string 首尾多了空格
+        let result = tb.edit_file("test.txt", "  hello  ", "hi", false).unwrap();
+        assert!(result.contains("-hello"), "diff应包含删除行：\n{result}");
+        assert!(result.contains("+hi"), "diff应包含新增行：\n{result}");
+        assert!(result.contains("[提示]"), "应提示使用了模糊匹配：\n{result}");
+        assert_eq!(read_test_file(&tb, "test.txt"), "hi world\n");
+    }
+
+    #[test]
+    fn edit_file_自动处理old_string与文件换行符差异() {
+        let (tb, _tmp) = test_toolbox();
+        // 文件使用 CRLF，但 old_string 使用 LF（模拟从 read_file 复制的内容）
+        let content = "line1\r\nline2\r\nline3\r\n";
+        write_test_file(&tb, "crlf.txt", content);
+        let result = tb.edit_file("crlf.txt", "line2\n", "LINE2\n", false).unwrap();
+        assert!(result.contains("-line2"), "diff应包含删除行：\n{result}");
+        assert!(result.contains("+LINE2"), "diff应包含新增行：\n{result}");
+        assert!(result.contains("[提示]"), "应提示使用了模糊匹配：\n{result}");
+        // 写入后仍应保留原始 CRLF
+        let path = tb.workspace_root.join("crlf.txt");
+        let actual = String::from_utf8(std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(actual, "line1\r\nLINE2\r\nline3\r\n", "应保留CRLF行尾");
+    }
+
+    #[test]
+    fn edit_file_找不到时给出诊断信息() {
+        let (tb, _tmp) = test_toolbox();
+        write_test_file(&tb, "test.txt", "foo bar baz\n");
+        let result = tb.edit_file("test.txt", "qux", "xxx", false).unwrap();
+        assert!(result.contains("未找到 old_string"), "应提示未找到：\n{result}");
+        // 诊断信息应包含相似内容提示（因为 "qux" 和文件中内容差距较大，
+        // 但至少应给出通用建议）
+        assert!(
+            result.contains("请使用 read_file") || result.contains("请核对你的 old_string"),
+            "应给出诊断建议：\n{result}"
+        );
     }
 }
