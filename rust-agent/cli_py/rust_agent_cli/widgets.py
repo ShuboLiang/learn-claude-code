@@ -128,6 +128,33 @@ class MessageSystem(Static):
         super().__init__(content, markup=False)
 
 
+class MessageBanner(Static):
+    DEFAULT_CSS = """
+    MessageBanner {
+        color: $accent;
+        text-style: bold;
+        padding: 1 2;
+        margin: 0 0 1 0;
+    }
+    """
+
+    def __init__(self, *, version: str, port: int, bot_count: int) -> None:
+        logo = (
+            "╭────────────────────────────────────────────────────────╮\n"
+            "│                                                        │\n"
+            "│   🦀  R U S T   A G E N T   C L I                      │\n"
+            "│                                                        │\n"
+            "│   交互式终端客户端  ·  Powered by Textual              │\n"
+            "│                                                        │\n"
+            "╰────────────────────────────────────────────────────────╯"
+        )
+        meta = (
+            f"  v{version}  ·  port {port}  ·  {bot_count} bots ready\n"
+            f"  /help · /bots · /sessions · /theme · /m · Esc 中断 · Ctrl+C 退出"
+        )
+        super().__init__(f"{logo}\n{meta}", markup=False)
+
+
 class ChatLog(VerticalScroll):
     DEFAULT_CSS = """
     ChatLog {

@@ -1,10 +1,12 @@
 """Textual App — 主应用 + 事件路由."""
 
 import asyncio
+import json
 from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.reactive import reactive
+from textual.theme import Theme
 from textual.widgets import Static
 from textual import work
 import re
@@ -20,8 +22,96 @@ from rust_agent_cli.widgets import (
     MessageToolCall,
     MessageToolResult,
     MessageBotCall,
+    MessageBanner,
     MessageSystem,
 )
+
+
+def _get_version() -> str:
+    try:
+        from importlib.metadata import version
+        return version("rust-agent-cli")
+    except Exception:
+        return "0.1.0"
+
+
+CUSTOM_THEMES = [
+    Theme(
+        name="cyberpunk",
+        primary="#FF00FF",
+        secondary="#00FFFF",
+        accent="#FFD300",
+        foreground="#E0E0FF",
+        background="#0A001A",
+        success="#00FF88",
+        warning="#FFAA00",
+        error="#FF0044",
+        surface="#1A0033",
+        panel="#2A0044",
+        dark=True,
+    ),
+    Theme(
+        name="terminal-green",
+        primary="#00FF66",
+        secondary="#00CC55",
+        accent="#88FF88",
+        foreground="#00FF66",
+        background="#000000",
+        success="#00FF00",
+        warning="#FFFF00",
+        error="#FF3333",
+        surface="#001100",
+        panel="#002200",
+        dark=True,
+    ),
+    Theme(
+        name="dracula",
+        primary="#BD93F9",
+        secondary="#FF79C6",
+        accent="#8BE9FD",
+        foreground="#F8F8F2",
+        background="#282A36",
+        success="#50FA7B",
+        warning="#F1FA8C",
+        error="#FF5555",
+        surface="#44475A",
+        panel="#6272A4",
+        dark=True,
+    ),
+    Theme(
+        name="solarized-light",
+        primary="#268BD2",
+        secondary="#2AA198",
+        accent="#D33682",
+        foreground="#586E75",
+        background="#FDF6E3",
+        success="#859900",
+        warning="#B58900",
+        error="#DC322F",
+        surface="#EEE8D5",
+        panel="#93A1A1",
+        dark=False,
+    ),
+]
+
+
+CONFIG_DIR = Path.home() / ".rust-agent-cli"
+CONFIG_PATH = CONFIG_DIR / "config.json"
+
+
+def _load_config() -> dict:
+    try:
+        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _save_config(data: dict) -> None:
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        CONFIG_PATH.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
 
 
 class RustAgentApp(App):
@@ -50,11 +140,22 @@ class RustAgentApp(App):
         yield Static(id="error-bar")
 
     async def on_mount(self) -> None:
+        for theme in CUSTOM_THEMES:
+            self.register_theme(theme)
+        saved = _load_config().get("theme")
+        if saved and saved in self.available_themes:
+            self.theme = saved
         api.init(f"http://127.0.0.1:{self.server_port}", "")
         try:
             self.bots = await api.fetch_bots()
         except Exception:
             self.bots = []
+        chat = self.query_one("#chat-log", ChatLog)
+        chat.add_message(MessageBanner(
+            version=_get_version(),
+            port=self.server_port,
+            bot_count=len(self.bots),
+        ))
         self.query_one("#input", CommandInput).focus()
 
     async def on_unmount(self) -> None:
@@ -138,6 +239,15 @@ class RustAgentApp(App):
         if lower.startswith("/load "):
             await self._do_load(text[6:].strip())
             return
+        if lower in ("/help", "/?"):
+            self._do_help()
+            return
+        if lower in ("/theme", "/themes"):
+            self._do_theme("")
+            return
+        if lower.startswith("/theme "):
+            self._do_theme(text[7:].strip())
+            return
 
         inp.add_history(text)
         # 支持 \n 转义为真实换行
@@ -194,6 +304,51 @@ class RustAgentApp(App):
             desc = f": {b.description}" if b.description else ""
             lines.append(f"  @{b.name}{nick} - {b.role}{desc}")
         chat.add_message(MessageSystem(f"可用 Subagent:\n{'\n'.join(lines)}\n\n使用 /@@botname 任务描述 来委派任务"))
+
+    def _do_help(self) -> None:
+        chat = self.query_one("#chat-log", ChatLog)
+        lines = [
+            "可用命令：",
+            "  /help               显示此帮助",
+            "  /clear              清除当前会话",
+            "  /m, /multiline      进入多行输入模式（/send 提交，/cancel 取消）",
+            "  /bots               列出可用 subagent",
+            "  /sessions           查看历史会话",
+            "  /load <序号|uuid>   恢复历史会话",
+            "  /theme              列出可用主题",
+            "  /theme <name>       切换主题",
+            "  /@bot 任务          通过当前会话调用 bot",
+            "  /@@bot 任务         直接委派任务给 bot（脱离主会话）",
+            "  q / quit / /exit    退出",
+            "",
+            "快捷键：",
+            "  Enter               提交",
+            "  Esc                 中断流式输出 / 退出多行 / 清空输入",
+            "  ↑ / ↓               历史输入导航",
+        ]
+        chat.add_message(MessageSystem("\n".join(lines)))
+
+    def _do_theme(self, arg: str) -> None:
+        chat = self.query_one("#chat-log", ChatLog)
+        if not arg:
+            current = self.theme
+            names = sorted(self.available_themes.keys())
+            lines = ["可用主题（✓ 表示当前激活）："]
+            for n in names:
+                mark = " ✓" if n == current else "  "
+                lines.append(f" {mark} {n}")
+            lines.append("")
+            lines.append("使用 /theme <name> 切换")
+            chat.add_message(MessageSystem("\n".join(lines)))
+            return
+        if arg not in self.available_themes:
+            chat.add_message(MessageSystem(f"主题 '{arg}' 不存在。输入 /theme 查看可用主题。"))
+            return
+        self.theme = arg
+        cfg = _load_config()
+        cfg["theme"] = arg
+        _save_config(cfg)
+        chat.add_message(MessageSystem(f"已切换主题: {arg}（已保存）"))
 
     async def _do_sessions(self) -> None:
         chat = self.query_one("#chat-log", ChatLog)
