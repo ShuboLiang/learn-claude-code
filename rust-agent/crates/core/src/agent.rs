@@ -15,9 +15,8 @@ use crate::api::retry::{CancelFlag, RetryNotification};
 use crate::api::types::{ApiMessage, ProviderRequest};
 use crate::bots::BotRegistry;
 use crate::context::ContextService;
-use crate::infra::circuit_breaker::ToolCircuitBreaker;
+
 use crate::infra::logging::ConversationLogger;
-use crate::infra::storage;
 use crate::infra::utils::preview_text;
 use crate::skills::SkillLoader;
 use crate::skills::hub as skillhub;
@@ -443,7 +442,6 @@ impl AgentApp {
             toolbox = toolbox.with_extension(Arc::clone(ext));
         }
         let mut last_micro_compact = Instant::now();
-        let mut breaker = ToolCircuitBreaker::new();
         let micro_compact_interval = Duration::from_secs(60 * 60);
 
         let mut api_call_count: usize = 0;
@@ -743,39 +741,6 @@ impl AgentApp {
                             .await;
                     }
                     "正在压缩...".to_owned()
-                } else if breaker.is_open(&tc.name) {
-                    // 工具已熔断，直接返回提示信息，不执行
-                    let count = breaker.failure_count(&tc.name);
-                    let msg = ToolCircuitBreaker::blocked_message(&tc.name, count);
-                    if config.emit_events {
-                        let _ = event_tx
-                            .send(AgentEvent::ToolResult {
-                                id: None,
-                                name: tc.name.clone(),
-                                output: msg.clone(),
-                                parallel_index: None,
-                            })
-                            .await;
-                    }
-                    msg
-                } else if let Some(count) = breaker.record_input(&tc.name, &tc.input) {
-                    // 重复熔断：相同（归一化后）输入在最近窗口内重复 ≥ 阈值次数
-                    let msg = ToolCircuitBreaker::repeat_blocked_message(&tc.name, count);
-                    warn!(
-                        "[Agent] 工具 {} 输入重复 {} 次，触发重复熔断",
-                        tc.name, count
-                    );
-                    if config.emit_events {
-                        let _ = event_tx
-                            .send(AgentEvent::ToolResult {
-                                id: None,
-                                name: tc.name.clone(),
-                                output: msg.clone(),
-                                parallel_index: None,
-                            })
-                            .await;
-                    }
-                    msg
                 } else {
                     if config.emit_events {
                         let _ = event_tx
@@ -789,7 +754,6 @@ impl AgentApp {
                     }
                     match toolbox.dispatch(&tc.name, &tc.input).await {
                         Ok(dispatch) => {
-                            breaker.record_success(&tc.name);
                             if config.emit_events {
                                 let _ = event_tx
                                     .send(AgentEvent::ToolResult {
@@ -803,7 +767,6 @@ impl AgentApp {
                             dispatch.output
                         }
                         Err(e) => {
-                            breaker.record_failure(&tc.name);
                             let msg = format!("Error: {e}");
                             if config.emit_events {
                                 let _ = event_tx
@@ -821,8 +784,7 @@ impl AgentApp {
                 };
 
                 logger.log(&format!("=== 工具结果: {} ===\n{output}", tc.name));
-                let processed_output = storage::maybe_persist(&tc.id, &output);
-                results.push(tool_result_block(&tc.id, processed_output));
+                results.push(tool_result_block(&tc.id, output));
             }
 
             if !bot_calls.is_empty() {
@@ -894,8 +856,7 @@ impl AgentApp {
                             .and_then(Value::as_str)
                             .unwrap_or_default()
                     ));
-                    let processed = storage::maybe_persist(&tc_id, &output);
-                    results.push(tool_result_block(&tc_id, processed));
+                    results.push(tool_result_block(&tc_id, output));
                 }
             }
 
@@ -983,8 +944,7 @@ impl AgentApp {
                             actual_calls.len()
                         ));
                         let tc_id = &actual_calls[idx].id;
-                        let processed = storage::maybe_persist(tc_id, output);
-                        results.push(tool_result_block(tc_id, processed));
+                        results.push(tool_result_block(tc_id, output.clone()));
                     }
                 }
             }

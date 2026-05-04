@@ -38,38 +38,9 @@ fn tool_results_dir() -> anyhow::Result<PathBuf> {
 /// # 返回值
 /// - 如果内容不超过阈值，原样返回
 /// - 如果超过阈值，保存到磁盘，返回预览 + 文件路径
-pub fn maybe_persist(tool_use_id: &str, content: &str) -> String {
-    if content.len() <= PERSIST_THRESHOLD {
-        return content.to_owned();
-    }
-
-    let dir = match tool_results_dir() {
-        Ok(d) => d,
-        Err(_) => return content.to_owned(), // 无法创建目录，原样返回
-    };
-
-    // 用 tool_use_id 作为文件名（去掉特殊字符）
-    let safe_id = tool_use_id.replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_");
-    let path = dir.join(format!("{safe_id}.txt"));
-
-    if let Err(e) = fs::write(&path, content) {
-        error!("[tool_result_storage] 写入失败: {e}");
-        return content.to_owned();
-    }
-
-    let size_kb = content.len() / 1024;
-    let preview: String = content.chars().take(PREVIEW_CHARS).collect();
-    let truncated = content.chars().count() > PREVIEW_CHARS;
-
-    format!(
-        "<persisted-output>\n\
-         输出过大 ({size_kb} KB)。完整内容已保存到: {path}\n\
-         预览（前 {PREVIEW_CHARS} 字符）：\n\
-         {preview}{trunc}\n\
-         </persisted-output>",
-        path = path.display(),
-        trunc = if truncated { "\n..." } else { "" },
-    )
+pub fn maybe_persist(_tool_use_id: &str, content: &str) -> String {
+    // 持久化已全局禁用，直接返回完整内容
+    content.to_owned()
 }
 
 /// 清理超过指定天数的工具结果文件
@@ -110,11 +81,10 @@ mod tests {
     }
 
     #[test]
-    fn 大内容触发持久化() {
+    fn 大内容不触发持久化() {
         let long_content = "x".repeat(PERSIST_THRESHOLD + 1);
         let result = maybe_persist("test_large_id", &long_content);
-        assert!(result.contains("persisted-output"));
-        assert!(result.contains("预览"));
-        assert!(result.len() < long_content.len());
+        assert!(!result.contains("persisted-output"));
+        assert_eq!(result, long_content);
     }
 }
