@@ -1,11 +1,11 @@
 """Textual App — 主应用 + 事件路由."""
 
+import asyncio
 from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.reactive import reactive
 from textual.widgets import Static
-from textual.worker import WorkerCancelled
 from textual import work
 import re
 
@@ -49,13 +49,16 @@ class RustAgentApp(App):
         yield CommandInput(id="input")
         yield Static(id="error-bar")
 
-    def on_mount(self) -> None:
+    async def on_mount(self) -> None:
         api.init(f"http://127.0.0.1:{self.server_port}", "")
         try:
-            self.bots = api.fetch_bots()
+            self.bots = await api.fetch_bots()
         except Exception:
             self.bots = []
         self.query_one("#input", CommandInput).focus()
+
+    async def on_unmount(self) -> None:
+        await api.close()
 
     # ── Reactive watchers ──
 
@@ -83,7 +86,7 @@ class RustAgentApp(App):
 
     # ── Input handling ──
 
-    def on_input_submitted(self, event) -> None:
+    async def on_input_submitted(self, event) -> None:
         inp = self.query_one("#input", CommandInput)
         raw = event.value
         text = raw.strip()
@@ -97,7 +100,7 @@ class RustAgentApp(App):
                 preview.update("")
                 preview.styles.display = "none"
                 if content.strip():
-                    self._handle_user_input(content)
+                    await self._handle_user_input(content)
             elif lower == "/cancel":
                 inp.exit_multiline()
                 preview = self.query_one("#multiline-preview", Static)
@@ -121,7 +124,7 @@ class RustAgentApp(App):
             self.exit()
             return
         if lower == "/clear":
-            self._do_clear()
+            await self._do_clear()
             return
         if lower in ("/m", "/multiline"):
             inp.enter_multiline()
@@ -130,17 +133,17 @@ class RustAgentApp(App):
             self._do_bots()
             return
         if lower == "/sessions":
-            self._do_sessions()
+            await self._do_sessions()
             return
         if lower.startswith("/load "):
-            self._do_load(text[6:].strip())
+            await self._do_load(text[6:].strip())
             return
 
         inp.add_history(text)
         # 支持 \n 转义为真实换行
-        self._handle_user_input(text.replace("\\n", "\n"))
+        await self._handle_user_input(text.replace("\\n", "\n"))
 
-    def _handle_user_input(self, text: str) -> None:
+    async def _handle_user_input(self, text: str) -> None:
         if self.is_loading:
             return
 
@@ -163,20 +166,20 @@ class RustAgentApp(App):
             task = bot_match2.group(2)
             display = next((b.nickname for b in self.bots if b.name == bot_name), bot_name)
             chat.add_message(MessageBotCall(f"@{display}: {task}"))
-            self._handle_bot_task(bot_name, task)
+            await self._handle_bot_task(bot_name, task)
             return
 
         chat.add_message(MessageUser(text))
-        self._send_message(actual)
+        await self._send_message(actual)
 
     # ── Commands ──
 
-    def _do_clear(self) -> None:
+    async def _do_clear(self) -> None:
         chat = self.query_one("#chat-log", ChatLog)
         chat.add_message(MessageSystem("═══ 以上对话已被清除 ═══"))
         if api.get_config().session_id:
             try:
-                api.clear_session()
+                await api.clear_session()
             except Exception:
                 pass
 
@@ -192,10 +195,10 @@ class RustAgentApp(App):
             lines.append(f"  @{b.name}{nick} - {b.role}{desc}")
         chat.add_message(MessageSystem(f"可用 Subagent:\n{'\n'.join(lines)}\n\n使用 /@@botname 任务描述 来委派任务"))
 
-    def _do_sessions(self) -> None:
+    async def _do_sessions(self) -> None:
         chat = self.query_one("#chat-log", ChatLog)
         try:
-            sessions = api.fetch_sessions()
+            sessions = await api.fetch_sessions()
             self.session_list = sessions
             if not sessions:
                 chat.add_message(MessageSystem("═══ 暂无历史会话 ═══"))
@@ -217,7 +220,7 @@ class RustAgentApp(App):
         except Exception as e:
             chat.add_message(MessageSystem(f"获取历史会话失败: {e}"))
 
-    def _do_load(self, arg: str) -> None:
+    async def _do_load(self, arg: str) -> None:
         chat = self.query_one("#chat-log", ChatLog)
         if self.is_loading:
             chat.add_message(MessageSystem("当前有进行中的对话，请等待结束后再加载。"))
@@ -233,7 +236,7 @@ class RustAgentApp(App):
             chat.add_message(MessageSystem("无效序号或 UUID，先用 /sessions 查看列表。"))
             return
         try:
-            msgs = api.fetch_session_messages(target_id)
+            msgs = await api.fetch_session_messages(target_id)
             new_msgs = transform_messages(msgs)
             api.set_session_id(target_id)
             self.session_id = target_id
@@ -264,10 +267,10 @@ class RustAgentApp(App):
 
     # ── Message sending ──
 
-    def _send_message(self, content: str) -> None:
+    async def _send_message(self, content: str) -> None:
         if not self.session_id:
             try:
-                sid, model = api.create_session()
+                sid, model = await api.create_session()
                 self.session_id = sid
                 self.model = model
             except Exception as e:
@@ -280,7 +283,7 @@ class RustAgentApp(App):
         self._stream_done = False
         self._run_stream(content)
 
-    def _handle_bot_task(self, bot_name: str, task: str) -> None:
+    async def _handle_bot_task(self, bot_name: str, task: str) -> None:
         if not task.strip():
             self.error_msg = f"@{bot_name}: 请提供任务描述"
             return
@@ -294,28 +297,29 @@ class RustAgentApp(App):
 
     # ── Stream worker ──
 
-    @work(thread=True, group="stream", exclusive=True)
-    def _run_stream(self, content: str, is_bot_task: bool = False, bot_name: str | None = None) -> None:
+    @work(group="stream", exclusive=True)
+    async def _run_stream(self, content: str, is_bot_task: bool = False, bot_name: str | None = None) -> None:
         try:
             if is_bot_task:
                 stream = api.send_bot_task(bot_name, content)
             else:
                 stream = api.send_message(content)
-            for event in stream:
+            async for event in stream:
                 if self._stream_done:
                     break
                 if event.event == "done":
                     self._stream_done = True
-                    self.call_from_thread(self._on_done)
+                    self._on_done()
                     break
-                self.call_from_thread(self._on_sse_event, event)
-        except WorkerCancelled:
+                self._on_sse_event(event)
+        except asyncio.CancelledError:
             # 用户主动取消
             if not self._stream_done:
-                self.call_from_thread(self._on_stream_cancelled)
+                self._on_stream_cancelled()
+            raise
         except Exception as e:
             if not self._stream_done:
-                self.call_from_thread(self._on_stream_error, str(e))
+                self._on_stream_error(str(e))
 
     def _on_sse_event(self, event: api.ServerEvent) -> None:
         chat = self.query_one("#chat-log", ChatLog)

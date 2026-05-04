@@ -37,11 +37,13 @@ class SessionSummary:
 
 
 _config: ServerConfig | None = None
+_client: httpx.AsyncClient | None = None
 
 
 def init(base_url: str, session_id: str) -> None:
-    global _config
+    global _config, _client
     _config = ServerConfig(base_url=base_url, session_id=session_id)
+    _client = httpx.AsyncClient()
 
 
 def get_config() -> ServerConfig:
@@ -57,9 +59,16 @@ def set_session_id(session_id: str) -> None:
     _config = ServerConfig(_config.base_url, session_id)
 
 
-def create_session() -> tuple[str, str]:
+async def close() -> None:
+    global _client
+    if _client is not None:
+        await _client.aclose()
+        _client = None
+
+
+async def create_session() -> tuple[str, str]:
     cfg = get_config()
-    resp = httpx.post(f"{cfg.base_url}/sessions")
+    resp = await _client.post(f"{cfg.base_url}/sessions")
     resp.raise_for_status()
     data = resp.json()
     sid = data.get("id")
@@ -69,16 +78,16 @@ def create_session() -> tuple[str, str]:
     return sid, data.get("model", "unknown")
 
 
-def clear_session() -> None:
+async def clear_session() -> None:
     cfg = get_config()
-    resp = httpx.post(f"{cfg.base_url}/sessions/{cfg.session_id}/clear")
+    resp = await _client.post(f"{cfg.base_url}/sessions/{cfg.session_id}/clear")
     resp.raise_for_status()
 
 
-def _parse_sse(response: httpx.Response):
+async def _parse_sse(response: httpx.Response):
     """逐行解析 SSE 流，yield ServerEvent."""
     current_event = ""
-    for line in response.iter_lines():
+    async for line in response.aiter_lines():
         if line is None:
             continue
         if line.startswith("event:"):
@@ -100,51 +109,53 @@ def _parse_sse(response: httpx.Response):
             current_event = ""
 
 
-def send_message(content: str, abort_signal=None):
-    """流式发送消息，返回 SSE 事件生成器."""
+async def send_message(content: str):
+    """流式发送消息，返回 SSE 事件异步生成器."""
     cfg = get_config()
-    with httpx.stream(
+    async with _client.stream(
         "POST",
         f"{cfg.base_url}/sessions/{cfg.session_id}/messages",
         json={"content": content},
         timeout=None,
     ) as response:
         response.raise_for_status()
-        yield from _parse_sse(response)
+        async for event in _parse_sse(response):
+            yield event
 
 
-def send_bot_task(bot_name: str, content: str, abort_signal=None):
-    """向指定 Bot 委派任务，返回 SSE 事件生成器."""
+async def send_bot_task(bot_name: str, content: str):
+    """向指定 Bot 委派任务，返回 SSE 事件异步生成器."""
     cfg = get_config()
-    with httpx.stream(
+    async with _client.stream(
         "POST",
         f"{cfg.base_url}/bots/{bot_name}/task",
         json={"content": content},
         timeout=None,
     ) as response:
         response.raise_for_status()
-        yield from _parse_sse(response)
+        async for event in _parse_sse(response):
+            yield event
 
 
-def fetch_bots() -> list[BotInfo]:
+async def fetch_bots() -> list[BotInfo]:
     cfg = get_config()
-    resp = httpx.get(f"{cfg.base_url}/bots")
+    resp = await _client.get(f"{cfg.base_url}/bots")
     resp.raise_for_status()
     data = resp.json()
     return [BotInfo(**b) for b in data.get("bots", [])]
 
 
-def fetch_sessions() -> list[SessionSummary]:
+async def fetch_sessions() -> list[SessionSummary]:
     cfg = get_config()
-    resp = httpx.get(f"{cfg.base_url}/sessions")
+    resp = await _client.get(f"{cfg.base_url}/sessions")
     resp.raise_for_status()
     data = resp.json()
     return [SessionSummary(**s) for s in data.get("sessions", [])]
 
 
-def fetch_session_messages(sid: str) -> list[dict[str, Any]]:
+async def fetch_session_messages(sid: str) -> list[dict[str, Any]]:
     cfg = get_config()
-    resp = httpx.get(f"{cfg.base_url}/sessions/{sid}/messages")
+    resp = await _client.get(f"{cfg.base_url}/sessions/{sid}/messages")
     resp.raise_for_status()
     data = resp.json()
     return data.get("messages", [])

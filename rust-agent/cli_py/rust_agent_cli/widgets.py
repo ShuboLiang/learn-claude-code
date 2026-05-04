@@ -239,9 +239,6 @@ class CommandInput(Input):
     def on_key(self, event) -> None:
         key = event.key
         if self.is_multiline:
-            if key == "escape":
-                self.exit_multiline()
-                event.stop()
             return
 
         if key == "up":
@@ -263,7 +260,3 @@ class CommandInput(Input):
             else:
                 self._history_index = -1
                 self.value = ""
-        elif key == "escape":
-            event.stop()
-            self.value = ""
-            self._history_index = -1
