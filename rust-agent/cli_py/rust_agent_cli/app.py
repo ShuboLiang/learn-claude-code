@@ -55,6 +55,7 @@ class RustAgentApp(App):
             self.bots = api.fetch_bots()
         except Exception:
             self.bots = []
+        self.query_one("#input", CommandInput).focus()
 
     # ── Reactive watchers ──
 

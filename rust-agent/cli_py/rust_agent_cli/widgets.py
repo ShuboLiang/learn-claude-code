@@ -143,17 +143,25 @@ class ChatLog(VerticalScroll):
         self._thinking_widget: MessageThinking | None = None
         self._retry_widget: MessageSystem | None = None
 
+    def _is_at_bottom(self) -> bool:
+        return self.scroll_y >= self.max_scroll_y - 1
+
+    def _maybe_scroll_end(self, was_at_bottom: bool) -> None:
+        if was_at_bottom:
+            self.scroll_end(animate=False)
+
     def add_message(self, widget: Static | Markdown) -> None:
+        was_at_bottom = self._is_at_bottom()
         self.mount(widget)
-        widget.scroll_visible(animate=False)
+        self._maybe_scroll_end(was_at_bottom)
 
     def set_streaming(self, text: str) -> None:
+        was_at_bottom = self._is_at_bottom()
         if self._stream_widget is None:
             self._stream_widget = MessageAssistantStream()
             self.mount(self._stream_widget)
-            self._stream_widget.scroll_visible(animate=False)
         self._stream_widget.update(text)
-        self._stream_widget.scroll_visible(animate=False)
+        self._maybe_scroll_end(was_at_bottom)
 
     def remove_stream_widget(self) -> None:
         if self._stream_widget is not None:
@@ -161,13 +169,13 @@ class ChatLog(VerticalScroll):
             self._stream_widget = None
 
     def set_thinking(self, text: str) -> None:
+        was_at_bottom = self._is_at_bottom()
         if self._thinking_widget is None:
             self._thinking_widget = MessageThinking(text)
             self.mount(self._thinking_widget)
-            self._thinking_widget.scroll_visible(animate=False)
         else:
             self._thinking_widget.update_content(text)
-            self._thinking_widget.scroll_visible(animate=False)
+        self._maybe_scroll_end(was_at_bottom)
 
     def remove_thinking_widget(self) -> None:
         if self._thinking_widget is not None:
@@ -175,13 +183,13 @@ class ChatLog(VerticalScroll):
             self._thinking_widget = None
 
     def set_retry(self, text: str) -> None:
+        was_at_bottom = self._is_at_bottom()
         if self._retry_widget is None:
             self._retry_widget = MessageSystem(text)
             self.mount(self._retry_widget)
-            self._retry_widget.scroll_visible(animate=False)
         else:
             self._retry_widget.update(text)
-            self._retry_widget.scroll_visible(animate=False)
+        self._maybe_scroll_end(was_at_bottom)
 
     def clear_retry(self) -> None:
         if self._retry_widget is not None:
