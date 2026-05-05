@@ -20,7 +20,7 @@ import { useChatStore } from '@/store/chat'
 import { DirectoryPicker } from '@/components/DirectoryPicker'
 
 export function SessionList() {
-  const [collapsed, setCollapsed] = useState(true)
+  const [collapsed, setCollapsed] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [showNewDialog, setShowNewDialog] = useState(false)
   const sessions = useChatStore((s) => s.sessions)
