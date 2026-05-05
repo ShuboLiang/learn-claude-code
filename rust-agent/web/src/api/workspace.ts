@@ -67,10 +67,15 @@ export async function streamWatchEvents(
   }
 }
 
+export interface FileReadResult {
+  content: string
+  binary: boolean
+}
+
 export async function readFile(
   sessionId: string,
   filePath: string,
-): Promise<string> {
+): Promise<FileReadResult> {
   const params = `session_id=${encodeURIComponent(sessionId)}&path=${encodeURIComponent(filePath)}`
   const res = await fetch(`/file?${params}`)
   if (!res.ok) {
@@ -78,7 +83,7 @@ export async function readFile(
     throw new Error(body?.error?.message || `Failed to read file: ${res.status}`)
   }
   const data = await res.json()
-  return data.content as string
+  return { content: data.content as string, binary: data.binary as boolean }
 }
 
 export async function writeFile(

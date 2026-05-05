@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import type { BrowseEntry } from '@/api/client'
 import { browseDirectory, streamWatchEvents, readFile, writeFile } from '@/api/workspace'
+import type { FileReadResult } from '@/api/workspace'
 
 interface WorkspaceState {
   rootPath: string | null
@@ -13,6 +14,7 @@ interface WorkspaceState {
   // File preview
   selectedFile: string | null
   fileContent: string | null
+  fileBinary: boolean
   fileDirty: boolean
   fileLoading: boolean
   sessionId: string | null
@@ -43,6 +45,7 @@ export const useWorkspaceStore = create<WorkspaceState & WorkspaceActions>()(
     error: null,
     selectedFile: null,
     fileContent: null,
+    fileBinary: false,
     fileDirty: false,
     fileLoading: false,
     sessionId: null,
@@ -59,6 +62,7 @@ export const useWorkspaceStore = create<WorkspaceState & WorkspaceActions>()(
         s.error = null
         s.selectedFile = null
         s.fileContent = null
+        s.fileBinary = false
         s.fileDirty = false
       })
       if (path) {
@@ -156,19 +160,22 @@ export const useWorkspaceStore = create<WorkspaceState & WorkspaceActions>()(
       set((s) => {
         s.selectedFile = filePath
         s.fileContent = null
+        s.fileBinary = false
         s.fileDirty = false
         s.fileLoading = true
         s.sessionId = sid
       })
       try {
-        const content = await readFile(sid, filePath)
+        const result = await readFile(sid, filePath)
         set((s) => {
-          s.fileContent = content
+          s.fileContent = result.content
+          s.fileBinary = result.binary
           s.fileLoading = false
         })
       } catch (err) {
         set((s) => {
           s.fileContent = `// Error: ${err instanceof Error ? err.message : 'Failed to read'}`
+          s.fileBinary = false
           s.fileLoading = false
         })
       }
@@ -178,6 +185,7 @@ export const useWorkspaceStore = create<WorkspaceState & WorkspaceActions>()(
       set((s) => {
         s.selectedFile = null
         s.fileContent = null
+        s.fileBinary = false
         s.fileDirty = false
         s.fileLoading = false
       })
@@ -185,6 +193,7 @@ export const useWorkspaceStore = create<WorkspaceState & WorkspaceActions>()(
 
     updateFileContent(content) {
       if (content === undefined) return
+      if (get().fileBinary) return // Don't allow editing binary files
       set((s) => {
         s.fileContent = content
         s.fileDirty = true
@@ -192,8 +201,8 @@ export const useWorkspaceStore = create<WorkspaceState & WorkspaceActions>()(
     },
 
     async saveFile() {
-      const { selectedFile, fileContent, sessionId } = get()
-      if (!selectedFile || !sessionId || fileContent === null) return
+      const { selectedFile, fileContent, sessionId, fileBinary } = get()
+      if (!selectedFile || !sessionId || fileContent === null || fileBinary) return
 
       try {
         await writeFile(sessionId, selectedFile, fileContent)

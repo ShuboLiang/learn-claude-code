@@ -544,15 +544,23 @@ async fn read_file(
             .into_response();
     }
 
+    // Try UTF-8 first, fall back to base64 for binary files
     match std::fs::read_to_string(&canonical) {
-        Ok(content) => Json(serde_json::json!({ "content": content })).into_response(),
-        Err(_) => (
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": { "code": "not_found", "message": "文件无法读取" }
-            })),
-        )
-            .into_response(),
+        Ok(content) => Json(serde_json::json!({ "content": content, "binary": false })).into_response(),
+        Err(_) => match std::fs::read(&canonical) {
+            Ok(bytes) => {
+                use base64::Engine;
+                let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                Json(serde_json::json!({ "content": encoded, "binary": true })).into_response()
+            }
+            Err(_) => (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "error": { "code": "not_found", "message": "文件无法读取" }
+                })),
+            )
+                .into_response(),
+        },
     }
 }
 
