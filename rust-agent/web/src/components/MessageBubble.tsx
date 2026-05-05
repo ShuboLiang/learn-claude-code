@@ -144,22 +144,50 @@ function ToolCallCard({ toolCall }: { toolCall: UIToolCall }) {
     error: 'bg-red-500',
   }
 
-  return (
-    <div className="rounded border bg-background/50 px-3 py-2">
-      <div className="flex items-center gap-2">
-        <span
-          className={cn('h-2 w-2 rounded-full', statusColors[toolCall.status])}
-        />
-        <span className="text-xs font-semibold">{toolCall.name}</span>
-        {toolCall.parallelIndex && toolCall.parallelIndex.total > 1 && (
-          <span className="text-[10px] text-muted-foreground">
-            {toolCall.parallelIndex.index + 1}/{toolCall.parallelIndex.total}
-          </span>
-        )}
+  const statusLabel: Record<UIToolCall['status'], string> = {
+    running: 'Running',
+    done: 'Done',
+    error: 'Error',
+  }
+
+  const hasDetail = toolCall.input != null || toolCall.output != null
+
+  const inner = (
+    <div className="flex items-center gap-1.5 min-w-0">
+      <span
+        className={cn('h-1.5 w-1.5 rounded-full shrink-0', statusColors[toolCall.status])}
+      />
+      <span className="text-xs font-semibold truncate">{toolCall.name}</span>
+      <span className="text-[10px] text-muted-foreground shrink-0">
+        {statusLabel[toolCall.status]}
+      </span>
+      {toolCall.parallelIndex && toolCall.parallelIndex.total > 1 && (
+        <span className="text-[10px] text-muted-foreground/60 shrink-0">
+          {toolCall.parallelIndex.index + 1}/{toolCall.parallelIndex.total}
+        </span>
+      )}
+    </div>
+  )
+
+  if (!hasDetail) {
+    return (
+      <div className="my-0.5 rounded bg-background/40 px-2.5 py-1">
+        {inner}
       </div>
+    )
+  }
+
+  return (
+    <details className="my-0.5 rounded bg-background/40 px-2.5 py-1 group">
+      <summary className="cursor-pointer list-none flex items-center gap-1.5">
+        <span className="text-[10px] transition-transform group-open:rotate-90 shrink-0">
+          ▶
+        </span>
+        {inner}
+      </summary>
 
       {toolCall.input != null && (
-        <details className="mt-1">
+        <details className="mt-1.5 ml-4" open>
           <summary className="cursor-pointer text-[10px] text-muted-foreground">
             Input
           </summary>
@@ -170,7 +198,7 @@ function ToolCallCard({ toolCall }: { toolCall: UIToolCall }) {
       )}
 
       {toolCall.output && (
-        <details className="mt-1" open>
+        <details className="mt-1.5 ml-4">
           <summary className="cursor-pointer text-[10px] text-muted-foreground">
             Output
           </summary>
@@ -179,7 +207,7 @@ function ToolCallCard({ toolCall }: { toolCall: UIToolCall }) {
           </pre>
         </details>
       )}
-    </div>
+    </details>
   )
 }
 
