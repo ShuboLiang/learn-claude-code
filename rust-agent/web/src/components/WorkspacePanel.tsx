@@ -11,6 +11,7 @@ export function WorkspacePanel() {
   const [collapsed, setCollapsed] = useState(true)
   const [splitRatio, setSplitRatio] = useState(0.45)
   const resizeRef = useRef<HTMLDivElement>(null)
+  const prevRootPath = useRef<string | null>(null)
   const currentSessionId = useChatStore((s) => s.currentSessionId)
   const sessions = useChatStore((s) => s.sessions)
   const setRootPath = useWorkspaceStore((s) => s.setRootPath)
@@ -32,6 +33,14 @@ export function WorkspacePanel() {
       setRootPath(null, null)
     }
   }, [currentSessionId, sessions, setRootPath])
+
+  // Auto-expand when rootPath first becomes available
+  useEffect(() => {
+    if (rootPath && rootPath !== prevRootPath.current) {
+      setCollapsed(false)
+    }
+    prevRootPath.current = rootPath
+  }, [rootPath])
 
   // Start/stop watch based on collapsed and session
   useEffect(() => {

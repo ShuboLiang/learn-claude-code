@@ -135,61 +135,61 @@ export function SessionList() {
           ) : (
             <div className="space-y-0.5 p-2">
               {sessions.map((s) => (
-                <Tooltip key={s.id}>
-                  <TooltipTrigger asChild>
-                    <div
-                      onClick={() => selectSession(s.id)}
-                      role="button"
-                      tabIndex={0}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') selectSession(s.id)
-                      }}
-                      className={cn(
-                        'group relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-all hover:bg-accent/60',
-                        s.id === currentId
-                          ? 'bg-accent/40 text-foreground'
-                          : 'text-muted-foreground hover:text-foreground',
-                      )}
-                    >
-                      {s.id === currentId && (
-                        <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-primary" />
-                      )}
-                      <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-background text-[10px] font-semibold text-muted-foreground">
-                        {firstChar(s.preview)}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="line-clamp-2 break-all text-[11px] font-medium leading-snug text-foreground">
-                          {s.preview || 'New session'}
-                        </p>
-                        <p className="mt-0.5 text-[10px] text-muted-foreground/80">
-                          {s.message_count} msgs &middot; {relativeTime(s.last_active)}
-                        </p>
-                        <p className="mt-0.5 flex items-center gap-1 truncate text-[10px] text-muted-foreground/50">
-                          <Folder className="h-2.5 w-2.5 shrink-0" />
-                          {shortPath(s.working_dir)}
-                        </p>
-                      </div>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 shrink-0 text-muted-foreground/40 hover:text-destructive"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setDeleteTarget(s.id)
-                        }}
-                        title="Delete"
+                <div
+                  key={s.id}
+                  className={cn(
+                    'group relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left transition-all hover:bg-accent/60',
+                    s.id === currentId
+                      ? 'bg-accent/40 text-foreground'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {s.id === currentId && (
+                    <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-primary" />
+                  )}
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => selectSession(s.id)}
+                        className="flex min-w-0 flex-1 items-center gap-2.5 text-left cursor-pointer"
                       >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  </TooltipTrigger>
-                  <TooltipContent side="right" className="max-w-64">
-                    <p className="break-all text-xs !text-white">{s.preview || 'New session'}</p>
-                    <p className="mt-0.5 truncate text-[10px] !text-white/60">
-                      {s.working_dir}
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
+                        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-background text-[10px] font-semibold text-muted-foreground">
+                          {firstChar(s.preview)}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="line-clamp-2 break-all text-[11px] font-medium leading-snug text-foreground">
+                            {s.preview || 'New session'}
+                          </p>
+                          <p className="mt-0.5 text-[10px] text-muted-foreground/80">
+                            {s.message_count} msgs &middot; {relativeTime(s.last_active)}
+                          </p>
+                          <p className="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground/50">
+                            <Folder className="h-2.5 w-2.5 shrink-0" />
+                            <span className="truncate">{shortPath(s.working_dir)}</span>
+                          </p>
+                        </div>
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right" className="max-w-64">
+                      <p className="break-all text-xs !text-white">{s.preview || 'New session'}</p>
+                      <p className="mt-0.5 truncate text-[10px] !text-white/60">
+                        {s.working_dir}
+                      </p>
+                    </TooltipContent>
+                  </Tooltip>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6 shrink-0 text-muted-foreground/40 hover:text-destructive"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setDeleteTarget(s.id)
+                    }}
+                    title="Delete"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </Button>
+                </div>
               ))}
             </div>
           )}
