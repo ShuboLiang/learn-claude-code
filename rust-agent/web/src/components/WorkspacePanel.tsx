@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { PanelRightClose, PanelRightOpen, FolderOpen } from 'lucide-react'
+import { PanelRightClose, PanelRightOpen } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useChatStore } from '@/store/chat'
@@ -98,19 +98,7 @@ export function WorkspacePanel() {
       </div>
 
       {/* Content */}
-      {collapsed ? (
-        <div className="flex flex-1 flex-col items-center gap-2 py-3">
-          {currentSessionId && (
-            <button
-              onClick={() => setCollapsed(false)}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground/60 hover:text-foreground hover:bg-accent/50 transition-all"
-              title="Expand file tree"
-            >
-              <FolderOpen className="h-4 w-4" />
-            </button>
-          )}
-        </div>
-      ) : (
+      {collapsed ? null : (
         <div ref={resizeRef} className="flex flex-col flex-1 min-h-0">
           {/* File tree area */}
           <div
