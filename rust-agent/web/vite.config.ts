@@ -17,6 +17,7 @@ export default defineConfig({
       '/sessions': { target: BACKEND, changeOrigin: true },
       '/v1': { target: BACKEND, changeOrigin: true },
       '/bots': { target: BACKEND, changeOrigin: true },
+      '/browse': { target: BACKEND, changeOrigin: true },
     },
   },
 })

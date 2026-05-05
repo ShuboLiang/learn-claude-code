@@ -68,6 +68,22 @@ export interface BotInfo {
   skills: string[]
 }
 
+export interface BrowseEntry {
+  name: string
+  path: string
+}
+
+export interface BrowseResult {
+  path: string
+  parent: string | null
+  entries: BrowseEntry[]
+}
+
+export function browseDirectory(dirPath?: string): Promise<BrowseResult> {
+  const params = dirPath ? `?path=${encodeURIComponent(dirPath)}` : ''
+  return request(`/browse${params}`)
+}
+
 export function listBots(): Promise<BotInfo[]> {
   return request<{ bots: BotInfo[] }>('/bots').then((r) => r.bots)
 }

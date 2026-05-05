@@ -90,4 +90,5 @@ export interface SessionSummary {
   last_active: string
   message_count: number
   preview: string | null
+  working_dir: string
 }

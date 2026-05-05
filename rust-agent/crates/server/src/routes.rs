@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     response::sse::KeepAlive,
@@ -56,6 +56,7 @@ pub fn routes(app_state: AppState) -> Router {
             "/v1/chat/completions",
             post(openai_compat::chat_completions),
         )
+        .route("/browse", get(browse_directory))
         .route("/bots", get(list_bots))
         .route("/bots/{name}/task", post(bot_task))
         .with_state(app_state)
@@ -249,6 +250,99 @@ async fn send_message(
     axum::response::sse::Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
         .into_response()
+}
+
+#[derive(Deserialize)]
+struct BrowseQuery {
+    path: Option<String>,
+}
+
+/// GET /browse?path=... — 浏览目录，返回子目录列表
+async fn browse_directory(Query(q): Query<BrowseQuery>) -> impl IntoResponse {
+    let current = match &q.path {
+        Some(p) if !p.is_empty() => PathBuf::from(p),
+        _ => {
+            // 空路径：Windows 返回驱动器列表，Unix 返回根目录
+            if cfg!(windows) {
+                return Json(serde_json::json!({
+                    "path": "",
+                    "parent": serde_json::Value::Null,
+                    "entries": list_windows_drives(),
+                }))
+                .into_response();
+            } else {
+                PathBuf::from("/")
+            }
+        }
+    };
+
+    if !current.is_dir() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": { "code": "not_found", "message": "目录不存在" }
+            })),
+        )
+            .into_response();
+    }
+
+    let parent = current.parent().map(|p| p.display().to_string());
+    let mut entries: Vec<serde_json::Value> = Vec::new();
+
+    if let Ok(read) = std::fs::read_dir(&current) {
+        for entry in read.flatten() {
+            let ft = entry.file_type().ok();
+            let is_dir = ft.map(|t| t.is_dir()).unwrap_or(false);
+            if !is_dir {
+                continue;
+            }
+            // 跳过隐藏文件和系统目录
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') || name.starts_with('$') {
+                continue;
+            }
+            entries.push(serde_json::json!({
+                "name": name,
+                "path": entry.path().display().to_string(),
+            }));
+        }
+    }
+
+    entries.sort_by(|a, b| {
+        a["name"]
+            .as_str()
+            .unwrap_or("")
+            .to_lowercase()
+            .cmp(&b["name"].as_str().unwrap_or("").to_lowercase())
+    });
+
+    Json(serde_json::json!({
+        "path": current.display().to_string(),
+        "parent": parent,
+        "entries": entries,
+    }))
+    .into_response()
+}
+
+#[cfg(windows)]
+fn list_windows_drives() -> Vec<serde_json::Value> {
+    let mut drives = Vec::new();
+    for letter in b'A'..=b'Z' {
+        let path_str = format!("{}:\\", letter as char);
+        let p = std::path::Path::new(&path_str);
+        if p.exists() {
+            drives.push(serde_json::json!({
+                "name": path_str,
+                "path": path_str,
+            }));
+        }
+    }
+    drives
+}
+
+#[cfg(not(windows))]
+fn list_windows_drives() -> Vec<serde_json::Value> {
+    Vec::new()
 }
 
 /// GET /bots — 列出所有可用的 Bot
