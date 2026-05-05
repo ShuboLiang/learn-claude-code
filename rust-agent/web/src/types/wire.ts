@@ -82,6 +82,16 @@ export type SSEEvent =
 
 export type SSEEventType = SSEEvent['event']
 
+// ── Watch (file system events via SSE) ──
+
+export interface WatchEvent {
+  event: 'file_created' | 'file_modified' | 'file_removed'
+  data: {
+    path: string
+    kind: 'file' | 'directory'
+  }
+}
+
 // ── Session ──
 
 export interface SessionSummary {

@@ -1,6 +1,8 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use axum::{
     Json, Router,
@@ -57,6 +59,8 @@ pub fn routes(app_state: AppState) -> Router {
             post(openai_compat::chat_completions),
         )
         .route("/browse", get(browse_directory))
+        .route("/watch", get(watch_files))
+        .route("/file", get(read_file).put(write_file))
         .route("/bots", get(list_bots))
         .route("/bots/{name}/task", post(bot_task))
         .with_state(app_state)
@@ -257,7 +261,7 @@ struct BrowseQuery {
     path: Option<String>,
 }
 
-/// GET /browse?path=... — 浏览目录，返回子目录列表
+/// GET /browse?path=... — 浏览目录，返回子目录和文件列表
 async fn browse_directory(Query(q): Query<BrowseQuery>) -> impl IntoResponse {
     let current = match &q.path {
         Some(p) if !p.is_empty() => PathBuf::from(p),
@@ -287,41 +291,177 @@ async fn browse_directory(Query(q): Query<BrowseQuery>) -> impl IntoResponse {
     }
 
     let parent = current.parent().map(|p| p.display().to_string());
-    let mut entries: Vec<serde_json::Value> = Vec::new();
+    let mut dirs: Vec<serde_json::Value> = Vec::new();
+    let mut files: Vec<serde_json::Value> = Vec::new();
+
+    // 重型目录，列出内容会很慢，直接跳过
+    const SKIP_DIRS: &[&str] = &["node_modules", "target", ".git", "__pycache__", "dist", ".next"];
 
     if let Ok(read) = std::fs::read_dir(&current) {
         for entry in read.flatten() {
-            let ft = entry.file_type().ok();
-            let is_dir = ft.map(|t| t.is_dir()).unwrap_or(false);
-            if !is_dir {
-                continue;
-            }
-            // 跳过隐藏文件和系统目录
             let name = entry.file_name().to_string_lossy().to_string();
+            // 跳过隐藏文件和系统目录
             if name.starts_with('.') || name.starts_with('$') {
                 continue;
             }
-            entries.push(serde_json::json!({
-                "name": name,
-                "path": entry.path().display().to_string(),
-            }));
+            let ft = entry.file_type().ok();
+            let is_dir = ft.map(|t| t.is_dir()).unwrap_or(false);
+
+            if is_dir {
+                if SKIP_DIRS.contains(&name.as_str()) {
+                    continue;
+                }
+                dirs.push(serde_json::json!({
+                    "name": name,
+                    "path": entry.path().display().to_string(),
+                    "kind": "directory",
+                }));
+            } else {
+                let metadata = entry.metadata().ok();
+                let size = metadata.as_ref().map(|m| m.len());
+                let modified = metadata
+                    .and_then(|m| m.modified().ok())
+                    .map(|t| {
+                        let dt: chrono::DateTime<chrono::Utc> = t.into();
+                        dt.to_rfc3339()
+                    });
+                let mut entry_json = serde_json::json!({
+                    "name": name,
+                    "path": entry.path().display().to_string(),
+                    "kind": "file",
+                });
+                if let Some(s) = size {
+                    entry_json["size"] = serde_json::json!(s);
+                }
+                if let Some(ref m) = modified {
+                    entry_json["modified"] = serde_json::json!(m);
+                }
+                files.push(entry_json);
+            }
         }
     }
 
-    entries.sort_by(|a, b| {
-        a["name"]
-            .as_str()
-            .unwrap_or("")
-            .to_lowercase()
+    dirs.sort_by(|a, b| {
+        a["name"].as_str().unwrap_or("").to_lowercase()
             .cmp(&b["name"].as_str().unwrap_or("").to_lowercase())
     });
+    files.sort_by(|a, b| {
+        a["name"].as_str().unwrap_or("").to_lowercase()
+            .cmp(&b["name"].as_str().unwrap_or("").to_lowercase())
+    });
+
+    dirs.extend(files);
 
     Json(serde_json::json!({
         "path": current.display().to_string(),
         "parent": parent,
-        "entries": entries,
+        "entries": dirs,
     }))
     .into_response()
+}
+
+#[derive(Deserialize)]
+struct WatchQuery {
+    session_id: String,
+}
+
+/// GET /watch?session_id=... — 实时监听工作目录文件变更（SSE）
+async fn watch_files(
+    State(state): State<AppState>,
+    Query(q): Query<WatchQuery>,
+) -> impl IntoResponse {
+    let session_arc = match state.store.get(&q.session_id) {
+        Some(s) => s,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "error": { "code": "session_not_found", "message": "会话不存在" }
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    let working_dir = session_arc.read().await.working_dir.clone();
+
+    let (tx, rx) = tokio::sync::mpsc::channel::<serde_json::Value>(128);
+
+    // spawn_blocking: notify watcher 在同步线程运行
+    let tx_closed = tx.clone();
+    tokio::task::spawn_blocking(move || {
+        use notify::{RecursiveMode, Watcher};
+        let debounce = Mutex::new(HashMap::<PathBuf, Instant>::new());
+        let tx = tx.clone();
+
+        let mut watcher = match notify::recommended_watcher(
+            move |res: Result<notify::Event, notify::Error>| {
+                let Ok(event) = res else { return };
+                // 忽略 .git 目录内的变更
+                let path_str = event.paths.first().map(|p| p.display().to_string()).unwrap_or_default();
+                if path_str.contains("/.git/") || path_str.contains("\\.git\\") {
+                    return;
+                }
+                let kind = match event.kind {
+                    notify::EventKind::Create(_) => "file_created",
+                    notify::EventKind::Modify(_) => "file_modified",
+                    notify::EventKind::Remove(_) => "file_removed",
+                    _ => return,
+                };
+                let file_kind = if event.paths.first().map(|p| p.is_dir()).unwrap_or(false) {
+                    "directory"
+                } else {
+                    "file"
+                };
+
+                // 200ms 去抖动
+                let now = Instant::now();
+                let path_key = event.paths.first().cloned().unwrap_or_default();
+                {
+                    let mut db = debounce.lock().unwrap();
+                    if let Some(last) = db.get(&path_key) {
+                        if now.duration_since(*last) < Duration::from_millis(200) {
+                            return;
+                        }
+                    }
+                    db.insert(path_key.clone(), now);
+                }
+
+                let _ = tx.blocking_send(serde_json::json!({
+                    "event": kind,
+                    "data": {
+                        "path": path_str,
+                        "kind": file_kind,
+                    },
+                }));
+            },
+        ) {
+            Ok(w) => w,
+            Err(_) => return,
+        };
+
+        let _ = watcher.watch(&working_dir, RecursiveMode::Recursive);
+
+        // 保持 watcher 存活直到 channel 关闭
+        loop {
+            std::thread::sleep(Duration::from_secs(1));
+            if tx_closed.is_closed() {
+                break;
+            }
+        }
+    });
+
+    let stream = tokio_stream::wrappers::ReceiverStream::new(rx)
+        .map(|v| {
+            axum::response::sse::Event::default()
+                .event(v["event"].as_str().unwrap_or("unknown"))
+                .data(v["data"].to_string())
+        })
+        .map(Ok::<_, std::convert::Infallible>);
+
+    axum::response::sse::Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
+        .into_response()
 }
 
 #[cfg(windows)]
@@ -343,6 +483,149 @@ fn list_windows_drives() -> Vec<serde_json::Value> {
 #[cfg(not(windows))]
 fn list_windows_drives() -> Vec<serde_json::Value> {
     Vec::new()
+}
+
+#[derive(Deserialize)]
+struct FileQuery {
+    session_id: String,
+    path: String,
+}
+
+#[derive(Deserialize)]
+struct FileWriteBody {
+    content: String,
+}
+
+/// GET /file?session_id=...&path=... — 读取文件内容
+async fn read_file(
+    State(state): State<AppState>,
+    Query(q): Query<FileQuery>,
+) -> impl IntoResponse {
+    let session = match state.store.get(&q.session_id) {
+        Some(s) => s,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "error": { "code": "session_not_found", "message": "会话不存在" }
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    let working_dir = session.read().await.working_dir.clone();
+    let canonical_wd = working_dir.canonicalize().unwrap_or_else(|_| working_dir.clone());
+    // If path is absolute, use it directly; otherwise join with working_dir
+    let path_buf = std::path::PathBuf::from(&q.path);
+    let full_path = if path_buf.is_absolute() {
+        path_buf
+    } else {
+        working_dir.join(&q.path)
+    };
+
+    // Security: ensure path is within working_dir
+    let Ok(canonical) = full_path.canonicalize() else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": { "code": "not_found", "message": "文件不存在" }
+            })),
+        )
+            .into_response();
+    };
+    if !canonical.starts_with(&canonical_wd) {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": { "code": "forbidden", "message": "禁止访问工作目录外的文件" }
+            })),
+        )
+            .into_response();
+    }
+
+    match std::fs::read_to_string(&canonical) {
+        Ok(content) => Json(serde_json::json!({ "content": content })).into_response(),
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": { "code": "not_found", "message": "文件无法读取" }
+            })),
+        )
+            .into_response(),
+    }
+}
+
+/// PUT /file?session_id=...&path=... — 写入文件内容
+async fn write_file(
+    State(state): State<AppState>,
+    Query(q): Query<FileQuery>,
+    Json(body): Json<FileWriteBody>,
+) -> impl IntoResponse {
+    let session = match state.store.get(&q.session_id) {
+        Some(s) => s,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "error": { "code": "session_not_found", "message": "会话不存在" }
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    let working_dir = session.read().await.working_dir.clone();
+    let canonical_wd = working_dir.canonicalize().unwrap_or_else(|_| working_dir.clone());
+    // If path is absolute, use it directly; otherwise join with working_dir
+    let path_buf = std::path::PathBuf::from(&q.path);
+    let full_path = if path_buf.is_absolute() {
+        path_buf
+    } else {
+        working_dir.join(&q.path)
+    };
+
+    // Security: ensure path is within working_dir
+    match full_path.canonicalize() {
+        Ok(canonical) => {
+            if !canonical.starts_with(&canonical_wd) {
+                return (
+                    StatusCode::FORBIDDEN,
+                    Json(serde_json::json!({
+                        "error": { "code": "forbidden", "message": "禁止访问工作目录外的文件" }
+                    })),
+                )
+                    .into_response();
+            }
+        }
+        Err(_) => {
+            // File doesn't exist yet — verify parent directory is within working_dir
+            if let Some(parent) = full_path.parent() {
+                if let Ok(canonical) = parent.canonicalize() {
+                    if !canonical.starts_with(&canonical_wd) {
+                        return (
+                            StatusCode::FORBIDDEN,
+                            Json(serde_json::json!({
+                                "error": { "code": "forbidden", "message": "禁止访问工作目录外的文件" }
+                            })),
+                        )
+                            .into_response();
+                    }
+                }
+            }
+        }
+    }
+
+    match std::fs::write(&full_path, &body.content) {
+        Ok(_) => Json(serde_json::json!({ "status": "saved" })).into_response(),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": { "code": "write_error", "message": format!("写入失败: {e}") }
+            })),
+        )
+            .into_response(),
+    }
 }
 
 /// GET /bots — 列出所有可用的 Bot

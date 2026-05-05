@@ -71,6 +71,9 @@ export interface BotInfo {
 export interface BrowseEntry {
   name: string
   path: string
+  kind: 'file' | 'directory'
+  size?: number
+  modified?: string
 }
 
 export interface BrowseResult {

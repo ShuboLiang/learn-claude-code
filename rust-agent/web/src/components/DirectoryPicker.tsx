@@ -174,16 +174,18 @@ export function DirectoryPicker({ open, onOpenChange, onSelect }: Props) {
                 </p>
               )}
               {!isDriveRoot &&
-                entries.map((e) => (
-                  <button
-                    key={e.path}
-                    onClick={() => navigateTo(e.path)}
-                    className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-accent transition-colors"
-                  >
-                    <Folder className="h-3.5 w-3.5 shrink-0 text-yellow-500/80" />
-                    <span className="truncate">{e.name}</span>
-                  </button>
-                ))}
+                entries
+                  .filter((e) => e.kind === 'directory')
+                  .map((e) => (
+                    <button
+                      key={e.path}
+                      onClick={() => navigateTo(e.path)}
+                      className="flex w-full items-center gap-2.5 px-3 py-2 text-xs text-foreground hover:bg-accent transition-colors"
+                    >
+                      <Folder className="h-3.5 w-3.5 shrink-0 text-yellow-500/80" />
+                      <span className="truncate">{e.name}</span>
+                    </button>
+                  ))}
             </div>
           )}
         </div>

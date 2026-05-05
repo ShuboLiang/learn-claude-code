@@ -18,6 +18,8 @@ export default defineConfig({
       '/v1': { target: BACKEND, changeOrigin: true },
       '/bots': { target: BACKEND, changeOrigin: true },
       '/browse': { target: BACKEND, changeOrigin: true },
+      '/watch': { target: BACKEND, changeOrigin: true },
+      '/file': { target: BACKEND, changeOrigin: true },
     },
   },
 })

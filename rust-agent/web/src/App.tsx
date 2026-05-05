@@ -2,6 +2,7 @@ import { useEffect, useCallback } from 'react'
 import { MessageSquare, Sparkles } from 'lucide-react'
 import { SessionList } from '@/components/SessionList'
 import { ChatPane } from '@/components/ChatPane'
+import { WorkspacePanel } from '@/components/WorkspacePanel'
 import { useChatStore } from '@/store/chat'
 
 function App() {
@@ -78,6 +79,7 @@ function App() {
             </button>
           </div>
         )}
+        <WorkspacePanel />
       </div>
     </div>
   )
