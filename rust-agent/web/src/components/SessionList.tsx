@@ -1,7 +1,6 @@
-import { useState, useRef } from 'react'
+import { useState } from 'react'
 import { Plus, Trash2, PanelLeftClose, PanelLeftOpen, Folder } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Tooltip,
@@ -18,29 +17,19 @@ import {
 } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { useChatStore } from '@/store/chat'
+import { DirectoryPicker } from '@/components/DirectoryPicker'
 
 export function SessionList() {
   const [collapsed, setCollapsed] = useState(true)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [showNewDialog, setShowNewDialog] = useState(false)
-  const [newDir, setNewDir] = useState('')
-  const dirInputRef = useRef<HTMLInputElement>(null)
   const sessions = useChatStore((s) => s.sessions)
   const currentId = useChatStore((s) => s.currentSessionId)
   const createSession = useChatStore((s) => s.createSession)
   const selectSession = useChatStore((s) => s.selectSession)
   const deleteSession = useChatStore((s) => s.deleteSession)
 
-  const openNewDialog = () => {
-    setNewDir('')
-    setShowNewDialog(true)
-  }
-
-  const handleCreate = () => {
-    const trimmed = newDir.trim()
-    createSession(trimmed || undefined)
-    setShowNewDialog(false)
-  }
+  const openNewDialog = () => setShowNewDialog(true)
 
   return (
     <aside
@@ -235,35 +224,11 @@ export function SessionList() {
       </Dialog>
 
       {/* New session dialog */}
-      <Dialog open={showNewDialog} onOpenChange={setShowNewDialog}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>新建会话</DialogTitle>
-            <DialogDescription>
-              输入工作目录路径，留空则使用服务器当前目录
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Input
-              ref={dirInputRef}
-              value={newDir}
-              onChange={(e) => setNewDir(e.target.value)}
-              placeholder="e.g. C:\projects\my-app"
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleCreate()
-              }}
-            />
-          </div>
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setShowNewDialog(false)}>
-              取消
-            </Button>
-            <Button onClick={handleCreate}>
-              创建
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <DirectoryPicker
+        open={showNewDialog}
+        onOpenChange={setShowNewDialog}
+        onSelect={(path) => createSession(path)}
+      />
     </aside>
   )
 }
