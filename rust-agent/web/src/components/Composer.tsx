@@ -37,7 +37,7 @@ export function Composer() {
   const hasText = text.trim().length > 0
 
   return (
-    <div className="shrink-0 bg-gradient-to-t from-muted/30 to-transparent px-4 pb-4 pt-3">
+    <div className="shrink-0 px-4 pb-4 pt-3">
       <div className="mx-auto max-w-2xl">
         <div
           className={cn(
@@ -55,7 +55,7 @@ export function Composer() {
             onKeyDown={handleKeyDown}
             placeholder="Send a message..."
             rows={1}
-            className="flex-1 resize-none bg-transparent px-2 py-1 text-sm placeholder:text-muted-foreground/70 focus:outline-none"
+            className="flex-1 resize-none bg-transparent px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
           />
 
           {streaming?.active ? (

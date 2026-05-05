@@ -1,10 +1,10 @@
 import { ArrowDown } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import { MessageBubble } from '@/components/MessageBubble'
 import { Composer } from '@/components/Composer'
-import { RetryBanner } from '@/components/RetryBanner'
 import { useChatStore } from '@/store/chat'
+import { RetryBanner } from '@/components/RetryBanner'
 import { useAutoScroll } from '@/hooks/useAutoScroll'
+import { cn } from '@/lib/utils'
 
 export function ChatPane() {
   const messages = useChatStore((s) => s.messages)
@@ -20,11 +20,11 @@ export function ChatPane() {
   const [scrollRef, isAtBottom] = useAutoScroll(scrollDeps)
 
   return (
-    <div className="flex flex-1 flex-col min-w-0">
+    <div className="flex flex-1 flex-col min-w-0 bg-background">
       {/* Messages area */}
       <div className="relative flex-1 overflow-hidden">
         <div ref={scrollRef} className="h-full overflow-y-auto">
-          <div className="mx-auto max-w-2xl px-4 py-4 space-y-4">
+          <div className="mx-auto max-w-3xl px-6 py-6 space-y-5">
             {messages.map((msg) => (
               <MessageBubble key={msg.id} message={msg} />
             ))}
@@ -46,53 +46,42 @@ export function ChatPane() {
                   content: '',
                   blocks: [
                     ...(streaming.thinking
-                      ? [
-                          {
-                            kind: 'thinking' as const,
-                            content: streaming.thinking,
-                          },
-                        ]
+                      ? [{ kind: 'thinking' as const, content: streaming.thinking }]
                       : []),
                     ...(streaming.assistantText
-                      ? [
-                          {
-                            kind: 'text' as const,
-                            content: streaming.assistantText,
-                          },
-                        ]
+                      ? [{ kind: 'text' as const, content: streaming.assistantText }]
                       : []),
                     ...streaming.tools.map((tc) => ({
                       kind: 'toolCall' as const,
                       toolCall: tc,
                     })),
                     ...(streaming.error
-                      ? [
-                          {
-                            kind: 'error' as const,
-                            ...streaming.error,
-                          },
-                        ]
+                      ? [{ kind: 'error' as const, ...streaming.error }]
                       : []),
                   ],
                 }}
               />
             )}
+
+            {/* Bottom spacer for scroll comfort */}
+            <div className="h-4" />
           </div>
         </div>
 
-        {!isAtBottom && (
-          <Button
-            variant="secondary"
-            size="icon"
-            className="absolute bottom-3 right-4 h-8 w-8 rounded-full shadow"
-            onClick={() => {
-              const el = scrollRef.current
-              if (el) el.scrollTop = el.scrollHeight
-            }}
-          >
-            <ArrowDown className="h-4 w-4" />
-          </Button>
-        )}
+        {/* Jump-to-bottom button */}
+        <button
+          onClick={() => {
+            const el = scrollRef.current
+            if (el) el.scrollTop = el.scrollHeight
+          }}
+          className={cn(
+            'absolute bottom-4 right-4 flex h-8 w-8 items-center justify-center rounded-full border bg-background shadow-md transition-all hover:shadow-lg',
+            isAtBottom ? 'pointer-events-none translate-y-2 opacity-0' : 'opacity-100',
+          )}
+          aria-label="Scroll to bottom"
+        >
+          <ArrowDown className="h-4 w-4" />
+        </button>
       </div>
 
       <Composer />

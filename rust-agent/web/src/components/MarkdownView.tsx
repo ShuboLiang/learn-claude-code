@@ -9,7 +9,7 @@ interface Props {
 
 export const MarkdownView = React.memo(function MarkdownView({ source }: Props) {
   return (
-    <div className="max-w-none [&_pre]:overflow-x-auto [&_code]:break-all [&_pre]:max-h-96">
+    <div className="max-w-none [&_pre]:overflow-x-auto [&_code]:break-words [&_pre]:max-h-[32rem]">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         rehypePlugins={[rehypeHighlight]}
