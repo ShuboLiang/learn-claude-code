@@ -26,6 +26,7 @@ interface ChatActions {
   clearCurrent: () => Promise<void>
   sendMessage: (content: string) => Promise<void>
   cancelStream: () => void
+  handleCommand: (cmd: string) => Promise<void>
 }
 
 function finalizeStreamingPreview(state: ChatState) {
@@ -246,6 +247,57 @@ export const useChatStore = create<ChatState & ChatActions>()(
               }
               s.streaming.active = false
             }
+          })
+        }
+      }
+    },
+
+    async handleCommand(cmd: string) {
+      if (cmd === '/bots') {
+        try {
+          const bots = await api.listBots()
+          set((s) => {
+            if (bots.length === 0) {
+              s.messages.push({
+                id: nanoid(),
+                role: 'user',
+                content: '/bots',
+                blocks: [],
+              })
+              s.messages.push({
+                id: nanoid(),
+                role: 'assistant',
+                content: '',
+                blocks: [
+                  { kind: 'text', content: 'No bots configured. Add bot definitions to `skills/` or `~/.rust-agent/skills/`.' },
+                ],
+              })
+            } else {
+              const lines = bots.map(
+                (b) => `- **${b.nickname || b.name}** (/${b.name}) — ${b.role || 'No description'}`,
+              )
+              s.messages.push({
+                id: nanoid(),
+                role: 'user',
+                content: '/bots',
+                blocks: [],
+              })
+              s.messages.push({
+                id: nanoid(),
+                role: 'assistant',
+                content: '',
+                blocks: [{ kind: 'text', content: lines.join('\n') }],
+              })
+            }
+          })
+        } catch {
+          set((s) => {
+            s.messages.push({
+              id: nanoid(),
+              role: 'assistant',
+              content: '',
+              blocks: [{ kind: 'error', code: 'BOTS_ERROR', message: 'Failed to fetch bots' }],
+            })
           })
         }
       }

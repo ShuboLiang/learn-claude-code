@@ -54,3 +54,15 @@ export function getMessages(id: string): Promise<ApiMessage[]> {
 export function clearSession(id: string): Promise<void> {
   return request(`/sessions/${encodeURIComponent(id)}/clear`, { method: 'POST' })
 }
+
+export interface BotInfo {
+  name: string
+  nickname: string
+  role: string
+  description: string
+  skills: string[]
+}
+
+export function listBots(): Promise<BotInfo[]> {
+  return request<{ bots: BotInfo[] }>('/bots').then((r) => r.bots)
+}
