@@ -4,52 +4,52 @@
 
 @layer base {
   :root {
-    --background: 240 10% 97%;
-    --foreground: 224 40% 8%;
+    --background: 340 30% 98%;
+    --foreground: 340 20% 10%;
     --card: 0 0% 100%;
-    --card-foreground: 224 40% 8%;
+    --card-foreground: 340 20% 10%;
     --popover: 0 0% 100%;
-    --popover-foreground: 224 40% 8%;
-    --primary: 243 75% 48%;
+    --popover-foreground: 340 20% 10%;
+    --primary: 340 80% 55%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 240 10% 94%;
-    --secondary-foreground: 224 40% 12%;
-    --muted: 240 8% 92%;
-    --muted-foreground: 224 10% 45%;
-    --accent: 243 75% 96%;
-    --accent-foreground: 243 75% 40%;
+    --secondary: 340 50% 95%;
+    --secondary-foreground: 340 40% 15%;
+    --muted: 340 20% 93%;
+    --muted-foreground: 340 15% 45%;
+    --accent: 340 70% 94%;
+    --accent-foreground: 340 70% 38%;
     --destructive: 0 72% 51%;
     --destructive-foreground: 0 0% 100%;
-    --border: 240 5% 88%;
-    --input: 240 5% 88%;
-    --ring: 243 75% 48%;
-    --radius: 0.625rem;
-    --sidebar: 240 10% 95%;
-    --sidebar-foreground: 224 40% 8%;
+    --border: 340 18% 88%;
+    --input: 340 18% 88%;
+    --ring: 340 80% 55%;
+    --radius: 0.75rem;
+    --sidebar: 340 25% 96%;
+    --sidebar-foreground: 340 20% 10%;
   }
 
   .dark {
-    --background: 230 25% 6%;
-    --foreground: 220 20% 94%;
-    --card: 230 20% 8%;
-    --card-foreground: 220 20% 94%;
-    --popover: 230 20% 8%;
-    --popover-foreground: 220 20% 94%;
-    --primary: 243 75% 62%;
+    --background: 335 25% 6%;
+    --foreground: 340 20% 94%;
+    --card: 335 18% 9%;
+    --card-foreground: 340 20% 94%;
+    --popover: 335 18% 9%;
+    --popover-foreground: 340 20% 94%;
+    --primary: 340 75% 60%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 230 10% 16%;
-    --secondary-foreground: 220 20% 92%;
-    --muted: 230 10% 16%;
-    --muted-foreground: 224 15% 65%;
-    --accent: 243 35% 22%;
-    --accent-foreground: 243 80% 75%;
-    --destructive: 0 65% 50%;
+    --secondary: 335 15% 18%;
+    --secondary-foreground: 340 20% 92%;
+    --muted: 335 15% 18%;
+    --muted-foreground: 340 15% 65%;
+    --accent: 340 40% 22%;
+    --accent-foreground: 340 80% 75%;
+    --destructive: 0 60% 50%;
     --destructive-foreground: 0 0% 100%;
-    --border: 230 12% 18%;
-    --input: 230 12% 18%;
-    --ring: 243 75% 62%;
-    --sidebar: 230 25% 4%;
-    --sidebar-foreground: 220 15% 85%;
+    --border: 335 15% 20%;
+    --input: 335 15% 20%;
+    --ring: 340 75% 60%;
+    --sidebar: 335 25% 4%;
+    --sidebar-foreground: 340 15% 85%;
   }
 }
 
@@ -74,7 +74,7 @@
   .bg-dot-pattern {
     background-image: radial-gradient(
       circle,
-      hsl(var(--muted-foreground) / 0.08) 1px,
+      hsl(340 60% 70% / 0.1) 1px,
       transparent 1px
     );
     background-size: 20px 20px;
