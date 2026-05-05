@@ -21,9 +21,12 @@ export function Composer() {
     const trimmed = text.trim()
     if (!trimmed || streaming?.active) return
 
+    // Expand escape sequences (\n → newline, \t → tab)
+    const formatted = trimmed.replace(/\\n/g, '\n').replace(/\\t/g, '\t')
+
     // Slash command handling
-    if (trimmed.startsWith('/')) {
-      const [cmd] = trimmed.split(/\s+/, 1)
+    if (formatted.startsWith('/')) {
+      const [cmd] = formatted.split(/\s+/, 1)
       switch (cmd) {
         case '/clear':
           clearCurrent()
@@ -32,15 +35,15 @@ export function Composer() {
           handleCommand('/bots')
           break
         default:
-          sendMessage(trimmed)
+          sendMessage(formatted)
       }
       setText('')
       return
     }
 
-    sendMessage(trimmed)
+    sendMessage(formatted)
     setText('')
-  }, [text, streaming?.active, sendMessage, clearCurrent])
+  }, [text, streaming?.active, sendMessage, clearCurrent, handleCommand])
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {

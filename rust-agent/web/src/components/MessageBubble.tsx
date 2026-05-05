@@ -207,7 +207,7 @@ function ToolCallCard({ toolCall }: { toolCall: UIToolCall }) {
             Input
           </summary>
           <pre className="mt-1.5 max-h-80 overflow-auto rounded-lg bg-muted p-2.5 text-[11px] font-mono leading-relaxed whitespace-pre-wrap break-all text-foreground/80">
-            {JSON.stringify(toolCall.input, null, 2)}
+            {formatDisplayJSON(toolCall.input)}
           </pre>
         </details>
       )}
@@ -218,12 +218,26 @@ function ToolCallCard({ toolCall }: { toolCall: UIToolCall }) {
             Output
           </summary>
           <pre className="mt-1.5 max-h-80 overflow-auto rounded-lg bg-muted p-2.5 text-[11px] font-mono leading-relaxed whitespace-pre-wrap break-all text-foreground/80">
-            {toolCall.output}
+            {formatEscape(toolCall.output)}
           </pre>
         </details>
       )}
     </details>
   )
+}
+
+function formatDisplayJSON(value: unknown): string {
+  return JSON.stringify(value, null, 2)
+    .replace(/\\n/g, '\n')
+    .replace(/\\t/g, '\t')
+    .replace(/\\r/g, '\r')
+}
+
+function formatEscape(text: string): string {
+  return text
+    .replace(/\\n/g, '\n')
+    .replace(/\\t/g, '\t')
+    .replace(/\\r/g, '\r')
 }
 
 // ── Parallel tool call grouper ──
