@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { Plus, Trash2, PanelLeftClose, PanelLeftOpen, Folder } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Tooltip,
   TooltipContent,
@@ -118,7 +117,7 @@ export function SessionList() {
           ))}
         </div>
       ) : (
-        <ScrollArea className="flex-1">
+        <div className="flex-1 overflow-y-auto overflow-x-hidden">
           {sessions.length === 0 ? (
             <div className="px-3 py-10 text-center">
               <p className="text-xs text-muted-foreground">No sessions yet</p>
@@ -157,7 +156,7 @@ export function SessionList() {
                           {firstChar(s.preview)}
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="line-clamp-2 break-all text-[11px] font-medium leading-snug text-foreground">
+                          <p className="line-clamp-2 break-words text-[11px] font-medium leading-snug text-foreground">
                             {s.preview || 'New session'}
                           </p>
                           <p className="mt-0.5 text-[10px] text-muted-foreground/80">
@@ -193,7 +192,7 @@ export function SessionList() {
               ))}
             </div>
           )}
-        </ScrollArea>
+        </div>
       )}
       {/* Delete confirm dialog */}
       <Dialog open={deleteTarget !== null} onOpenChange={() => setDeleteTarget(null)}>

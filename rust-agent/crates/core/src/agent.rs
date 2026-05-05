@@ -765,7 +765,7 @@ impl AgentApp {
                                     .send(AgentEvent::ToolResult {
                                         id: None,
                                         name: tc.name.clone(),
-                                        output: preview_text(&dispatch.output, 200),
+                                        output: dispatch.output.clone(),
                                         parallel_index: None,
                                     })
                                     .await;
@@ -846,7 +846,7 @@ impl AgentApp {
                         .send(AgentEvent::ToolResult {
                             id: None,
                             name: "call_bot".to_owned(),
-                            output: preview_text(&output, 200),
+                            output: output.clone(),
                             parallel_index: if bot_calls.len() > 1 {
                                 Some((idx + 1, bot_calls.len()))
                             } else {
@@ -936,7 +936,7 @@ impl AgentApp {
                             .send(AgentEvent::ToolResult {
                                 id: None,
                                 name: "task".to_owned(),
-                                output: preview_text(output, 200),
+                                output: output.clone(),
                                 parallel_index: if is_parallel {
                                     Some((idx + 1, actual_calls.len()))
                                 } else {
