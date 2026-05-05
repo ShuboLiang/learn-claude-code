@@ -1,22 +1,46 @@
-import { useState } from 'react'
-import { Plus, Trash2, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { useState, useRef } from 'react'
+import { Plus, Trash2, PanelLeftClose, PanelLeftOpen, Folder } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { useChatStore } from '@/store/chat'
 
 export function SessionList() {
   const [collapsed, setCollapsed] = useState(true)
+  const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  const [showNewDialog, setShowNewDialog] = useState(false)
+  const [newDir, setNewDir] = useState('')
+  const dirInputRef = useRef<HTMLInputElement>(null)
   const sessions = useChatStore((s) => s.sessions)
   const currentId = useChatStore((s) => s.currentSessionId)
   const createSession = useChatStore((s) => s.createSession)
   const selectSession = useChatStore((s) => s.selectSession)
   const deleteSession = useChatStore((s) => s.deleteSession)
+
+  const openNewDialog = () => {
+    setNewDir('')
+    setShowNewDialog(true)
+  }
+
+  const handleCreate = () => {
+    const trimmed = newDir.trim()
+    createSession(trimmed || undefined)
+    setShowNewDialog(false)
+  }
 
   return (
     <aside
@@ -50,7 +74,7 @@ export function SessionList() {
               variant="ghost"
               size="icon"
               className="h-7 w-7 text-muted-foreground hover:text-foreground"
-              onClick={() => createSession()}
+              onClick={openNewDialog}
               title="New session"
             >
               <Plus className="h-3.5 w-3.5" />
@@ -66,7 +90,7 @@ export function SessionList() {
             variant="ghost"
             size="icon"
             className="h-8 w-8 text-muted-foreground hover:text-foreground"
-            onClick={() => createSession()}
+            onClick={openNewDialog}
             title="New session"
           >
             <Plus className="h-4 w-4" />
@@ -97,6 +121,9 @@ export function SessionList() {
                 <p className="text-[10px] !text-white/70">
                   {s.message_count} msgs &middot; {relativeTime(s.last_active)}
                 </p>
+                <p className="mt-0.5 truncate text-[10px] !text-white/50">
+                  {shortPath(s.working_dir)}
+                </p>
               </TooltipContent>
             </Tooltip>
           ))}
@@ -110,7 +137,7 @@ export function SessionList() {
                 variant="outline"
                 size="sm"
                 className="mt-3 h-8 text-xs"
-                onClick={() => createSession()}
+                onClick={openNewDialog}
               >
                 <Plus className="mr-1 h-3 w-3" />
                 New Session
@@ -148,14 +175,18 @@ export function SessionList() {
                         <p className="mt-0.5 text-[10px] text-muted-foreground/80">
                           {s.message_count} msgs &middot; {relativeTime(s.last_active)}
                         </p>
+                        <p className="mt-0.5 flex items-center gap-1 truncate text-[10px] text-muted-foreground/50">
+                          <Folder className="h-2.5 w-2.5 shrink-0" />
+                          {shortPath(s.working_dir)}
+                        </p>
                       </div>
                       <Button
                         variant="ghost"
                         size="icon"
-                        className="h-6 w-6 shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+                        className="h-6 w-6 shrink-0 text-muted-foreground/40 hover:text-destructive"
                         onClick={(e) => {
                           e.stopPropagation()
-                          deleteSession(s.id)
+                          setDeleteTarget(s.id)
                         }}
                         title="Delete"
                       >
@@ -165,6 +196,9 @@ export function SessionList() {
                   </TooltipTrigger>
                   <TooltipContent side="right" className="max-w-64">
                     <p className="break-all text-xs !text-white">{s.preview || 'New session'}</p>
+                    <p className="mt-0.5 truncate text-[10px] !text-white/60">
+                      {s.working_dir}
+                    </p>
                   </TooltipContent>
                 </Tooltip>
               ))}
@@ -172,6 +206,64 @@ export function SessionList() {
           )}
         </ScrollArea>
       )}
+      {/* Delete confirm dialog */}
+      <Dialog open={deleteTarget !== null} onOpenChange={() => setDeleteTarget(null)}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>删除会话</DialogTitle>
+            <DialogDescription>
+              删除后无法恢复，确定要继续吗？
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>
+              取消
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (deleteTarget) {
+                  deleteSession(deleteTarget)
+                  setDeleteTarget(null)
+                }
+              }}
+            >
+              删除
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* New session dialog */}
+      <Dialog open={showNewDialog} onOpenChange={setShowNewDialog}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>新建会话</DialogTitle>
+            <DialogDescription>
+              输入工作目录路径，留空则使用服务器当前目录
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Input
+              ref={dirInputRef}
+              value={newDir}
+              onChange={(e) => setNewDir(e.target.value)}
+              placeholder="e.g. C:\projects\my-app"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleCreate()
+              }}
+            />
+          </div>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setShowNewDialog(false)}>
+              取消
+            </Button>
+            <Button onClick={handleCreate}>
+              创建
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </aside>
   )
 }
@@ -196,4 +288,11 @@ function relativeTime(iso: string): string {
   const days = Math.floor(hours / 24)
   if (days < 30) return `${days}d`
   return new Date(iso).toLocaleDateString()
+}
+
+function shortPath(path: string): string {
+  if (!path || path === '.') return '.'
+  const parts = path.replace(/\\/g, '/').split('/')
+  if (parts.length <= 2) return path
+  return '.../' + parts.slice(-2).join('/')
 }

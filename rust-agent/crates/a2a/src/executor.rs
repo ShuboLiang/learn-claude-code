@@ -57,7 +57,7 @@ impl AgentExecutor for RustAgentExecutor {
             let mut ctx_service_for_agent = ctx_service.clone();
             let agent_task = tokio::spawn(async move {
                 agent_clone
-                    .handle_user_turn(&mut ctx_service_for_agent, &user_input, event_tx)
+                    .handle_user_turn(&mut ctx_service_for_agent, &user_input, None, event_tx)
                     .await
             });
 

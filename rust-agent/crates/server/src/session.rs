@@ -13,6 +13,7 @@ pub struct Session {
     pub context: ContextService,
     pub created_at: DateTime<Utc>,
     pub last_active: DateTime<Utc>,
+    pub working_dir: PathBuf,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -22,6 +23,12 @@ struct SessionRecord {
     created_at: DateTime<Utc>,
     last_active: DateTime<Utc>,
     messages: Vec<rust_agent_core::api::types::ApiMessage>,
+    #[serde(default = "default_working_dir")]
+    working_dir: PathBuf,
+}
+
+fn default_working_dir() -> PathBuf {
+    PathBuf::from(".")
 }
 
 impl From<&Session> for SessionRecord {
@@ -32,6 +39,7 @@ impl From<&Session> for SessionRecord {
             created_at: session.created_at,
             last_active: session.last_active,
             messages: session.context.messages().to_vec(),
+            working_dir: session.working_dir.clone(),
         }
     }
 }
@@ -45,6 +53,7 @@ impl SessionRecord {
             context,
             created_at: self.created_at,
             last_active: self.last_active,
+            working_dir: self.working_dir,
         }
     }
 }
@@ -56,6 +65,7 @@ pub struct SessionSummary {
     pub last_active: DateTime<Utc>,
     pub message_count: usize,
     pub preview: String,
+    pub working_dir: String,
 }
 
 fn extract_preview(messages: &[rust_agent_core::api::types::ApiMessage]) -> String {
@@ -161,7 +171,7 @@ impl SessionStore {
         Self { sessions, data_dir }
     }
 
-    pub async fn create(&self) -> Arc<RwLock<Session>> {
+    pub async fn create(&self, working_dir: PathBuf) -> Arc<RwLock<Session>> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now();
         let session = Session {
@@ -169,6 +179,7 @@ impl SessionStore {
             context: ContextService::new(),
             created_at: now,
             last_active: now,
+            working_dir,
         };
         let arc = Arc::new(RwLock::new(session));
         self.sessions.insert(id.clone(), arc.clone());
@@ -236,6 +247,7 @@ impl SessionStore {
                 last_active: session.last_active,
                 message_count: session.context.len(),
                 preview: extract_preview(session.context.messages()),
+                working_dir: session.working_dir.display().to_string(),
             });
         }
         summaries.sort_by(|a, b| b.last_active.cmp(&a.last_active));
@@ -266,6 +278,7 @@ mod tests {
             context,
             created_at: Utc::now(),
             last_active: Utc::now(),
+            working_dir: PathBuf::from("."),
         };
         let record = SessionRecord::from(&session);
         let json = serde_json::to_string(&record).unwrap();
@@ -283,7 +296,7 @@ mod tests {
         tokio::fs::create_dir_all(&tmp).await.unwrap();
 
         let store = SessionStore::new(tmp.clone()).await;
-        let session_arc = store.create().await;
+        let session_arc = store.create(PathBuf::from(".")).await;
         let id = session_arc.read().await.id.clone();
 
         // File must exist on disk after persist
@@ -306,7 +319,7 @@ mod tests {
         tokio::fs::create_dir_all(&tmp).await.unwrap();
 
         let store = SessionStore::new(tmp.clone()).await;
-        let session_arc = store.create().await;
+        let session_arc = store.create(PathBuf::from(".")).await;
         let id = session_arc.read().await.id.clone();
         store.persist(&id).await;
 
@@ -323,8 +336,8 @@ mod tests {
         tokio::fs::create_dir_all(&tmp).await.unwrap();
 
         let store = SessionStore::new(tmp.clone()).await;
-        let s1 = store.create().await;
-        let s2 = store.create().await;
+        let s1 = store.create(PathBuf::from(".")).await;
+        let s2 = store.create(PathBuf::from(".")).await;
 
         {
             let mut s1_locked = s1.write().await;
@@ -354,7 +367,7 @@ mod tests {
         tokio::fs::create_dir_all(&tmp).await.unwrap();
 
         let store = SessionStore::new(tmp.clone()).await;
-        let session = store.create().await;
+        let session = store.create(PathBuf::from(".")).await;
         let id = session.read().await.id.clone();
         {
             let mut s = session.write().await;

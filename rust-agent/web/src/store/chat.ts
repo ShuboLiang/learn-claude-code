@@ -20,7 +20,7 @@ interface ChatState {
 
 interface ChatActions {
   loadSessions: () => Promise<void>
-  createSession: () => Promise<void>
+  createSession: (workingDir?: string) => Promise<void>
   selectSession: (id: string) => Promise<void>
   deleteSession: (id: string) => Promise<void>
   clearCurrent: () => Promise<void>
@@ -74,8 +74,8 @@ export const useChatStore = create<ChatState & ChatActions>()(
       }
     },
 
-    async createSession() {
-      const { id } = await api.createSession()
+    async createSession(workingDir?: string) {
+      const { id, working_dir } = await api.createSession(workingDir)
       set((s) => {
         s.sessions.unshift({
           id,
@@ -83,6 +83,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
           last_active: new Date().toISOString(),
           message_count: 0,
           preview: null,
+          working_dir,
         })
         s.currentSessionId = id
         s.messages = []

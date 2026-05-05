@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -348,6 +348,7 @@ impl AgentApp {
         &self,
         ctx: &mut ContextService,
         user_input: &str,
+        cwd: Option<&Path>,
         event_tx: mpsc::Sender<AgentEvent>,
     ) -> AgentResult<String> {
         let mut logger = ConversationLogger::create();
@@ -374,6 +375,7 @@ impl AgentApp {
                 AgentRunConfig::parent(),
                 &mut logger,
                 &event_tx,
+                cwd,
             )
             .await;
 
@@ -397,6 +399,7 @@ impl AgentApp {
         user_input: &str,
         system_prompt: String,
         event_tx: mpsc::Sender<AgentEvent>,
+        cwd: Option<&Path>,
     ) -> AgentResult<String> {
         let mut logger = ConversationLogger::create();
 
@@ -413,6 +416,7 @@ impl AgentApp {
                 AgentRunConfig::bot_api(),
                 &mut logger,
                 &event_tx,
+                cwd,
             )
             .await;
 
@@ -432,9 +436,11 @@ impl AgentApp {
         config: AgentRunConfig,
         logger: &mut ConversationLogger,
         event_tx: &Arc<mpsc::Sender<AgentEvent>>,
+        cwd: Option<&Path>,
     ) -> AgentResult<String> {
+        let workspace = cwd.unwrap_or(&self.workspace_root);
         let mut toolbox = AgentToolbox::new(
-            self.workspace_root.clone(),
+            workspace.to_path_buf(),
             Arc::clone(&self.skills),
             self.skill_dirs.clone(),
         );
@@ -1020,6 +1026,7 @@ impl AgentApp {
             AgentRunConfig::child(),
             logger,
             event_tx,
+            None,
         )
         .await
     }
@@ -1139,6 +1146,7 @@ impl AgentApp {
                 AgentRunConfig::child(),
                 &mut sub_logger,
                 event_tx,
+                None,
             )
             .await;
 

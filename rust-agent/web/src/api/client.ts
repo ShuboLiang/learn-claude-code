@@ -14,6 +14,7 @@ export class ApiError extends Error {
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init)
+  if (res.status === 204) return undefined as T
   if (!res.ok) {
     let code = 'UNKNOWN'
     let message = `HTTP ${res.status}`
@@ -33,8 +34,12 @@ export function listSessions(): Promise<SessionSummary[]> {
   return request<{ sessions: SessionSummary[] }>('/sessions').then((r) => r.sessions)
 }
 
-export function createSession(): Promise<{ id: string }> {
-  return request('/sessions', { method: 'POST' })
+export function createSession(workingDir?: string): Promise<{ id: string; working_dir: string }> {
+  return request('/sessions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ working_dir: workingDir || null }),
+  })
 }
 
 export function getSession(id: string): Promise<SessionSummary> {

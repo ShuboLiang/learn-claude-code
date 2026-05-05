@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -91,13 +92,27 @@ async fn health_check() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "status": "ok" }))
 }
 
+#[derive(Deserialize)]
+struct CreateSessionRequest {
+    #[serde(default)]
+    working_dir: Option<String>,
+}
+
 /// POST /sessions — 创建新会话（仅在内存中创建，首次对话时才持久化到磁盘）
-async fn create_session(State(state): State<AppState>) -> impl IntoResponse {
-    let session_arc = state.store.create().await;
+async fn create_session(
+    State(state): State<AppState>,
+    Json(body): Json<CreateSessionRequest>,
+) -> impl IntoResponse {
+    let working_dir = body
+        .working_dir
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let session_arc = state.store.create(working_dir).await;
     let session = session_arc.read().await;
     let model = state.agent.model().to_owned();
     let id = session.id.clone();
     let created_at = session.created_at.to_rfc3339();
+    let wd = session.working_dir.display().to_string();
     drop(session);
     // 不在此处 persist，避免产生空会话文件
     // 文件将在首次 send_message 时（有实际对话内容后）才写入磁盘
@@ -106,6 +121,7 @@ async fn create_session(State(state): State<AppState>) -> impl IntoResponse {
         "id": id,
         "model": model,
         "created_at": created_at,
+        "working_dir": wd,
     }))
     .into_response()
 }
@@ -200,9 +216,10 @@ async fn send_message(
     tokio::spawn(async move {
         tracing::info!("[send_message] 等待获取 session 写锁...");
         let mut session = session_arc.write().await;
+        let cwd = session.working_dir.clone();
         tracing::info!("[send_message] 获取写锁成功，开始调用 handle_user_turn");
         if let Err(e) = agent
-            .handle_user_turn(&mut session.context, &content, event_tx.clone())
+            .handle_user_turn(&mut session.context, &content, Some(&cwd), event_tx.clone())
             .await
         {
             tracing::error!("[send_message] handle_user_turn 失败: {e:#}");
@@ -330,7 +347,7 @@ async fn bot_task(
         );
 
         if let Err(e) = bot_agent
-            .handle_bot_turn(&mut ctx, &user_content, system_prompt, event_tx.clone())
+            .handle_bot_turn(&mut ctx, &user_content, system_prompt, event_tx.clone(), None)
             .await
         {
             let _ = event_tx
