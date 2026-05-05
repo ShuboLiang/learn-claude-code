@@ -269,7 +269,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
                 role: 'assistant',
                 content: '',
                 blocks: [
-                  { kind: 'text', content: 'No bots configured. Add bot definitions to `skills/` or `~/.rust-agent/skills/`.' },
+                  { kind: 'text', content: '暂无已配置的 Bot。将 Bot 定义文件放入 skills/ 或 ~/.rust-agent/skills/ 目录即可。' },
                 ],
               })
             } else {
@@ -296,7 +296,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
               id: nanoid(),
               role: 'assistant',
               content: '',
-              blocks: [{ kind: 'error', code: 'BOTS_ERROR', message: 'Failed to fetch bots' }],
+              blocks: [{ kind: 'error', code: 'BOTS_ERROR', message: '获取 Bot 列表失败' }],
             })
           })
         }
