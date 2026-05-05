@@ -219,7 +219,16 @@ export const useChatStore = create<ChatState & ChatActions>()(
           const msgs = await api.getMessages(sid)
           set((s) => {
             if (s.streaming?.abort === abortController) {
-              s.messages = normalizeApiMessages(msgs, nanoid)
+              const hydrated = normalizeApiMessages(msgs, nanoid)
+              // Only append new assistant messages to preserve existing keys
+              const prevLen = s.messages.length
+              if (hydrated.length > prevLen) {
+                for (let i = prevLen; i < hydrated.length; i++) {
+                  s.messages.push(hydrated[i])
+                }
+              } else {
+                s.messages = hydrated
+              }
               s.streaming = null
             }
           })
