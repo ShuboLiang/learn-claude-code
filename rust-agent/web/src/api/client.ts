@@ -12,7 +12,7 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
+async function request<T>(url: string, init?: RequestInit & { signal?: AbortSignal }): Promise<T> {
   const res = await fetch(url, init)
   if (res.status === 204) return undefined as T
   if (!res.ok) {
@@ -30,18 +30,19 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return res.json()
 }
 
-export function listSessions(): Promise<SessionSummary[]> {
-  return request<{ sessions: SessionSummary[] }>('/sessions').then((r) => r.sessions)
+export function listSessions(signal?: AbortSignal): Promise<SessionSummary[]> {
+  return request<{ sessions: SessionSummary[] }>('/sessions', { signal }).then((r) => r.sessions)
 }
 
-export function getConfig(): Promise<ConfigResponse> {
-  return request<ConfigResponse>('/config')
+export function getConfig(signal?: AbortSignal): Promise<ConfigResponse> {
+  return request<ConfigResponse>('/config', { signal })
 }
 
 export function createSession(
   workingDir?: string,
   profile?: string,
   model?: string,
+  signal?: AbortSignal,
 ): Promise<{ id: string; working_dir: string; model: string; profile: string }> {
   return request('/sessions', {
     method: 'POST',
@@ -51,36 +52,40 @@ export function createSession(
       profile: profile || null,
       model: model || null,
     }),
+    signal,
   })
 }
 
-export function getSession(id: string): Promise<SessionSummary & { profile?: string; model?: string }> {
-  return request(`/sessions/${encodeURIComponent(id)}`)
+export function getSession(id: string, signal?: AbortSignal): Promise<SessionSummary & { profile?: string; model?: string }> {
+  return request(`/sessions/${encodeURIComponent(id)}`, { signal })
 }
 
-export function deleteSession(id: string): Promise<void> {
-  return request(`/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' })
+export function deleteSession(id: string, signal?: AbortSignal): Promise<void> {
+  return request(`/sessions/${encodeURIComponent(id)}`, { method: 'DELETE', signal })
 }
 
-export function getMessages(id: string): Promise<ApiMessage[]> {
+export function getMessages(id: string, signal?: AbortSignal): Promise<ApiMessage[]> {
   return request<{ messages: ApiMessage[] }>(
     `/sessions/${encodeURIComponent(id)}/messages`,
+    { signal },
   ).then((r) => r.messages)
 }
 
-export function clearSession(id: string): Promise<void> {
-  return request(`/sessions/${encodeURIComponent(id)}/clear`, { method: 'POST' })
+export function clearSession(id: string, signal?: AbortSignal): Promise<void> {
+  return request(`/sessions/${encodeURIComponent(id)}/clear`, { method: 'POST', signal })
 }
 
 export function updateSessionConfig(
   id: string,
   profile?: string,
   model?: string,
+  signal?: AbortSignal,
 ): Promise<{ status: string }> {
   return request(`/sessions/${encodeURIComponent(id)}/config`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ profile: profile || null, model: model || null }),
+    signal,
   })
 }
 

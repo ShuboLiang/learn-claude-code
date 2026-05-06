@@ -130,14 +130,19 @@ async function runSSELoop(
         if (!target || target.abort !== abortController) return;
         const blocks = buildStreamingBlocks(target);
         if (blocks.length > 0) {
-          s.messages.push({
+          const assistantMsg = {
             id: nanoid(),
-            role: "assistant",
+            role: "assistant" as const,
             content: "",
             blocks,
             apiCalls: target.apiCalls,
             tokenUsage: target.tokenUsage ?? undefined,
-          });
+          };
+          s.messages.push(assistantMsg);
+          // 同步缓存
+          if (s.messagesBySession[sid]) {
+            s.messagesBySession[sid].push(assistantMsg);
+          }
         }
         delete s.streamingBySession[sid];
         if (s.currentSessionId === sid) s.streaming = null;
@@ -155,26 +160,26 @@ async function runSSELoop(
         const target = s.streamingBySession[sid];
         if (!target || target.abort !== abortController) return;
         const hydrated = normalizeApiMessages(msgs, nanoid);
-        const prevLen = s.messages.length;
-        if (hydrated.length > prevLen) {
-          for (let i = prevLen; i < hydrated.length; i++)
-            s.messages.push(hydrated[i]);
-        } else {
-          s.messages = hydrated;
-        }
+        
+        // 更新当前显示和缓存
+        if (s.currentSessionId === sid) s.messages = hydrated;
+        s.messagesBySession[sid] = hydrated;
+
         if (target.error) {
-          s.messages.push({
+          const errorMsg = {
             id: nanoid(),
-            role: "assistant",
+            role: "assistant" as const,
             content: "",
             blocks: [
               {
-                kind: "error",
+                kind: "error" as const,
                 code: target.error.code,
                 message: target.error.message,
               },
             ],
-          });
+          };
+          s.messages.push(errorMsg);
+          if (s.messagesBySession[sid]) s.messagesBySession[sid].push(errorMsg);
         }
         delete s.streamingBySession[sid];
         if (s.currentSessionId === sid) s.streaming = null;
@@ -194,14 +199,16 @@ async function runSSELoop(
       if (code !== "ABORT") target.error = { code, message };
       const blocks = buildStreamingBlocks(target);
       if (blocks.length > 0) {
-        s.messages.push({
+        const assistantMsg = {
           id: nanoid(),
-          role: "assistant",
+          role: "assistant" as const,
           content: "",
           blocks,
           apiCalls: target.apiCalls,
           tokenUsage: target.tokenUsage ?? undefined,
-        });
+        };
+        s.messages.push(assistantMsg);
+        if (s.messagesBySession[sid]) s.messagesBySession[sid].push(assistantMsg);
       }
       delete s.streamingBySession[sid];
       if (s.currentSessionId === sid) s.streaming = null;
@@ -215,6 +222,8 @@ interface ChatState {
   sessions: SessionSummary[];
   currentSessionId: string | null;
   messages: UIMessage[];
+  /** 缓存各会话的消息列表，实现秒切 */
+  messagesBySession: Record<string, UIMessage[]>;
   streaming: StreamingState | null;
   /** 按会话存储的后台流式状态，切会话时不中断，切回时恢复 */
   streamingBySession: Record<string, StreamingState>;
@@ -222,6 +231,8 @@ interface ChatState {
   profiles: ProfileInfo[];
   selectedProfile: string;
   selectedModel: string;
+  /** 用于取消正在进行的 getMessages 请求 */
+  loadAbortController: AbortController | null;
 }
 
 interface ChatActions {
@@ -264,12 +275,14 @@ export const useChatStore = create<ChatState & ChatActions>()(
     sessions: [],
     currentSessionId: null,
     messages: [],
+    messagesBySession: {},
     streaming: null,
     streamingBySession: {},
     loadError: null,
     profiles: [],
     selectedProfile: "",
     selectedModel: "",
+    loadAbortController: null,
 
     // ── Config action ──
 
@@ -330,25 +343,38 @@ export const useChatStore = create<ChatState & ChatActions>()(
         });
         s.currentSessionId = id;
         s.messages = [];
+        s.messagesBySession[id] = [];
         s.streaming = null;
       });
     },
 
     async selectSession(id: string) {
-      const prevId = get().currentSessionId;
+      const state = get();
+      const prevId = state.currentSessionId;
+
+      // 1. 取消正在进行的加载请求
+      if (state.loadAbortController) {
+        state.loadAbortController.abort();
+      }
+
+      const abortController = new AbortController();
+
       set((s) => {
         // 保存当前会话的流式状态到后台 map
         if (prevId && s.streaming) {
           s.streamingBySession[prevId] = s.streaming;
         }
         s.currentSessionId = id;
+        s.loadAbortController = abortController;
+
         // 恢复目标会话的流式状态（不中断后台 SSE）
         s.streaming = s.streamingBySession[id] ?? null;
-        // 注意：不立即清空 messages，避免空白闪烁；
-        // getMessages 完成后替换即可
+
+        // 优先从缓存恢复，实现秒切
+        s.messages = s.messagesBySession[id] ?? [];
       });
-      // 从已加载的 sessions 列表中同步 profile/model 到选择器
-      // 避免调用 api.getSession（可能被写锁阻塞）
+
+      // 同步 profile/model 选择器
       const sess = get().sessions.find((ss) => ss.id === id);
       if (sess) {
         set((s) => {
@@ -356,40 +382,38 @@ export const useChatStore = create<ChatState & ChatActions>()(
           if (sess.model) s.selectedModel = sess.model;
         });
       }
+
+      // 2. 异步加载/刷新消息列表
       try {
-        const msgs = await api.getMessages(id);
-        console.log('[selectSession] getMessages 返回消息数量:', msgs.length);
+        const msgs = await api.getMessages(id, abortController.signal);
         const normalized = normalizeApiMessages(msgs, nanoid);
-        console.log('[selectSession] normalize 后消息数量:', normalized.length);
+        
         set((s) => {
-          s.messages = normalized;
+          // 仅在当前会话仍然匹配时更新（虽然有 AbortSignal，但双重保险更安全）
+          if (s.currentSessionId === id) {
+            s.messages = normalized;
+            s.messagesBySession[id] = normalized;
+            s.loadAbortController = null;
+          }
         });
-      } catch {
-        // 加载失败时保留现有 messages（可能是旧会话的内容）
-        // 或者如果是全新会话，messages 自然为空
+      } catch (err: any) {
+        if (err.name === 'AbortError') return;
+        console.error("加载消息失败:", err);
       }
 
-      // 尝试恢复会话的实时 SSE 流（刷新后或切回时）
-      // 如果服务端有活跃流，自动订阅；如果无流（404），静默忽略
-      const abortController = new AbortController();
+      // 3. 尝试恢复会话的实时 SSE 流
+      const sseAbortController = new AbortController();
       const existingSt = get().streamingBySession[id];
 
       if (existingSt && existingSt.active) {
-        // 已有活跃流式状态（切会话再切回）：复用已有状态，只更新 abort controller
-        // 避免用空的 recoverSt 覆盖已累积的 assistantText/thinking/tools
         set((s) => {
           const st = s.streamingBySession[id];
           if (st) {
-            st.abort = abortController;
+            st.abort = sseAbortController;
             if (s.currentSessionId === id) s.streaming = st;
           }
         });
-        console.log(
-          "[selectSession] 复用已有活跃流状态, assistantText 长度:",
-          existingSt.assistantText.length,
-        );
       } else {
-        // 无可复用状态（刷新浏览器后）：创建新的空状态
         const recoverSt: StreamingState = {
           active: true,
           assistantText: "",
@@ -400,17 +424,15 @@ export const useChatStore = create<ChatState & ChatActions>()(
           retrying: null,
           apiCalls: 0,
           tokenUsage: null,
-          abort: abortController,
+          abort: sseAbortController,
         };
         set((s) => {
           s.streamingBySession[id] = recoverSt;
           if (s.currentSessionId === id) s.streaming = recoverSt;
         });
-        console.log("[selectSession] 创建新的流恢复状态");
       }
 
-      // 尝试订阅，失败（无活跃流）时清理
-      runSSELoop(id, abortController, set, get).catch(() => {
+      runSSELoop(id, sseAbortController, set, get).catch(() => {
         set((s) => {
           delete s.streamingBySession[id];
           if (s.currentSessionId === id) s.streaming = null;
@@ -426,6 +448,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
       set((s) => {
         s.sessions = s.sessions.filter((ss) => ss.id !== id);
         delete s.streamingBySession[id];
+        delete s.messagesBySession[id]; // 同步清理缓存
         if (s.currentSessionId === id) {
           s.currentSessionId = null;
           s.messages = [];
@@ -449,6 +472,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
       await api.clearSession(id);
       set((s) => {
         s.messages = [];
+        s.messagesBySession[id] = []; // 同步清空缓存
         if (s.currentSessionId === id) s.streaming = null;
       });
     },
@@ -479,7 +503,13 @@ export const useChatStore = create<ChatState & ChatActions>()(
       // 立即推入用户消息并更新侧边栏
       const now = new Date().toISOString();
       set((s) => {
-        s.messages.push({ id: nanoid(), role: "user", content, blocks: [] });
+        const userMsg = { id: nanoid(), role: "user" as const, content, blocks: [] };
+        s.messages.push(userMsg);
+        
+        // 同步缓存
+        if (!s.messagesBySession[sid]) s.messagesBySession[sid] = [];
+        s.messagesBySession[sid].push(userMsg);
+
         const si = s.sessions.findIndex((ss) => ss.id === sid);
         if (si >= 0) {
           s.sessions[si].message_count += 1;
