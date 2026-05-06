@@ -41,11 +41,16 @@ export interface ApiMessage {
   content: string | ApiContentBlock[]
 }
 
+// ── 事件来源标识 ──
+export type EventSource =
+  | { role: 'main' }
+  | { role: 'bot'; name: string; call_id: string }
+
 // ── SSE Events (8 variants, matches AgentEvent + agent_event_to_sse) ──
 
 export type SSEEvent =
-  | { event: 'text_delta'; data: { content: string } }
-  | { event: 'thinking_delta'; data: { content: string } }
+  | { event: 'text_delta'; data: { content: string; source: EventSource } }
+  | { event: 'thinking_delta'; data: { content: string; source: EventSource } }
   | {
       event: 'tool_call'
       data: {
@@ -53,6 +58,7 @@ export type SSEEvent =
         input: unknown
         id: string | null
         parallel_index?: ParallelIndex
+        source: EventSource
       }
     }
   | {
@@ -62,14 +68,15 @@ export type SSEEvent =
         output: string
         id: string | null
         parallel_index?: ParallelIndex
+        source: EventSource
       }
     }
   | {
       event: 'turn_end'
-      data: { api_calls: number; token_usage?: TokenUsage }
+      data: { api_calls: number; token_usage?: TokenUsage; source: EventSource }
     }
-  | { event: 'done'; data: Record<string, never> }
-  | { event: 'error'; data: { code: string; message: string } }
+  | { event: 'done'; data: { source: EventSource } }
+  | { event: 'error'; data: { code: string; message: string; source: EventSource } }
   | {
       event: 'retrying'
       data: {
@@ -77,6 +84,7 @@ export type SSEEvent =
         max_retries: number
         wait_seconds: number
         detail?: string
+        source: EventSource
       }
     }
 

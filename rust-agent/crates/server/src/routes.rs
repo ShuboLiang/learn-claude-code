@@ -15,7 +15,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt;
 
-use rust_agent_core::agent::{AgentApp, AgentEvent};
+use rust_agent_core::agent::{AgentApp, AgentEvent, EventSource};
 use rust_agent_core::api::LlmProvider;
 use rust_agent_core::infra::config::AppConfig;
 use rust_agent_core::bots::BotRegistry;
@@ -415,8 +415,9 @@ async fn send_message(
                     broadcaster.send(&session_id, AgentEvent::Error {
                         code: "profile_error".to_owned(),
                         message: format!("{e:#}"),
+                        source: EventSource::Main,
                     });
-                    broadcaster.send(&session_id, AgentEvent::Done);
+                    broadcaster.send(&session_id, AgentEvent::Done { source: EventSource::Main });
                     return;
                 }
             }
@@ -455,6 +456,7 @@ async fn send_message(
             broadcaster.send(&session_id, rust_agent_core::agent::AgentEvent::Error {
                 code: "agent_error".to_owned(),
                 message: format!("{e:#}"),
+                source: EventSource::Main,
             });
         }
         tracing::info!("[send_message] handle_user_turn 完成");
@@ -466,7 +468,7 @@ async fn send_message(
         }
         store.persist(&session_id).await;
         // 发送 Done 事件，通知所有订阅者流已结束
-        broadcaster.send(&session_id, rust_agent_core::agent::AgentEvent::Done);
+        broadcaster.send(&session_id, rust_agent_core::agent::AgentEvent::Done { source: EventSource::Main });
         tracing::info!("[send_message] Done 事件已发送");
         // 流结束后延迟清理广播频道，让新 subscriber 有机会通过历史重放恢复状态
         let broadcaster_cleanup = broadcaster.clone();
@@ -1008,12 +1010,13 @@ async fn bot_task(
                 .send(rust_agent_core::agent::AgentEvent::Error {
                     code: "bot_agent_error".to_owned(),
                     message: format!("{e:#}"),
+                    source: EventSource::Main,
                 })
                 .await;
         }
         // 无论成功还是失败，都发送 Done 事件，让客户端知道 SSE 流已结束
         let _ = event_tx
-            .send(rust_agent_core::agent::AgentEvent::Done)
+            .send(rust_agent_core::agent::AgentEvent::Done { source: EventSource::Main })
             .await;
     });
 
