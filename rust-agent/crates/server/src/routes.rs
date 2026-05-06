@@ -392,7 +392,7 @@ async fn send_message(
     let store = state.store.clone();
     let broadcaster = state.broadcaster.clone();
     // 获取或创建该会话的广播发送端
-    let event_tx = broadcaster.get_or_create(&session_id);
+    let _event_tx = broadcaster.get_or_create(&session_id);
 
     tokio::spawn(async move {
         tracing::info!("[send_message] 等待获取 session 读锁...");
@@ -465,11 +465,11 @@ async fn send_message(
         // 发送 Done 事件，通知所有订阅者流已结束
         broadcaster.send(&session_id, rust_agent_core::agent::AgentEvent::Done);
         tracing::info!("[send_message] Done 事件已发送");
-        // 清理广播频道（延迟几秒，让 lagging subscriber 有机会收到 Done）
+        // 流结束后延迟清理广播频道，让新 subscriber 有机会通过历史重放恢复状态
         let broadcaster_cleanup = broadcaster.clone();
         let sid_cleanup = session_id.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(Duration::from_secs(10)).await;
             broadcaster_cleanup.remove(&sid_cleanup);
             tracing::info!("[send_message] 广播频道已清理: {sid_cleanup}");
         });
@@ -480,12 +480,15 @@ async fn send_message(
 }
 
 /// GET /sessions/{id}/stream — 订阅会话的 SSE 实时流
+///
+/// 新 subscriber 会先收到缓存的历史事件重放，再接收实时增量事件。
+/// 这让刷新浏览器的客户端不会丢失已累积的流式文本。
 async fn stream_session(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> impl IntoResponse {
-    let rx = match state.broadcaster.subscribe(&id) {
-        Some(rx) => rx,
+    let (rx, history) = match state.broadcaster.subscribe(&id) {
+        Some((rx, history)) => (rx, history),
         None => {
             return (
                 StatusCode::NOT_FOUND,
@@ -497,12 +500,22 @@ async fn stream_session(
         }
     };
 
-    let stream = tokio_stream::wrappers::BroadcastStream::new(rx)
+    // 历史事件流（刷新后重放，让客户端恢复已累积状态）
+    let history_stream = futures::stream::iter(
+        history.into_iter().map(agent_event_to_sse),
+    )
+    .map(Ok::<_, std::convert::Infallible>);
+
+    // 实时事件流
+    let live_stream = tokio_stream::wrappers::BroadcastStream::new(rx)
         .filter_map(|result| match result {
             Ok(evt) => Some(agent_event_to_sse(evt)),
             Err(_) => None, // 忽略 lagging subscriber 错误
         })
         .map(Ok::<_, std::convert::Infallible>);
+
+    // 先历史后实时
+    let stream = history_stream.chain(live_stream);
 
     axum::response::sse::Sse::new(stream)
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))

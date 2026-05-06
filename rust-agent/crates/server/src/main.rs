@@ -114,7 +114,7 @@ async fn main() -> anyhow::Result<()> {
         bot_registry,
         config,
         providers,
-        broadcaster: Arc::new(broadcaster::SessionBroadcaster::new(256)),
+        broadcaster: Arc::new(broadcaster::SessionBroadcaster::new(4096)),
     };
 
     let app = Router::new()

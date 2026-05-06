@@ -59,6 +59,7 @@ export function normalizeApiMessages(
   for (const msg of apiMessages) {
     if (msg.role === 'assistant') {
       const blocks = assistantBlocks(msg.content, toolCallMap)
+      console.log(`[normalizeApiMessages] assistant msg blocks=${blocks.length}, contentType=${typeof msg.content}`)
       if (blocks.length > 0) {
         result.push({
           id: generateId(),
@@ -66,10 +67,15 @@ export function normalizeApiMessages(
           content: '',
           blocks,
         })
+      } else {
+        console.log('[normalizeApiMessages] ⚠️ assistant msg 被跳过（blocks 为空）')
       }
     } else {
       // User message: skip if it's purely tool_result blocks
-      if (isPureToolResult(msg.content)) continue
+      if (isPureToolResult(msg.content)) {
+        console.log('[normalizeApiMessages] user msg 被跳过（纯 tool_result）')
+        continue
+      }
       const text = userText(msg.content)
       result.push({
         id: generateId(),
@@ -80,6 +86,7 @@ export function normalizeApiMessages(
     }
   }
 
+  console.log('[normalizeApiMessages] 输出消息数量:', result.length)
   return result
 }
 

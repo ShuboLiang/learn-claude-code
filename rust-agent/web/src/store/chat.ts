@@ -46,9 +46,11 @@ async function runSSELoop(
 
   try {
     const stream = subscribeSessionStream(sid, abortController);
+    let receivedAnyEvent = false;
 
     for await (const evt of stream) {
       if (isAborted()) break;
+      receivedAnyEvent = true;
 
       set((s) => {
         const target = s.streamingBySession[sid];
@@ -151,6 +153,15 @@ async function runSSELoop(
 
     if (isAborted()) {
       finalize();
+      return;
+    }
+
+    // 未收到任何事件（404 空流，会话无活跃流）：直接清理状态，跳过 hydration
+    if (!receivedAnyEvent) {
+      set((s) => {
+        delete s.streamingBySession[sid];
+        if (s.currentSessionId === sid) s.streaming = null;
+      });
       return;
     }
 
@@ -384,10 +395,13 @@ export const useChatStore = create<ChatState & ChatActions>()(
       }
 
       // 2. 异步加载/刷新消息列表
+      console.log('[selectSession] 开始加载消息, 当前缓存长度:', get().messagesBySession[id]?.length ?? 0);
       try {
         const msgs = await api.getMessages(id, abortController.signal);
+        console.log('[selectSession] getMessages 返回原始消息数量:', msgs.length);
         const normalized = normalizeApiMessages(msgs, nanoid);
-        
+        console.log('[selectSession] normalize 后消息数量:', normalized.length);
+
         set((s) => {
           // 仅在当前会话仍然匹配时更新（虽然有 AbortSignal，但双重保险更安全）
           if (s.currentSessionId === id) {
@@ -397,8 +411,11 @@ export const useChatStore = create<ChatState & ChatActions>()(
           }
         });
       } catch (err: any) {
-        if (err.name === 'AbortError') return;
-        console.error("加载消息失败:", err);
+        if (err.name === 'AbortError') {
+          console.log('[selectSession] getMessages 被取消');
+          return;
+        }
+        console.error("[selectSession] 加载消息失败:", err);
       }
 
       // 3. 尝试恢复会话的实时 SSE 流
