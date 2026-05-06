@@ -42,14 +42,14 @@ fn bot_session_save_and_retrieve() {
     let registry = BotRegistry::default();
 
     // 首次获取 — 应无活跃会话
-    assert!(registry.get_session("resume-screener").is_none());
+    assert!(registry.get_session("resume-screener", "").is_none());
 
     // 保存会话
     let ctx = ContextService::new();
-    registry.save_session("resume-screener".to_owned(), ctx);
+    registry.save_session("resume-screener".to_owned(), ctx, "".to_owned());
 
     // 再次获取 — 应有活跃会话
-    let session = registry.get_session("resume-screener");
+    let session = registry.get_session("resume-screener", "");
     assert!(session.is_some());
     assert!(!session.unwrap().is_expired());
 }
@@ -60,12 +60,12 @@ fn bot_session_clear_removes_session() {
 
     // 保存会话
     let ctx = ContextService::new();
-    registry.save_session("resume-screener".to_owned(), ctx);
-    assert!(registry.get_session("resume-screener").is_some());
+    registry.save_session("resume-screener".to_owned(), ctx, "".to_owned());
+    assert!(registry.get_session("resume-screener", "").is_some());
 
     // 清除会话
     registry.clear_session("resume-screener");
-    assert!(registry.get_session("resume-screener").is_none());
+    assert!(registry.get_session("resume-screener", "").is_none());
 }
 
 #[test]
@@ -74,11 +74,11 @@ fn bot_session_cleanup_preserves_fresh_sessions() {
 
     // 保存刚创建的会话
     let ctx = ContextService::new();
-    registry.save_session("test-bot".to_owned(), ctx);
+    registry.save_session("test-bot".to_owned(), ctx, "".to_owned());
 
     // 清理过期会话 — 刚创建的会话不应被删除
     registry.cleanup_expired_sessions();
-    assert!(registry.get_session("test-bot").is_some());
+    assert!(registry.get_session("test-bot", "").is_some());
 }
 
 #[test]
@@ -87,12 +87,12 @@ fn bot_session_save_overwrites_previous() {
 
     // 第一次保存
     let ctx1 = ContextService::new();
-    registry.save_session("repeated-bot".to_owned(), ctx1);
+    registry.save_session("repeated-bot".to_owned(), ctx1, "".to_owned());
 
     // 第二次保存（覆盖）
     let ctx2 = ContextService::new();
-    registry.save_session("repeated-bot".to_owned(), ctx2);
+    registry.save_session("repeated-bot".to_owned(), ctx2, "".to_owned());
 
     // 应仍有会话（被覆盖而不是丢失）
-    assert!(registry.get_session("repeated-bot").is_some());
+    assert!(registry.get_session("repeated-bot", "").is_some());
 }

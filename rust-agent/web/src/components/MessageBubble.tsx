@@ -148,7 +148,8 @@ function ToolCallCard({ toolCall }: { toolCall: UIToolCall }) {
   }
 
   const { dot, label } = statusConfig[toolCall.status]
-  const hasDetail = toolCall.input != null || toolCall.output != null
+  const isCallBot = toolCall.name === 'call_bot'
+  const hasDetail = toolCall.input != null || toolCall.output != null || isCallBot
 
   const inner = (
     <div className="flex items-center gap-1.5 min-w-0">
@@ -172,7 +173,10 @@ function ToolCallCard({ toolCall }: { toolCall: UIToolCall }) {
   }
 
   return (
-    <details className="rounded-xl bg-secondary/60 px-3 py-2 ring-1 ring-border group transition-colors hover:bg-secondary">
+    <details
+      className="rounded-xl bg-secondary/60 px-3 py-2 ring-1 ring-border group transition-colors hover:bg-secondary"
+      open={isCallBot && toolCall.status === 'running'}
+    >
       <summary className="cursor-pointer list-none flex items-center gap-1.5">
         <span className="text-[9px] text-muted-foreground transition-transform group-open:rotate-90 shrink-0">
           ▶
@@ -200,6 +204,28 @@ function ToolCallCard({ toolCall }: { toolCall: UIToolCall }) {
             {formatEscape(toolCall.output)}
           </pre>
         </details>
+      )}
+
+      {/* Bot 实时思考过程 */}
+      {toolCall.botThinking && (
+        <details className="mt-2 ml-3.5" open>
+          <summary className="cursor-pointer text-[10px] font-medium text-muted-foreground hover:text-foreground">
+            Thinking
+          </summary>
+          <div className="mt-1.5 whitespace-pre-wrap rounded-lg border-l-2 border-foreground/20 bg-secondary/50 px-3 py-2 text-xs text-foreground/80 font-mono leading-relaxed">
+            {toolCall.botThinking}
+          </div>
+        </details>
+      )}
+
+      {/* Bot 实时回复（流式期间）或最终输出（完成后） */}
+      {(toolCall.botText || toolCall.output) && (
+        <div className="mt-2 ml-3.5">
+          <p className="text-[10px] font-medium text-muted-foreground mb-1">Bot 回复</p>
+          <div className="text-sm leading-relaxed">
+            <MarkdownView source={toolCall.botText || toolCall.output || ''} />
+          </div>
+        </div>
       )}
 
       {/* Bot 子代理内部的嵌套工具调用 */}

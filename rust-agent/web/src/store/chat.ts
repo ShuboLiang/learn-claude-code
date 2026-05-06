@@ -21,39 +21,20 @@ export function buildStreamingBlocks(
     tools: import('@/types/ui').UIToolCall[]
     error: { code: string; message: string } | null
   },
-  finalized: boolean = false,
+  _finalized: boolean = false,
 ): UIBlock[] {
   const blocks: UIBlock[] = []
 
-  if (finalized) {
-    // 完成时：按原始 blockOrder 输出所有内容（文本 + 工具卡片）
-    for (const key of st.blockOrder) {
-      if (key === 'thinking' && st.thinking) {
-        blocks.push({ kind: 'thinking', content: st.thinking })
-      } else if (key === 'text' && st.assistantText) {
-        blocks.push({ kind: 'text', content: st.assistantText })
-      } else if (key.startsWith('tool:')) {
-        const toolId = key.slice(5)
-        const tc = st.tools.find((t) => t.id === toolId)
-        if (tc) blocks.push({ kind: 'toolCall', toolCall: tc })
-      }
-    }
-  } else {
-    // 流式期：只输出文本内容，工具调用折叠为迷你状态条
-    if (st.thinking) {
+  // 流式期和完成期统一按 blockOrder 输出所有内容（文本 + 工具卡片）
+  for (const key of st.blockOrder) {
+    if (key === 'thinking' && st.thinking) {
       blocks.push({ kind: 'thinking', content: st.thinking })
-    }
-    if (st.assistantText) {
+    } else if (key === 'text' && st.assistantText) {
       blocks.push({ kind: 'text', content: st.assistantText })
-    }
-    const running = st.tools.filter((t) => t.status === 'running').length
-    const done = st.tools.filter((t) => t.status === 'done').length
-    const total = st.tools.length
-    if (total > 0) {
-      blocks.push({
-        kind: 'text',
-        content: `\n\n[工具调用中: ${done}/${total} 完成]`,
-      })
+    } else if (key.startsWith('tool:')) {
+      const toolId = key.slice(5)
+      const tc = st.tools.find((t) => t.id === toolId)
+      if (tc) blocks.push({ kind: 'toolCall', toolCall: tc })
     }
   }
 
