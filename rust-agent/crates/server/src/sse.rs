@@ -5,19 +5,20 @@ use serde_json::json;
 /// 将 AgentEvent 转换为 SSE Event
 pub fn agent_event_to_sse(event: AgentEvent) -> Event {
     match event {
-        AgentEvent::TextDelta(content) => Event::default()
+        AgentEvent::TextDelta { content, source } => Event::default()
             .event("text_delta")
-            .data(json!({ "content": content }).to_string()),
-        AgentEvent::ThinkingDelta(content) => Event::default()
+            .data(json!({ "content": content, "source": source }).to_string()),
+        AgentEvent::ThinkingDelta { content, source } => Event::default()
             .event("thinking_delta")
-            .data(json!({ "content": content }).to_string()),
+            .data(json!({ "content": content, "source": source }).to_string()),
         AgentEvent::ToolCall {
             id,
             name,
             input,
             parallel_index,
+            source,
         } => {
-            let mut data = json!({ "name": name, "input": input });
+            let mut data = json!({ "name": name, "input": input, "source": source });
             if let Some(id) = id {
                 data["id"] = json!(id);
             }
@@ -31,8 +32,9 @@ pub fn agent_event_to_sse(event: AgentEvent) -> Event {
             name,
             output,
             parallel_index,
+            source,
         } => {
-            let mut data = json!({ "name": name, "output": output });
+            let mut data = json!({ "name": name, "output": output, "source": source });
             if let Some(id) = id {
                 data["id"] = json!(id);
             }
@@ -44,8 +46,9 @@ pub fn agent_event_to_sse(event: AgentEvent) -> Event {
         AgentEvent::TurnEnd {
             api_calls,
             token_usage,
+            source,
         } => {
-            let mut data = json!({ "api_calls": api_calls });
+            let mut data = json!({ "api_calls": api_calls, "source": source });
             if let Some(usage) = token_usage {
                 data["token_usage"] = json!({
                     "input_tokens": usage.input_tokens,
@@ -56,21 +59,29 @@ pub fn agent_event_to_sse(event: AgentEvent) -> Event {
             }
             Event::default().event("turn_end").data(data.to_string())
         }
-        AgentEvent::Done => Event::default().event("done").data("{}"),
-        AgentEvent::Error { code, message } => Event::default()
+        AgentEvent::Done { source } => Event::default()
+            .event("done")
+            .data(json!({ "source": source }).to_string()),
+        AgentEvent::Error {
+            code,
+            message,
+            source,
+        } => Event::default()
             .event("error")
-            .data(json!({ "code": code, "message": message }).to_string()),
+            .data(json!({ "code": code, "message": message, "source": source }).to_string()),
         AgentEvent::Retrying {
             attempt,
             max_retries,
             wait_seconds,
             detail,
+            source,
         } => Event::default().event("retrying").data(
             json!({
                 "attempt": attempt,
                 "max_retries": max_retries,
                 "wait_seconds": wait_seconds,
                 "detail": detail,
+                "source": source,
             })
             .to_string(),
         ),

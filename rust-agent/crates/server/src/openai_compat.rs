@@ -177,14 +177,15 @@ pub async fn chat_completions(
 
     while let Some(event) = event_rx.recv().await {
         match event {
-            rust_agent_core::agent::AgentEvent::TextDelta(text) => {
-                final_text.push_str(&text);
+            rust_agent_core::agent::AgentEvent::TextDelta { content, .. } => {
+                final_text.push_str(&content);
             }
             rust_agent_core::agent::AgentEvent::ToolCall {
                 id,
                 name,
                 input,
                 parallel_index: _,
+                source: _,
             } => {
                 tool_calls_collected.push(json!({
                     "id": id.unwrap_or_else(|| format!("call_{}", short_id())),
@@ -198,12 +199,13 @@ pub async fn chat_completions(
             rust_agent_core::agent::AgentEvent::TurnEnd {
                 api_calls: _,
                 token_usage: _,
+                source: _,
             } => {
                 if !tool_calls_collected.is_empty() {
                     stop_reason = "tool_calls".to_owned();
                 }
             }
-            rust_agent_core::agent::AgentEvent::Error { code, message } => {
+            rust_agent_core::agent::AgentEvent::Error { code, message, .. } => {
                 let status = if code == "rate_limited" {
                     StatusCode::TOO_MANY_REQUESTS
                 } else {

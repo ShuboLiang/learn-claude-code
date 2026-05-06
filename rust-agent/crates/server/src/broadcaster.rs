@@ -65,7 +65,7 @@ impl SessionBroadcaster {
         if let Some(mut entry) = self.channels.get_mut(session_id) {
             // 缓存事件（排除 done/error 等终止事件，避免无意义累积）
             match &event {
-                AgentEvent::Done => { /* 不缓存 done */ }
+                AgentEvent::Done { .. } => { /* 不缓存 done */ }
                 _ => entry.history.push(event.clone()),
             }
             // 忽略发送失败（如所有订阅者已断开）

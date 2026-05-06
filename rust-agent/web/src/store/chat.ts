@@ -18,7 +18,7 @@ export function buildStreamingBlocks(
     blockOrder: ('thinking' | 'text' | `tool:${string}`)[]
     thinking: string
     assistantText: string
-    tools: { id: string; name: string; input: unknown; output: string | null; status: 'running' | 'done' | 'error'; parallelIndex: { index: number; total: number } | null; isError?: boolean; children?: { id: string; name: string; input: unknown; output: string | null; status: 'running' | 'done' | 'error'; parallelIndex: { index: number; total: number } | null; isError?: boolean }[] }[]
+    tools: import('@/types/ui').UIToolCall[]
     error: { code: string; message: string } | null
   },
   finalized: boolean = false,
@@ -86,19 +86,72 @@ async function runSSELoop(
         if (!target || target.abort !== abortController) return;
 
         switch (evt.event) {
-          case "text_delta":
-            if (!target.assistantText && !target.blockOrder.includes('text')) {
-              target.blockOrder.push('text');
+          case 'text_delta': {
+            const src = evt.data.source
+            if (src.role === 'main') {
+              if (!target.assistantText && !target.blockOrder.includes('text')) {
+                target.blockOrder.push('text')
+              }
+              target.assistantText += evt.data.content
+            } else {
+              // Bot 子代理的文本：归属到对应 call_id 的 call_bot 卡片
+              let botCard = target.tools.find(
+                (t) => t.name === 'call_bot' && t.source?.role === 'bot' && t.source.call_id === src.call_id
+              )
+              if (!botCard) {
+                // text_delta 事件无 input 字段，用 source.name 构造最小 input
+                botCard = {
+                  id: nanoid(),
+                  name: 'call_bot',
+                  input: { name: src.name },
+                  output: null,
+                  status: 'running',
+                  parallelIndex: null,
+                  source: src,
+                  children: [],
+                  botText: '',
+                  botThinking: '',
+                }
+                target.tools.push(botCard)
+                target.blockOrder.push(`tool:${botCard.id}`)
+              }
+              botCard.botText = (botCard.botText || '') + evt.data.content
             }
-            target.assistantText += evt.data.content;
-            break;
-          case "thinking_delta":
-            if (!target.thinking && !target.blockOrder.includes('thinking')) {
-              target.blockOrder.push('thinking');
+            break
+          }
+          case 'thinking_delta': {
+            const src = evt.data.source
+            if (src.role === 'main') {
+              if (!target.thinking && !target.blockOrder.includes('thinking')) {
+                target.blockOrder.push('thinking')
+              }
+              target.thinking += evt.data.content
+            } else {
+              let botCard = target.tools.find(
+                (t) => t.name === 'call_bot' && t.source?.role === 'bot' && t.source.call_id === src.call_id
+              )
+              if (!botCard) {
+                // thinking_delta 事件无 input 字段，用 source.name 构造最小 input
+                botCard = {
+                  id: nanoid(),
+                  name: 'call_bot',
+                  input: { name: src.name },
+                  output: null,
+                  status: 'running',
+                  parallelIndex: null,
+                  source: src,
+                  children: [],
+                  botText: '',
+                  botThinking: '',
+                }
+                target.tools.push(botCard)
+                target.blockOrder.push(`tool:${botCard.id}`)
+              }
+              botCard.botThinking = (botCard.botThinking || '') + evt.data.content
             }
-            target.thinking += evt.data.content;
-            break;
-          case "tool_call": {
+            break
+          }
+          case 'tool_call': {
             const tc = {
               id: nanoid(),
               name: evt.data.name,
@@ -106,98 +159,81 @@ async function runSSELoop(
               output: null,
               status: 'running' as const,
               parallelIndex: evt.data.parallel_index ?? null,
-            };
-            if (evt.data.name === 'call_bot') {
-              // call_bot 容器：标记进入 Bot 上下文，创建带子项数组的条目
-              target.activeBotName = 'call_bot';
-              (tc as UIToolCall & { children: typeof tc[] }).children = [];
-              target.tools.push(tc);
-              target.blockOrder.push(`tool:${tc.id}`);
-            } else if (target.activeBotName) {
-              // Bot 内部的工具调用：作为最近活跃 call_bot 的子项
-              let parentTool: (typeof tc & { children?: typeof tc[] }) | undefined;
-              for (let i = target.tools.length - 1; i >= 0; i--) {
-                const t = target.tools[i] as typeof tc & { children?: typeof tc[] };
-                if (t.name === 'call_bot' && t.status === 'running') {
-                  parentTool = t;
-                  break;
-                }
-              }
-              if (parentTool && parentTool.children) {
-                parentTool.children.push(tc);
+              source: evt.data.source,
+            }
+            const src = evt.data.source
+            if (src.role === 'bot' && evt.data.name !== 'call_bot') {
+              // Bot 内部的工具调用：挂到对应 call_id 的 call_bot 下
+              let parentTool = target.tools.find(
+                (t) => t.name === 'call_bot' && t.source?.role === 'bot' && t.source.call_id === src.call_id
+              )
+              if (parentTool) {
+                parentTool.children = parentTool.children || []
+                parentTool.children.push(tc)
               } else {
-                // 兜底：无活跃 call_bot 时作为普通工具调用
-                target.tools.push(tc);
-                target.blockOrder.push(`tool:${tc.id}`);
+                // 兜底：若 call_bot 卡片未创建，先创建
+                parentTool = {
+                  id: nanoid(),
+                  name: 'call_bot',
+                  input: evt.data.input,
+                  output: null,
+                  status: 'running',
+                  parallelIndex: null,
+                  source: src,
+                  children: [tc],
+                  botText: '',
+                  botThinking: '',
+                }
+                target.tools.push(parentTool)
+                target.blockOrder.push(`tool:${parentTool.id}`)
               }
             } else {
-              // 普通工具调用
-              target.tools.push(tc);
-              target.blockOrder.push(`tool:${tc.id}`);
+              target.tools.push(tc)
+              target.blockOrder.push(`tool:${tc.id}`)
             }
-            break;
+            break
           }
-          case "tool_result": {
-            if (evt.data.name === 'call_bot') {
-              // call_bot 完成：退出 Bot 上下文，更新父条目状态
-              target.activeBotName = null;
-              let parentTool: (typeof tc & { children?: typeof tc[]; output: string | null; status: 'running' | 'done' | 'error' }) | undefined;
-              for (let i = target.tools.length - 1; i >= 0; i--) {
-                const t = target.tools[i] as typeof tc & { children?: typeof tc[]; output: string | null; status: 'running' | 'done' | 'error' };
-                if (t.name === 'call_bot' && t.status === 'running') {
-                  parentTool = t;
-                  break;
-                }
-              }
-              if (parentTool) {
-                parentTool.output = evt.data.output;
-                parentTool.status = 'done';
-              }
-            } else if (target.activeBotName) {
-              // Bot 内部的 tool_result：更新对应子项
-              let parentTool: (typeof tc & { children?: typeof tc[] }) | undefined;
-              for (let i = target.tools.length - 1; i >= 0; i--) {
-                const t = target.tools[i] as typeof tc & { children?: typeof tc[] };
-                if (t.name === 'call_bot' && t.status === 'running') {
-                  parentTool = t;
-                  break;
-                }
-              }
+          case 'tool_result': {
+            const src = evt.data.source
+            if (src.role === 'bot' && evt.data.name !== 'call_bot') {
+              // Bot 内部的 tool_result：按 id 匹配，避免同名工具冲突
+              let parentTool = target.tools.find(
+                (t) => t.name === 'call_bot' && t.source?.role === 'bot' && t.source.call_id === src.call_id
+              )
               if (parentTool && parentTool.children) {
                 const childTc = parentTool.children.find(
-                  (t) => t.name === evt.data.name && t.output === null,
-                );
+                  (t) => t.id === evt.data.id && t.output === null
+                )
                 if (childTc) {
-                  childTc.output = evt.data.output;
-                  childTc.status = 'done';
+                  childTc.output = evt.data.output
+                  childTc.status = 'done'
                 }
               }
             } else {
-              // 普通 tool_result
               const tc = target.tools.find(
-                (t) => t.name === evt.data.name && t.output === null,
-              );
+                (t) => t.name === evt.data.name && t.output === null
+              )
               if (tc) {
-                tc.output = evt.data.output;
-                tc.status = 'done';
+                tc.output = evt.data.output
+                tc.status = 'done'
               }
-              }
-            break;
+            }
+            break
           }
-          case "turn_end":
-            target.apiCalls = evt.data.api_calls;
+          case 'turn_end':
+            target.apiCalls = evt.data.api_calls
             if (evt.data.token_usage) {
               target.tokenUsage = {
                 input: evt.data.token_usage.input_tokens,
                 output: evt.data.token_usage.output_tokens,
-              };
+              }
             }
-            break;
-          case "error":
+            break
+          case 'error':
             target.error = {
               code: evt.data.code,
               message: evt.data.message,
-            };
+            }
             break;
           case "retrying":
             target.retrying = {
@@ -542,7 +578,6 @@ export const useChatStore = create<ChatState & ChatActions>()(
           thinking: "",
           tools: [],
           blockOrder: [],
-          activeBotName: null,
           error: null,
           retrying: null,
           apiCalls: 0,
@@ -649,7 +684,6 @@ export const useChatStore = create<ChatState & ChatActions>()(
           thinking: "",
           tools: [],
           blockOrder: [],
-          activeBotName: null,
           error: null,
           retrying: null,
           apiCalls: 0,

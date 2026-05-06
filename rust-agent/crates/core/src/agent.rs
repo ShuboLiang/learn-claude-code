@@ -23,31 +23,56 @@ use crate::skills::hub as skillhub;
 use crate::tools::AgentToolbox;
 use crate::tools::extension::ToolExtension;
 
+/// 事件来源标识：区分事件由主 Agent 还是某个 Bot 子代理产生
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(tag = "role", rename_all = "snake_case")]
+pub enum EventSource {
+    /// 主 Agent（协调员）
+    Main,
+    /// Bot 子代理
+    Bot {
+        /// Bot 名称（如 "代码审查Bot"）
+        name: String,
+        /// 本次 call_bot 调用的唯一标识，用于区分并行的多个 Bot
+        call_id: String,
+    },
+}
+
+impl Default for EventSource {
+    fn default() -> Self {
+        Self::Main
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum AgentEvent {
-    TextDelta(String),
+    TextDelta { content: String, source: EventSource },
     /// 思考内容增量（Kimi 等兼容层返回的 reasoning_content）
-    ThinkingDelta(String),
+    ThinkingDelta { content: String, source: EventSource },
     ToolCall {
         id: Option<String>,
         name: String,
         input: serde_json::Value,
         parallel_index: Option<(usize, usize)>,
+        source: EventSource,
     },
     ToolResult {
         id: Option<String>,
         name: String,
         output: String,
         parallel_index: Option<(usize, usize)>,
+        source: EventSource,
     },
     TurnEnd {
         api_calls: usize,
         token_usage: Option<crate::api::types::TokenUsage>,
+        source: EventSource,
     },
-    Done,
+    Done { source: EventSource },
     Error {
         code: String,
         message: String,
+        source: EventSource,
     },
     /// API 重试进行中，通知客户端当前进度
     Retrying {
@@ -55,6 +80,7 @@ pub enum AgentEvent {
         max_retries: u32,
         wait_seconds: u64,
         detail: String,
+        source: EventSource,
     },
 }
 
@@ -393,6 +419,7 @@ impl AgentApp {
                 &event_tx,
                 cwd,
                 parent_session_id,
+                EventSource::Main,
             )
             .await;
 
@@ -435,6 +462,7 @@ impl AgentApp {
                 &event_tx,
                 cwd,
                 None,
+                EventSource::Main,
             )
             .await;
 
@@ -456,6 +484,7 @@ impl AgentApp {
         event_tx: &Arc<mpsc::Sender<AgentEvent>>,
         cwd: Option<&Path>,
         parent_session_id: Option<&str>,
+        source: EventSource,
     ) -> AgentResult<String> {
         let workspace = cwd.unwrap_or(&self.workspace_root);
         let mut toolbox = AgentToolbox::new(
@@ -503,6 +532,7 @@ impl AgentApp {
             // 创建重试通知通道：API 层重试时通过此通道向客户端推送进度
             let (retry_tx, mut retry_rx) = mpsc::unbounded_channel::<RetryNotification>();
             let event_tx_for_retry = Arc::clone(event_tx);
+            let retry_source = source.clone();
             tokio::spawn(async move {
                 while let Some(notif) = retry_rx.recv().await {
                     let _ = event_tx_for_retry
@@ -511,6 +541,7 @@ impl AgentApp {
                             max_retries: notif.max_retries,
                             wait_seconds: notif.wait_seconds,
                             detail: notif.detail,
+                            source: retry_source.clone(),
                         })
                         .await;
                 }
@@ -566,6 +597,7 @@ impl AgentApp {
                             .send(AgentEvent::Error {
                                 code: code.to_owned(),
                                 message: format!("{e:#}"),
+                                source: source.clone(),
                             })
                             .await;
                     }
@@ -599,6 +631,7 @@ impl AgentApp {
                                 .send(AgentEvent::Error {
                                     code: "stream_error".to_owned(),
                                     message: format!("流式响应中断: {e:#}"),
+                                    source: source.clone(),
                                 })
                                 .await;
                         }
@@ -610,14 +643,14 @@ impl AgentApp {
                     crate::api::types::LlmStreamChunk::TextDelta(text) => {
                         current_text.push_str(&text);
                         if config.emit_events && !text.is_empty() {
-                            let _ = event_tx.send(AgentEvent::TextDelta(text)).await;
+                            let _ = event_tx.send(AgentEvent::TextDelta { content: text, source: source.clone() }).await;
                         }
                     }
                     crate::api::types::LlmStreamChunk::ThinkingDelta(thinking) => {
                         // 思考内容不混入 current_text，单独作为 ThinkingDelta 事件发送
                         current_thinking.push_str(&thinking);
                         if config.emit_events && !thinking.is_empty() {
-                            let _ = event_tx.send(AgentEvent::ThinkingDelta(thinking)).await;
+                            let _ = event_tx.send(AgentEvent::ThinkingDelta { content: thinking, source: source.clone() }).await;
                         }
                     }
                     crate::api::types::LlmStreamChunk::ToolUseStart { id, name } => {
@@ -691,9 +724,10 @@ impl AgentApp {
                     text.push_str("\n\n⚠️ 回复因达到 token 上限而被截断。如需继续，请简化输入或开启新的对话。");
                     if config.emit_events {
                         let _ = event_tx
-                            .send(AgentEvent::TextDelta(
-                                "\n\n⚠️ 回复因达到 token 上限而被截断。如需继续，请简化输入或开启新的对话。".to_owned(),
-                            ))
+                            .send(AgentEvent::TextDelta {
+                                content: "\n\n⚠️ 回复因达到 token 上限而被截断。如需继续，请简化输入或开启新的对话。".to_owned(),
+                                source: source.clone(),
+                            })
                             .await;
                     }
                 }
@@ -707,6 +741,7 @@ impl AgentApp {
                         .send(AgentEvent::TurnEnd {
                             api_calls: api_call_count,
                             token_usage: Some(self.token_tracker.snapshot().total),
+                            source: source.clone(),
                         })
                         .await;
                 }
@@ -764,6 +799,7 @@ impl AgentApp {
                                 name: tc.name.clone(),
                                 input: tc.input.clone(),
                                 parallel_index: None,
+                                source: source.clone(),
                             })
                             .await;
                     }
@@ -776,6 +812,7 @@ impl AgentApp {
                                 name: tc.name.clone(),
                                 input: tc.input.clone(),
                                 parallel_index: None,
+                                source: source.clone(),
                             })
                             .await;
                     }
@@ -788,6 +825,7 @@ impl AgentApp {
                                         name: tc.name.clone(),
                                         output: dispatch.output.clone(),
                                         parallel_index: None,
+                                        source: source.clone(),
                                     })
                                     .await;
                             }
@@ -802,6 +840,7 @@ impl AgentApp {
                                         name: tc.name.clone(),
                                         output: msg.clone(),
                                         parallel_index: None,
+                                        source: source.clone(),
                                     })
                                     .await;
                             }
@@ -815,27 +854,8 @@ impl AgentApp {
             }
 
             if !bot_calls.is_empty() {
-                for tc in &bot_calls {
-                    let bot_name = tc
-                        .input
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default();
-                    let input_preview = preview_text(&tc.input.to_string(), 200);
-                    logger.log(&format!(
-                        "=== 工具调用: call_bot(name={bot_name}) ===\n输入: {input_preview}"
-                    ));
-                    let _ = event_tx
-                        .send(AgentEvent::ToolCall {
-                            id: None,
-                            name: "call_bot".to_owned(),
-                            input: tc.input.clone(),
-                            parallel_index: None,
-                        })
-                        .await;
-                }
-
-                let mut bot_handles = Vec::new();
+                // 为每个并行 Bot 调用预生成 call_id 和 source
+                let mut bot_sources: Vec<(String, EventSource)> = Vec::new();
                 for tc in &bot_calls {
                     let bot_name = tc
                         .input
@@ -843,6 +863,35 @@ impl AgentApp {
                         .and_then(Value::as_str)
                         .unwrap_or_default()
                         .to_owned();
+                    let call_id = nanoid::nanoid!();
+                    let bot_source = EventSource::Bot {
+                        name: bot_name.clone(),
+                        call_id: call_id.clone(),
+                    };
+                    bot_sources.push((bot_name, bot_source));
+                }
+
+                for (idx, tc) in bot_calls.iter().enumerate() {
+                    let (_, bot_source) = &bot_sources[idx];
+                    let input_preview = preview_text(&tc.input.to_string(), 200);
+                    logger.log(&format!(
+                        "=== 工具调用: call_bot(name={}) ===\n输入: {input_preview}",
+                        bot_sources[idx].0
+                    ));
+                    let _ = event_tx
+                        .send(AgentEvent::ToolCall {
+                            id: None,
+                            name: "call_bot".to_owned(),
+                            input: tc.input.clone(),
+                            parallel_index: None,
+                            source: bot_source.clone(),
+                        })
+                        .await;
+                }
+
+                let mut bot_handles = Vec::new();
+                for (idx, tc) in bot_calls.iter().enumerate() {
+                    let (bot_name, bot_source) = &bot_sources[idx];
                     let bot_task = tc
                         .input
                         .get("task")
@@ -852,13 +901,23 @@ impl AgentApp {
                     let app = self.clone();
                     let event_tx = Arc::clone(event_tx);
                     let sid = parent_session_id.unwrap_or("").to_owned();
+                    let source_for_spawn = bot_source.clone();
+                    let bot_name_for_spawn = bot_name.clone();
                     bot_handles.push(tokio::spawn(async move {
-                        app.run_bot(&bot_name, &bot_task, &event_tx, &sid).await
+                        app.run_bot(
+                            &bot_name_for_spawn,
+                            &bot_task,
+                            &event_tx,
+                            &sid,
+                            source_for_spawn,
+                        )
+                        .await
                     }));
                 }
 
                 for (idx, handle) in bot_handles.into_iter().enumerate() {
                     let tc_id = bot_calls[idx].id.clone();
+                    let (_, bot_source) = &bot_sources[idx];
                     let output = match handle.await {
                         Ok(Ok(out)) => out,
                         Ok(Err(e)) => format!("Bot 子代理执行失败: {e}"),
@@ -874,6 +933,7 @@ impl AgentApp {
                             } else {
                                 None
                             },
+                            source: bot_source.clone(),
                         })
                         .await;
                     logger.log(&format!(
@@ -918,6 +978,7 @@ impl AgentApp {
                                 } else {
                                     None
                                 },
+                                source: source.clone(),
                             })
                             .await;
                     }
@@ -964,6 +1025,7 @@ impl AgentApp {
                                 } else {
                                     None
                                 },
+                                source: source.clone(),
                             })
                             .await;
                         logger.log(&format!(
@@ -992,6 +1054,7 @@ impl AgentApp {
                             .send(AgentEvent::TurnEnd {
                                 api_calls: api_call_count,
                                 token_usage: Some(self.token_tracker.snapshot().total),
+                                source: source.clone(),
                             })
                             .await;
                         return Err(e);
@@ -999,12 +1062,16 @@ impl AgentApp {
                 }
                 if config.emit_events {
                     let _ = event_tx
-                        .send(AgentEvent::TextDelta("对话已手动压缩。".to_owned()))
+                        .send(AgentEvent::TextDelta {
+                            content: "对话已手动压缩。".to_owned(),
+                            source: source.clone(),
+                        })
                         .await;
                     let _ = event_tx
                         .send(AgentEvent::TurnEnd {
                             api_calls: api_call_count,
                             token_usage: Some(self.token_tracker.snapshot().total),
+                            source: source.clone(),
                         })
                         .await;
                 }
@@ -1014,14 +1081,16 @@ impl AgentApp {
 
         if config.emit_events {
             let _ = event_tx
-                .send(AgentEvent::TextDelta(
-                    "已达到工具调用轮数安全上限（30轮），自动停止。".to_owned(),
-                ))
+                .send(AgentEvent::TextDelta {
+                    content: "已达到工具调用轮数安全上限（30轮），自动停止。".to_owned(),
+                    source: source.clone(),
+                })
                 .await;
             let _ = event_tx
                 .send(AgentEvent::TurnEnd {
                     api_calls: api_call_count,
                     token_usage: Some(self.token_tracker.snapshot().total),
+                    source: source.clone(),
                 })
                 .await;
         }
@@ -1050,6 +1119,7 @@ impl AgentApp {
             event_tx,
             None,
             None,
+            EventSource::Main,
         )
         .await
     }
@@ -1064,6 +1134,7 @@ impl AgentApp {
         task: &str,
         event_tx: &Arc<mpsc::Sender<AgentEvent>>,
         parent_session_id: &str,
+        source: EventSource,
     ) -> AgentResult<String> {
         let available = self.bots.list();
         let bot_names: Vec<&str> = available.iter().map(|b| b.name.as_str()).collect();
@@ -1179,6 +1250,7 @@ impl AgentApp {
                 event_tx,
                 None,
                 Some(parent_session_id),
+                source,
             )
             .await;
 

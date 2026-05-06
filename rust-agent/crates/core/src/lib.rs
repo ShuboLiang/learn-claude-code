@@ -15,7 +15,7 @@ pub type AgentResult<T> = anyhow::Result<T>;
 pub use tokio::sync::mpsc;
 
 // ── 公共 API 统一导出 ──
-pub use agent::{AgentApp, AgentEvent};
+pub use agent::{AgentApp, AgentEvent, EventSource};
 pub use api::types::{
     ApiMessage, ProviderRequest, ProviderResponse, ResponseContentBlock, TokenUsage,
 };
