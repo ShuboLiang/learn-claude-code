@@ -1,26 +1,26 @@
 [
   {
     "name": "张扬",
-    "raw_text": "张扬，15729090470，843569402@qq.com。教育：东南大学（985双一流）电子信息硕士，2022-2025；西北工业大学（985双一流）软件工程本科，2018-2022。实习：①国家电网信通产业集团中电普华（2021.12-2022.02），供电作业流程现代化管控系统后端开发，Spring Boot/MQ/MySQL/Spring State Machine/MQTT/UWB；②美团核心本地商业/医药技术部（2024.06-2024.09），商服分流即时通讯能力建设、客服系统多数据源一致性治理（MySQL+ES）、稳定性治理，技术栈Spring Boot/MQ/MySQL/Redis/Thrift/ES。项目：①基于端边云架构的肺部CT影像处理系统（Unet/F3N/云计算/网页端+APP），申请专利1项；②南京中大医院LLM随访平台（Spring AI/Ollama/Qwen1.5-7B微调/MQ/定时任务），患者依从性增加28%。技能：熟练后端框架与中间件，熟悉设计模式与项目管理；CET-4、CET-6。",
+    "raw_text": "东南大学 985 双一流 电子信息 硕士...",
     "llm_scores": {
       "education": 95,
-      "major_match": 80,
-      "skills_match": 72,
-      "experience": 82,
-      "job_match": 78
+      "major_match": 90,
+      "skills_match": 85,
+      "experience": 90,
+      "job_match": 88
     },
-    "llm_reason": "985双名校背景（东南大学硕士+西北工业大学本科），教育背景顶尖；美团大厂实习质量高，涉及IM系统、MySQL/ES数据一致性治理、稳定性治理；但技能描述中未明确覆盖Spring Cloud、分布式事务、服务治理等JD核心要求，项目经历中AI/算法占比偏高，纯Java后端工程深度略欠。"
+    "llm_reason": "985双一流本硕（西北工业大学本科+东南大学硕士），软件工程/电子信息背景优秀。技术栈覆盖Spring Boot、MQ、MySQL、Redis、ES，具备数据一致性治理、稳定性治理等进阶能力。拥有美团（大厂）和国家电网实习经历，涉及即时通讯、IoT、AI应用开发（LLM+Spring AI）及医疗健康领域经验。不足：未明确体现Spring Cloud、JVM原理。"
   },
   {
     "name": "王硕",
-    "raw_text": "王硕，18652959313，843569402@qq.com。教育：南京信息工程大学软件工程硕士，2022-2025（CCF-C期刊1篇、发明专利1项、软著1项）；盐城工学院软件工程本科，2018-2022。项目：①隐私保护研究（国家自然科学基金），联邦学习+差分隐私推荐系统；②网络异常检测研究；③智慧校园生活服务平台（SpringBoot+Vue、Redis、RabbitMQ、WebSocket、JWT），系统响应提升30%。实习：南京星邺汇捷网络科技有限公司（2025.04-2025.06），SpringCloud微服务架构，上海DICT智慧运维平台，负责告警中心/故障单面板/考勤管理，Kafka+Doris实时数据管道，SQL优化使接口响应从1200ms降至400ms。技能：Java/Python/C/C++/Kotlin/SpringBoot/SpringCloud/MySQL/Redis/Elasticsearch/RabbitMQ/Kafka。证书：CET-4(484)、CET-6(440)。",
+    "raw_text": "南京信息工程大学 软件工程 硕士...",
     "llm_scores": {
-      "education": 60,
+      "education": 70,
       "major_match": 95,
-      "skills_match": 80,
-      "experience": 68,
+      "skills_match": 88,
+      "experience": 65,
       "job_match": 72
     },
-    "llm_reason": "软件工程专业高度对口，技能栈明确覆盖SpringCloud、Redis、ES、RabbitMQ、Kafka等JD要求技术，有微服务实际项目经验。但学校档次明显偏弱（南京信息工程大学硕士+盐城工学院本科），实习公司知名度一般，科研项目偏算法/隐私计算，与Java后端工程关联度有限，缺乏大厂工程历练。"
+    "llm_reason": "本硕均为软件工程，专业完全对口。技术栈关键词与JD高度吻合：Spring Boot、Spring Cloud、MySQL、Redis、ES、RabbitMQ、Kafka，具备微服务架构和Kafka+Doris实时数据管道经验，有隐私计算研究（加分项）。不足：学校档次中等（本科双非），实习仅2个月且公司知名度低，工程实战经验和大厂背景薄弱，整体偏科研导向。"
   }
 ]
