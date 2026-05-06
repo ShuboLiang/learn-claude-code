@@ -116,6 +116,17 @@ export function browseDirectory(dirPath?: string): Promise<BrowseResult> {
   return request(`/browse${params}`)
 }
 
+export interface SkillInfo {
+  name: string
+  description: string
+  tags: string
+  path: string
+}
+
 export function listBots(): Promise<BotInfo[]> {
   return request<{ bots: BotInfo[] }>('/bots').then((r) => r.bots)
+}
+
+export function listSkills(): Promise<SkillInfo[]> {
+  return request<{ skills: SkillInfo[] }>('/skills').then((r) => r.skills)
 }

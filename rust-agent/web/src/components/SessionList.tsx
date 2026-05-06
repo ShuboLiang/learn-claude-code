@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Plus, Trash2, PanelLeftClose, PanelLeftOpen, Folder } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Plus, Trash2, PanelLeftClose, PanelLeftOpen, Folder, Wrench } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -17,16 +17,23 @@ import {
 import { cn } from '@/lib/utils'
 import { useChatStore } from '@/store/chat'
 import { DirectoryPicker } from '@/components/DirectoryPicker'
+import { listSkills, type SkillInfo } from '@/api/client'
 
 export function SessionList() {
   const [collapsed, setCollapsed] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
   const [showNewDialog, setShowNewDialog] = useState(false)
+  const [skills, setSkills] = useState<SkillInfo[]>([])
   const sessions = useChatStore((s) => s.sessions)
   const currentId = useChatStore((s) => s.currentSessionId)
   const createSession = useChatStore((s) => s.createSession)
   const selectSession = useChatStore((s) => s.selectSession)
   const deleteSession = useChatStore((s) => s.deleteSession)
+
+  // 加载技能列表
+  useEffect(() => {
+    listSkills().then(setSkills).catch(() => setSkills([]))
+  }, [])
 
   const openNewDialog = () => setShowNewDialog(true)
 
@@ -221,6 +228,43 @@ export function SessionList() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Skills section */}
+      {!collapsed && skills.length > 0 && (
+        <div className="border-t border-border/50 px-3 py-2">
+          <div className="flex items-center gap-1.5 mb-1.5">
+            <Wrench className="h-3 w-3 text-muted-foreground/70" />
+            <span className="text-[10px] font-semibold tracking-wide text-muted-foreground/70 uppercase">
+              技能 ({skills.length})
+            </span>
+          </div>
+          <div className="space-y-0.5">
+            {skills.map((skill) => (
+              <Tooltip key={skill.name}>
+                <TooltipTrigger asChild>
+                  <div className="flex items-center gap-1.5 rounded px-1.5 py-1 hover:bg-accent/40 cursor-default">
+                    <span className="text-[11px] font-medium text-foreground truncate">
+                      {skill.name}
+                    </span>
+                    {skill.tags && (
+                      <span className="text-[9px] text-muted-foreground/60 shrink-0">
+                        [{skill.tags}]
+                      </span>
+                    )}
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="right" className="max-w-56">
+                  <p className="text-xs !text-white font-medium">{skill.name}</p>
+                  {skill.description && (
+                    <p className="mt-0.5 text-[10px] !text-white/70">{skill.description}</p>
+                  )}
+                  <p className="mt-0.5 text-[10px] !text-white/50 truncate">{skill.path}</p>
+                </TooltipContent>
+              </Tooltip>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* New session dialog */}
       <DirectoryPicker

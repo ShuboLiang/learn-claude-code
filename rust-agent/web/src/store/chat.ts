@@ -15,33 +15,37 @@ import type { UIBlock } from "@/types/ui";
  */
 export function buildStreamingBlocks(
   st: {
-    blockOrder: ('thinking' | 'text' | `tool:${string}`)[]
-    thinking: string
-    assistantText: string
-    tools: import('@/types/ui').UIToolCall[]
-    error: { code: string; message: string } | null
+    blockOrder: ("thinking" | "text" | `tool:${string}`)[];
+    thinking: string;
+    assistantText: string;
+    tools: import("@/types/ui").UIToolCall[];
+    error: { code: string; message: string } | null;
   },
   _finalized: boolean = false,
 ): UIBlock[] {
-  const blocks: UIBlock[] = []
+  const blocks: UIBlock[] = [];
 
   // 流式期和完成期统一按 blockOrder 输出所有内容（文本 + 工具卡片）
   for (const key of st.blockOrder) {
-    if (key === 'thinking' && st.thinking) {
-      blocks.push({ kind: 'thinking', content: st.thinking })
-    } else if (key === 'text' && st.assistantText) {
-      blocks.push({ kind: 'text', content: st.assistantText })
-    } else if (key.startsWith('tool:')) {
-      const toolId = key.slice(5)
-      const tc = st.tools.find((t) => t.id === toolId)
-      if (tc) blocks.push({ kind: 'toolCall', toolCall: tc })
+    if (key === "thinking" && st.thinking) {
+      blocks.push({ kind: "thinking", content: st.thinking });
+    } else if (key === "text" && st.assistantText) {
+      blocks.push({ kind: "text", content: st.assistantText });
+    } else if (key.startsWith("tool:")) {
+      const toolId = key.slice(5);
+      const tc = st.tools.find((t) => t.id === toolId);
+      if (tc) blocks.push({ kind: "toolCall", toolCall: tc });
     }
   }
 
   if (st.error) {
-    blocks.push({ kind: 'error', code: st.error.code, message: st.error.message })
+    blocks.push({
+      kind: "error",
+      code: st.error.code,
+      message: st.error.message,
+    });
   }
-  return blocks
+  return blocks;
 }
 
 // ── SSE 事件循环（供 sendMessage 和 selectSession 复用）──
@@ -67,154 +71,182 @@ async function runSSELoop(
         if (!target || target.abort !== abortController) return;
 
         switch (evt.event) {
-          case 'text_delta': {
-            const src = evt.data.source
-            if (src.role === 'main') {
-              if (!target.assistantText && !target.blockOrder.includes('text')) {
-                target.blockOrder.push('text')
+          case "text_delta": {
+            const src = evt.data.source;
+            if (src.role === "main") {
+              if (
+                !target.assistantText &&
+                !target.blockOrder.includes("text")
+              ) {
+                target.blockOrder.push("text");
               }
-              target.assistantText += evt.data.content
+              target.assistantText += evt.data.content;
             } else {
-              // Bot 子代理的文本：归属到对应 call_id 的 call_bot 卡片
+              // Bot 子代理的文本：通过 toolUseId === call_id 匹配到主 Agent 发起的 call_bot 卡片
               let botCard = target.tools.find(
-                (t) => t.name === 'call_bot' && t.source?.role === 'bot' && t.source.call_id === src.call_id
-              )
+                (t) => t.name === "call_bot" && t.toolUseId === src.call_id,
+              );
               if (!botCard) {
-                // text_delta 事件无 input 字段，用 source.name 构造最小 input
+                // 兜底：若 call_bot 卡片未创建（tool_call 事件未到达），先创建
                 botCard = {
                   id: nanoid(),
-                  name: 'call_bot',
+                  name: "call_bot",
                   input: { name: src.name },
                   output: null,
-                  status: 'running',
+                  status: "running",
                   parallelIndex: null,
                   source: src,
                   children: [],
-                  botText: '',
-                  botThinking: '',
-                }
-                target.tools.push(botCard)
-                target.blockOrder.push(`tool:${botCard.id}`)
+                  botText: "",
+                  botThinking: "",
+                  toolUseId: src.call_id,
+                };
+                target.tools.push(botCard);
+                target.blockOrder.push(`tool:${botCard.id}`);
               }
-              botCard.botText = (botCard.botText || '') + evt.data.content
+              botCard.botText = (botCard.botText || "") + evt.data.content;
             }
-            break
+            break;
           }
-          case 'thinking_delta': {
-            const src = evt.data.source
-            if (src.role === 'main') {
-              if (!target.thinking && !target.blockOrder.includes('thinking')) {
-                target.blockOrder.push('thinking')
+          case "thinking_delta": {
+            const src = evt.data.source;
+            if (src.role === "main") {
+              if (!target.thinking && !target.blockOrder.includes("thinking")) {
+                target.blockOrder.push("thinking");
               }
-              target.thinking += evt.data.content
+              target.thinking += evt.data.content;
             } else {
+              // Bot 子代理的思考：通过 toolUseId === call_id 匹配到主 Agent 发起的 call_bot 卡片
               let botCard = target.tools.find(
-                (t) => t.name === 'call_bot' && t.source?.role === 'bot' && t.source.call_id === src.call_id
-              )
+                (t) => t.name === "call_bot" && t.toolUseId === src.call_id,
+              );
               if (!botCard) {
-                // thinking_delta 事件无 input 字段，用 source.name 构造最小 input
+                // 兜底：若 call_bot 卡片未创建，先创建
                 botCard = {
                   id: nanoid(),
-                  name: 'call_bot',
+                  name: "call_bot",
                   input: { name: src.name },
                   output: null,
-                  status: 'running',
+                  status: "running",
                   parallelIndex: null,
                   source: src,
                   children: [],
-                  botText: '',
-                  botThinking: '',
-                }
-                target.tools.push(botCard)
-                target.blockOrder.push(`tool:${botCard.id}`)
+                  botText: "",
+                  botThinking: "",
+                  toolUseId: src.call_id,
+                };
+                target.tools.push(botCard);
+                target.blockOrder.push(`tool:${botCard.id}`);
               }
-              botCard.botThinking = (botCard.botThinking || '') + evt.data.content
+              botCard.botThinking =
+                (botCard.botThinking || "") + evt.data.content;
             }
-            break
+            break;
           }
-          case 'tool_call': {
+          case "tool_call": {
+            const src = evt.data.source;
             const tc = {
               id: nanoid(),
               name: evt.data.name,
               input: evt.data.input,
               output: null,
-              status: 'running' as const,
+              status: "running" as const,
               parallelIndex: evt.data.parallel_index ?? null,
-              source: evt.data.source,
-            }
-            const src = evt.data.source
-            if (src.role === 'bot' && evt.data.name !== 'call_bot') {
-              // Bot 内部的工具调用：挂到对应 call_id 的 call_bot 下
-              let parentTool = target.tools.find(
-                (t) => t.name === 'call_bot' && t.source?.role === 'bot' && t.source.call_id === src.call_id
-              )
-              if (parentTool) {
-                parentTool.children = parentTool.children || []
-                parentTool.children.push(tc)
+              source: src,
+              toolUseId: evt.data.id,
+            };
+            if (src.role === "bot" && evt.data.name !== "call_bot") {
+              // Bot 内部的工具调用：通过 toolUseId === call_id 挂到对应 call_bot 下
+              const existingParent = target.tools.find(
+                (t) => t.name === "call_bot" && t.toolUseId === src.call_id,
+              );
+              if (existingParent) {
+                existingParent.children = existingParent.children || [];
+                existingParent.children.push(tc);
               } else {
                 // 兜底：若 call_bot 卡片未创建，先创建
-                parentTool = {
+                const parentTool = {
                   id: nanoid(),
-                  name: 'call_bot',
-                  input: evt.data.input,
+                  name: "call_bot",
+                  input: { name: src.name },
                   output: null,
-                  status: 'running',
+                  status: "running",
                   parallelIndex: null,
                   source: src,
                   children: [tc],
-                  botText: '',
-                  botThinking: '',
-                }
-                target.tools.push(parentTool)
-                target.blockOrder.push(`tool:${parentTool.id}`)
+                  botText: "",
+                  botThinking: "",
+                  toolUseId: src.call_id,
+                };
+                target.tools.push(parentTool);
+                target.blockOrder.push(`tool:${parentTool.id}`);
               }
+            } else if (evt.data.name === "call_bot") {
+              // 主 Agent 调用 call_bot：初始化 bot 专属字段，以便后续 bot 事件能匹配
+              const callBotTc = {
+                ...tc,
+                children: [],
+                botText: "",
+                botThinking: "",
+              };
+              target.tools.push(callBotTc);
+              target.blockOrder.push(`tool:${callBotTc.id}`);
             } else {
-              target.tools.push(tc)
-              target.blockOrder.push(`tool:${tc.id}`)
+              target.tools.push(tc);
+              target.blockOrder.push(`tool:${tc.id}`);
             }
-            break
+            break;
           }
-          case 'tool_result': {
-            const src = evt.data.source
-            if (src.role === 'bot' && evt.data.name !== 'call_bot') {
-              // Bot 内部的 tool_result：按 id 匹配，避免同名工具冲突
+          case "tool_result": {
+            const src = evt.data.source;
+            if (src.role === "bot" && evt.data.name !== "call_bot") {
+              // Bot 内部的 tool_result：通过 toolUseId 匹配子工具
               let parentTool = target.tools.find(
-                (t) => t.name === 'call_bot' && t.source?.role === 'bot' && t.source.call_id === src.call_id
-              )
+                (t) => t.name === "call_bot" && t.toolUseId === src.call_id,
+              );
               if (parentTool && parentTool.children) {
                 const childTc = parentTool.children.find(
-                  (t) => t.id === evt.data.id && t.output === null
-                )
+                  (t) => t.toolUseId === evt.data.id && t.output === null,
+                );
                 if (childTc) {
-                  childTc.output = evt.data.output
-                  childTc.status = 'done'
+                  childTc.output = evt.data.output;
+                  childTc.status = "done";
                 }
+              }
+            } else if (evt.data.name === "call_bot") {
+              // 主 Agent 的 call_bot 结果：通过 toolUseId 精确匹配
+              const tc = target.tools.find(
+                (t) => t.name === "call_bot" && t.toolUseId === evt.data.id,
+              );
+              if (tc) {
+                tc.output = evt.data.output;
+                tc.status = "done";
               }
             } else {
               const tc = target.tools.find(
-                (t) => t.name === evt.data.name && t.output === null
-              )
+                (t) => t.name === evt.data.name && t.output === null,
+              );
               if (tc) {
-                tc.output = evt.data.output
-                tc.status = 'done'
+                tc.output = evt.data.output;
+                tc.status = "done";
               }
             }
-            break
+            break;
           }
-          case 'turn_end':
-            target.apiCalls = evt.data.api_calls
+          case "turn_end":
+            target.apiCalls = evt.data.api_calls;
             if (evt.data.token_usage) {
               target.tokenUsage = {
                 input: evt.data.token_usage.input_tokens,
                 output: evt.data.token_usage.output_tokens,
-              }
+              };
             }
-            break
-          case 'error':
+            break;
+          case "error":
             target.error = {
               code: evt.data.code,
               message: evt.data.message,
-            }
+            };
             break;
           case "retrying":
             target.retrying = {
@@ -279,20 +311,41 @@ async function runSSELoop(
         if (!target || target.abort !== abortController) return;
         const hydrated = normalizeApiMessages(msgs, nanoid);
 
-        // 从 streaming 中提取 call_bot 的 children 信息，合并到 hydration 结果中
-        // 因为 bot 内部消息不在主会话历史中，需要保留流式期间累积的 children
-        const callBotsWithChildren = target.tools.filter(
-          (t): t is typeof t & { children: { id: string; name: string; input: unknown; output: string | null; status: 'running' | 'done' | 'error'; parallelIndex: { index: number; total: number } | null; isError?: boolean }[] } =>
-            t.name === 'call_bot' && 'children' in t && Array.isArray((t as any).children) && (t as any).children.length > 0
+        // 从 streaming 中提取 call_bot 的 Bot 专属信息，合并到 hydration 结果中
+        // 因为 bot 内部消息不在主会话历史中，需要保留流式期间累积的 children/botText/botThinking 等
+        const callBotsFromStream = target.tools.filter(
+          (t) => t.name === "call_bot",
         );
-        if (callBotsWithChildren.length > 0) {
+        if (callBotsFromStream.length > 0) {
           let cbIdx = 0;
           for (const msg of hydrated) {
-            if (msg.role !== 'assistant') continue;
+            if (msg.role !== "assistant") continue;
             for (const block of msg.blocks) {
-              if (block.kind === 'toolCall' && block.toolCall.name === 'call_bot' && cbIdx < callBotsWithChildren.length) {
-                const streamingCb = callBotsWithChildren[cbIdx];
-                block.toolCall.children = streamingCb.children;
+              if (
+                block.kind === "toolCall" &&
+                block.toolCall.name === "call_bot" &&
+                cbIdx < callBotsFromStream.length
+              ) {
+                const streamingCb = callBotsFromStream[cbIdx];
+                // 合并 children（bot 内部嵌套工具调用）
+                if (streamingCb.children && streamingCb.children.length > 0) {
+                  block.toolCall.children = streamingCb.children;
+                }
+                // 合并 source（事件来源标识，hydration 后会丢失）
+                if (streamingCb.source) {
+                  block.toolCall.source = streamingCb.source;
+                }
+                // 合并 botText/botThinking（bot 子代理的流式输出）
+                if (streamingCb.botText) {
+                  block.toolCall.botText = streamingCb.botText;
+                }
+                if (streamingCb.botThinking) {
+                  block.toolCall.botThinking = streamingCb.botThinking;
+                }
+                // 合并 toolUseId（用于匹配 bot 事件）
+                if (streamingCb.toolUseId) {
+                  block.toolCall.toolUseId = streamingCb.toolUseId;
+                }
                 cbIdx++;
               }
             }
@@ -536,7 +589,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
           }
         });
       } catch (err: any) {
-        if (err.name === 'AbortError') return;
+        if (err.name === "AbortError") return;
         console.error("[selectSession] 加载消息失败:", err);
       }
 
@@ -642,9 +695,14 @@ export const useChatStore = create<ChatState & ChatActions>()(
       // 立即推入用户消息并更新侧边栏
       const now = new Date().toISOString();
       set((s) => {
-        const userMsg = { id: nanoid(), role: "user" as const, content, blocks: [] };
+        const userMsg = {
+          id: nanoid(),
+          role: "user" as const,
+          content,
+          blocks: [],
+        };
         s.messages.push(userMsg);
-        
+
         // 同步缓存
         if (!s.messagesBySession[sid]) s.messagesBySession[sid] = [];
         s.messagesBySession[sid].push(userMsg);
@@ -784,11 +842,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
       // 如果有当前会话，同步更新
       if (currentSessionId) {
         api
-          .updateSessionConfig(
-            currentSessionId,
-            profile,
-            get().selectedModel,
-          )
+          .updateSessionConfig(currentSessionId, profile, get().selectedModel)
           .catch(() => {});
       }
     },
