@@ -116,4 +116,6 @@ export interface SessionSummary {
   message_count: number
   preview: string | null
   working_dir: string
+  profile_name: string
+  model: string
 }

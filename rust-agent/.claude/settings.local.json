@@ -3,7 +3,9 @@
     "allow": [
       "Skill(rust-best-practices)",
       "Skill(tavily-search)",
-      "Bash(cargo test:*)"
+      "Bash(cargo test:*)",
+      "Bash(cargo check:*)",
+      "Bash(npx tsc:*)"
     ]
   }
 }

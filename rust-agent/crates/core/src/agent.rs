@@ -360,12 +360,14 @@ impl AgentApp {
     ) -> AgentResult<String> {
         let mut logger = ConversationLogger::create();
 
-        ctx.push_user_text(user_input);
+        // 注意：调用方负责在调用前将 user_input 推入 ctx（便于提前持久化）
         logger.log(&format!("=== 用户 ===\n{user_input}"));
 
         let bot_list = self.bots.descriptions_for_system_prompt();
+        // 使用 cwd（会话工作目录）构建提示词，而非服务器启动目录
+        let effective_cwd = cwd.unwrap_or(&self.workspace_root);
         let system_prompt = build_system_prompt(
-            &self.workspace_root,
+            effective_cwd,
             &self.skills.read().unwrap().descriptions_for_system_prompt(),
             &self.model,
             &self.identity,
@@ -1146,11 +1148,13 @@ impl AgentApp {
             ctx
         };
 
+        // 使用 bot_api 配置：禁止嵌套 task，但允许向客户端发送事件
+        // 这样 Bot 的思考过程和提问可以实时流式推送到前端
         let result = bot_app
             .run_agent_loop(
                 &mut bot_ctx,
                 system_prompt,
-                AgentRunConfig::child(),
+                AgentRunConfig::bot_api(),
                 &mut sub_logger,
                 event_tx,
                 None,

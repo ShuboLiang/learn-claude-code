@@ -416,10 +416,23 @@ async fn send_message(
             }
         };
 
-        let mut session = session_arc.write().await;
-        tracing::info!("[send_message] 获取写锁成功，开始调用 handle_user_turn");
+        // 第一步：短暂获取写锁，仅推入用户消息后立即释放
+        {
+            let mut session = session_arc.write().await;
+            session.context.push_user_text(&content);
+        }
+        // 在锁外持久化，避免磁盘 I/O 阻塞后续请求的读锁
+        store.persist(&session_id).await;
+
+        // 第二步：短暂获取读锁 clone context，然后在锁外运行 agent
+        // 避免长时间持有写锁阻塞其他请求的读操作（如 getMessages）
+        let mut cloned_ctx = {
+            let session = session_arc.read().await;
+            session.context.clone()
+        };
+        tracing::info!("[send_message] 开始调用 handle_user_turn（锁外运行）");
         if let Err(e) = agent
-            .handle_user_turn(&mut session.context, &content, Some(&cwd), event_tx.clone())
+            .handle_user_turn(&mut cloned_ctx, &content, Some(&cwd), event_tx.clone())
             .await
         {
             tracing::error!("[send_message] handle_user_turn 失败: {e:#}");
@@ -431,8 +444,12 @@ async fn send_message(
                 .await;
         }
         tracing::info!("[send_message] handle_user_turn 完成");
-        session.last_active = chrono::Utc::now();
-        drop(session);
+        // 将修改后的 context 写回 session
+        {
+            let mut session = session_arc.write().await;
+            session.context = cloned_ctx;
+            session.last_active = chrono::Utc::now();
+        }
         store.persist(&session_id).await;
         // 无论成功还是失败，都发送 Done 事件，让客户端知道 SSE 流已结束
         let _ = event_tx

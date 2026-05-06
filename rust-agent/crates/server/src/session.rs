@@ -76,6 +76,8 @@ pub struct SessionSummary {
     pub message_count: usize,
     pub preview: String,
     pub working_dir: String,
+    pub profile_name: String,
+    pub model: String,
 }
 
 fn extract_preview(messages: &[rust_agent_core::api::types::ApiMessage]) -> String {
@@ -265,6 +267,8 @@ impl SessionStore {
                 message_count: session.context.len(),
                 preview: extract_preview(session.context.messages()),
                 working_dir: session.working_dir.display().to_string(),
+                profile_name: session.profile_name.clone(),
+                model: session.model.clone(),
             });
         }
         summaries.sort_by(|a, b| b.last_active.cmp(&a.last_active));

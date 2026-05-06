@@ -60,6 +60,8 @@ enum AnthropicStreamEvent {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum AnthropicContentBlock {
     Text { text: String },
+    /// 扩展思考模式下的思考内容块（Claude / DeepSeek 等均支持）
+    Thinking { thinking: String },
     ToolUse { id: String, name: String },
 }
 
@@ -67,6 +69,8 @@ enum AnthropicContentBlock {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum AnthropicDelta {
     TextDelta { text: String },
+    /// 扩展思考模式的增量内容
+    ThinkingDelta { thinking: String },
     InputJsonDelta { partial_json: String },
 }
 
@@ -124,11 +128,18 @@ impl AnthropicStreamParser {
                     });
                     chunks.push(LlmStreamChunk::ToolUseStart { id, name });
                 }
+                AnthropicContentBlock::Thinking { thinking } => {
+                    // 扩展思考模式的增量内容
+                    chunks.push(LlmStreamChunk::ThinkingDelta(thinking));
+                }
                 AnthropicContentBlock::Text { .. } => {}
             },
             AnthropicStreamEvent::ContentBlockDelta { delta, .. } => match delta {
                 AnthropicDelta::TextDelta { text } => {
                     chunks.push(LlmStreamChunk::TextDelta(text));
+                }
+                AnthropicDelta::ThinkingDelta { thinking } => {
+                    chunks.push(LlmStreamChunk::ThinkingDelta(thinking));
                 }
                 AnthropicDelta::InputJsonDelta { partial_json } => {
                     if let Some(ref mut tool) = self.current_tool {
