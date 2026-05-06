@@ -72,6 +72,18 @@ export function clearSession(id: string): Promise<void> {
   return request(`/sessions/${encodeURIComponent(id)}/clear`, { method: 'POST' })
 }
 
+export function updateSessionConfig(
+  id: string,
+  profile?: string,
+  model?: string,
+): Promise<{ status: string }> {
+  return request(`/sessions/${encodeURIComponent(id)}/config`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ profile: profile || null, model: model || null }),
+  })
+}
+
 export interface BotInfo {
   name: string
   nickname: string

@@ -340,17 +340,27 @@ export const useChatStore = create<ChatState & ChatActions>()(
     },
 
     setSelectedProfile(profile: string) {
+      const state = get()
       set((s) => {
         s.selectedProfile = profile
         const p = s.profiles.find((p) => p.name === profile)
         s.selectedModel = p?.models[0] || ''
       })
+      // 如果有当前会话，同步更新
+      if (state.currentSessionId) {
+        api.updateSessionConfig(state.currentSessionId, profile, get().selectedModel).catch(() => {})
+      }
     },
 
     setSelectedModel(model: string) {
+      const { currentSessionId } = get()
       set((s) => {
         s.selectedModel = model
       })
+      // 如果有当前会话，同步更新
+      if (currentSessionId) {
+        api.updateSessionConfig(currentSessionId, undefined, model).catch(() => {})
+      }
     },
 
     cancelStream() {

@@ -16,6 +16,7 @@ export default defineConfig({
     proxy: {
       '/sessions': { target: BACKEND, changeOrigin: true },
       '/v1': { target: BACKEND, changeOrigin: true },
+      '/config': { target: BACKEND, changeOrigin: true },
       '/bots': { target: BACKEND, changeOrigin: true },
       '/browse': { target: BACKEND, changeOrigin: true },
       '/watch': { target: BACKEND, changeOrigin: true },

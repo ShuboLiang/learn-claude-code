@@ -10,7 +10,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     response::sse::KeepAlive,
-    routing::{get, post},
+    routing::{get, post, put},
 };
 use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt;
@@ -81,6 +81,7 @@ pub fn routes(app_state: AppState) -> Router {
             get(get_session_messages).post(send_message),
         )
         .route("/sessions/{id}/clear", post(clear_session))
+        .route("/sessions/{id}/config", put(update_session_config))
         .route(
             "/v1/chat/completions",
             post(openai_compat::chat_completions),
@@ -272,6 +273,92 @@ async fn clear_session(State(state): State<AppState>, Path(id): Path<String>) ->
         )
             .into_response(),
     }
+}
+
+/// 更新会话配置的请求体
+#[derive(Deserialize)]
+struct UpdateConfigRequest {
+    profile: Option<String>,
+    model: Option<String>,
+}
+
+/// PUT /sessions/:id/config — 更新会话的 profile 和模型
+async fn update_session_config(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<UpdateConfigRequest>,
+) -> impl IntoResponse {
+    let session_arc = match state.store.get(&id) {
+        Some(s) => s,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "error": { "code": "session_not_found", "message": "会话不存在" }
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    // 验证：如果传了 profile，必须在 config 中存在
+    if let Some(ref p) = body.profile {
+        if state.config.find_profile(p).is_none() {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({
+                    "error": { "code": "profile_not_found", "message": format!("profile '{}' 不存在", p) }
+                })),
+            )
+                .into_response();
+        }
+    }
+
+    // 验证：如果传了 model，必须在对应 profile 的 models 列表中
+    if let Some(ref m) = body.model {
+        let profile_name = body.profile.as_deref().unwrap_or("");
+        let profile = if profile_name.is_empty() {
+            // 没传 profile，查会话当前的 profile
+            let session = session_arc.read().await;
+            state.config.find_profile(&session.profile_name)
+        } else {
+            state.config.find_profile(profile_name)
+        };
+        if let Some(p) = profile {
+            if !p.models.contains(m) {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "error": { "code": "model_not_in_profile", "message": format!("模型 '{}' 不在 profile '{}' 的列表中", m, p.name) }
+                    })),
+                )
+                    .into_response();
+            }
+        }
+    }
+
+    // 保存响应用（body 字段会在更新时被 move）
+    let resp_profile = body.profile.clone();
+    let resp_model = body.model.clone();
+
+    // 更新会话
+    let mut session = session_arc.write().await;
+    if let Some(p) = body.profile {
+        session.profile_name = p;
+    }
+    if let Some(m) = body.model {
+        session.model = m;
+    }
+    session.last_active = chrono::Utc::now();
+    drop(session);
+    state.store.persist(&id).await;
+
+    Json(serde_json::json!({
+        "status": "ok",
+        "profile": resp_profile,
+        "model": resp_model,
+    }))
+    .into_response()
 }
 
 /// POST /sessions/:id/messages — 发送消息（SSE 流式响应）
