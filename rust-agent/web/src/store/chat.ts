@@ -123,6 +123,18 @@ export const useChatStore = create<ChatState & ChatActions>()(
         s.messages = []
         s.streaming = null
       })
+      // 加载该会话的 profile/model 配置并同步到选择器
+      try {
+        const info = await api.getSession(id)
+        if (info.profile || info.model) {
+          set((s) => {
+            if (info.profile) s.selectedProfile = info.profile
+            if (info.model) s.selectedModel = info.model
+          })
+        }
+      } catch {
+        // 旧会话可能没有这些字段，保持当前选择不变
+      }
       try {
         const msgs = await api.getMessages(id)
         set((s) => {

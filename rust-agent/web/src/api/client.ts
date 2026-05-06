@@ -54,7 +54,7 @@ export function createSession(
   })
 }
 
-export function getSession(id: string): Promise<SessionSummary> {
+export function getSession(id: string): Promise<SessionSummary & { profile?: string; model?: string }> {
   return request(`/sessions/${encodeURIComponent(id)}`)
 }
 

@@ -223,6 +223,8 @@ async fn get_session(State(state): State<AppState>, Path(id): Path<String>) -> i
                 "message_count": session.context.len(),
                 "created_at": session.created_at.to_rfc3339(),
                 "last_active": session.last_active.to_rfc3339(),
+                "profile": session.profile_name,
+                "model": session.model,
             }))
             .into_response()
         }
