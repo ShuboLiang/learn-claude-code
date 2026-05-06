@@ -92,6 +92,21 @@ export interface WatchEvent {
   }
 }
 
+// ── Config ──
+
+export interface ProfileInfo {
+  name: string
+  provider: string
+  models: string[]
+}
+
+export interface ConfigResponse {
+  default_profile: string
+  current_profile: string
+  current_model: string
+  profiles: ProfileInfo[]
+}
+
 // ── Session ──
 
 export interface SessionSummary {

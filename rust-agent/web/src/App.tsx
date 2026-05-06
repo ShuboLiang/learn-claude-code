@@ -1,5 +1,5 @@
 import { useEffect, useCallback } from 'react'
-import { MessageSquare, Sparkles } from 'lucide-react'
+import { ChevronDown, MessageSquare, Sparkles } from 'lucide-react'
 import { SessionList } from '@/components/SessionList'
 import { ChatPane } from '@/components/ChatPane'
 import { WorkspacePanel } from '@/components/WorkspacePanel'
@@ -7,9 +7,22 @@ import { useChatStore } from '@/store/chat'
 
 function App() {
   const loadSessions = useChatStore((s) => s.loadSessions)
+  const loadConfig = useChatStore((s) => s.loadConfig)
   const currentSessionId = useChatStore((s) => s.currentSessionId)
   const createSession = useChatStore((s) => s.createSession)
   const clearCurrent = useChatStore((s) => s.clearCurrent)
+  const profiles = useChatStore((s) => s.profiles)
+  const selectedProfile = useChatStore((s) => s.selectedProfile)
+  const selectedModel = useChatStore((s) => s.selectedModel)
+  const setSelectedProfile = useChatStore((s) => s.setSelectedProfile)
+  const setSelectedModel = useChatStore((s) => s.setSelectedModel)
+
+  const currentModels =
+    profiles.find((p) => p.name === selectedProfile)?.models || []
+
+  useEffect(() => {
+    loadConfig()
+  }, [loadConfig])
 
   useEffect(() => {
     loadSessions()
@@ -47,6 +60,40 @@ function App() {
             rust<span className="text-primary">-agent</span>
           </h1>
         </div>
+
+        {/* Profile + Model 选择器 */}
+        <div className="flex items-center gap-2">
+          <div className="relative">
+            <select
+              value={selectedProfile}
+              onChange={(e) => setSelectedProfile(e.target.value)}
+              className="h-7 rounded-md border bg-background px-2 pr-6 text-xs appearance-none cursor-pointer hover:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              {profiles.map((p) => (
+                <option key={p.name} value={p.name}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
+          </div>
+
+          <div className="relative">
+            <select
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              className="h-7 rounded-md border bg-background px-2 pr-6 text-xs appearance-none cursor-pointer hover:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary"
+            >
+              {currentModels.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="absolute right-1.5 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground pointer-events-none" />
+          </div>
+        </div>
+
         <span className="ml-auto text-[10px] text-muted-foreground/60">
           Ctrl+N new &middot; Ctrl+L clear
         </span>

@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import { nanoid } from 'nanoid'
-import type { SessionSummary } from '@/types/wire'
+import type { ProfileInfo, SessionSummary } from '@/types/wire'
 import type { UIMessage, StreamingState } from '@/types/ui'
 import * as api from '@/api/client'
 import { streamSendMessage } from '@/api/sse'
@@ -16,10 +16,14 @@ interface ChatState {
   messages: UIMessage[]
   streaming: StreamingState | null
   loadError: string | null
+  profiles: ProfileInfo[]
+  selectedProfile: string
+  selectedModel: string
 }
 
 interface ChatActions {
   loadSessions: () => Promise<void>
+  loadConfig: () => Promise<void>
   createSession: (workingDir?: string) => Promise<void>
   selectSession: (id: string) => Promise<void>
   deleteSession: (id: string) => Promise<void>
@@ -27,6 +31,8 @@ interface ChatActions {
   sendMessage: (content: string) => Promise<void>
   cancelStream: () => void
   handleCommand: (cmd: string) => Promise<void>
+  setSelectedProfile: (profile: string) => void
+  setSelectedModel: (model: string) => void
 }
 
 function finalizeStreamingPreview(state: ChatState) {
@@ -57,6 +63,25 @@ export const useChatStore = create<ChatState & ChatActions>()(
     messages: [],
     streaming: null,
     loadError: null,
+    profiles: [],
+    selectedProfile: '',
+    selectedModel: '',
+
+    // ── Config action ──
+
+    async loadConfig() {
+      try {
+        const config = await api.getConfig()
+        const p = config.profiles.find((p) => p.name === config.current_profile)
+        set((s) => {
+          s.profiles = config.profiles
+          s.selectedProfile = config.current_profile || config.default_profile
+          s.selectedModel = config.current_model || p?.models[0] || ''
+        })
+      } catch (err) {
+        console.error('Failed to load config:', err)
+      }
+    },
 
     // ── Session actions ──
 
@@ -75,7 +100,8 @@ export const useChatStore = create<ChatState & ChatActions>()(
     },
 
     async createSession(workingDir?: string) {
-      const { id, working_dir } = await api.createSession(workingDir)
+      const { selectedProfile, selectedModel } = get()
+      const { id, working_dir } = await api.createSession(workingDir, selectedProfile, selectedModel)
       set((s) => {
         s.sessions.unshift({
           id,
@@ -311,6 +337,20 @@ export const useChatStore = create<ChatState & ChatActions>()(
           })
         }
       }
+    },
+
+    setSelectedProfile(profile: string) {
+      set((s) => {
+        s.selectedProfile = profile
+        const p = s.profiles.find((p) => p.name === profile)
+        s.selectedModel = p?.models[0] || ''
+      })
+    },
+
+    setSelectedModel(model: string) {
+      set((s) => {
+        s.selectedModel = model
+      })
     },
 
     cancelStream() {

@@ -1,4 +1,4 @@
-import type { ApiMessage, SessionSummary } from '@/types/wire'
+import type { ApiMessage, ConfigResponse, SessionSummary } from '@/types/wire'
 
 export class ApiError extends Error {
   status: number
@@ -34,11 +34,23 @@ export function listSessions(): Promise<SessionSummary[]> {
   return request<{ sessions: SessionSummary[] }>('/sessions').then((r) => r.sessions)
 }
 
-export function createSession(workingDir?: string): Promise<{ id: string; working_dir: string }> {
+export function getConfig(): Promise<ConfigResponse> {
+  return request<ConfigResponse>('/config')
+}
+
+export function createSession(
+  workingDir?: string,
+  profile?: string,
+  model?: string,
+): Promise<{ id: string; working_dir: string; model: string; profile: string }> {
   return request('/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ working_dir: workingDir || null }),
+    body: JSON.stringify({
+      working_dir: workingDir || null,
+      profile: profile || null,
+      model: model || null,
+    }),
   })
 }
 
