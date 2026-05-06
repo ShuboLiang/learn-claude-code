@@ -230,7 +230,7 @@ export function SessionList() {
       </Dialog>
 
       {/* Skills section */}
-      {!collapsed && skills.length > 0 && (
+      {!collapsed && (
         <div className="border-t border-border/50 px-3 py-2">
           <div className="flex items-center gap-1.5 mb-1.5">
             <Wrench className="h-3 w-3 text-muted-foreground/70" />
@@ -238,31 +238,37 @@ export function SessionList() {
               技能 ({skills.length})
             </span>
           </div>
-          <div className="space-y-0.5">
-            {skills.map((skill) => (
-              <Tooltip key={skill.name}>
-                <TooltipTrigger asChild>
-                  <div className="flex items-center gap-1.5 rounded px-1.5 py-1 hover:bg-accent/40 cursor-default">
-                    <span className="text-[11px] font-medium text-foreground truncate">
-                      {skill.name}
-                    </span>
-                    {skill.tags && (
-                      <span className="text-[9px] text-muted-foreground/60 shrink-0">
-                        [{skill.tags}]
+          {skills.length === 0 ? (
+            <p className="text-[10px] text-muted-foreground/50 px-1.5 py-1">
+              暂无已安装技能
+            </p>
+          ) : (
+            <div className="space-y-0.5">
+              {skills.map((skill) => (
+                <Tooltip key={skill.name}>
+                  <TooltipTrigger asChild>
+                    <div className="flex items-center gap-1.5 rounded px-1.5 py-1 hover:bg-accent/40 cursor-default">
+                      <span className="text-[11px] font-medium text-foreground truncate">
+                        {skill.name}
                       </span>
+                      {skill.tags && (
+                        <span className="text-[9px] text-muted-foreground/60 shrink-0">
+                          [{skill.tags}]
+                        </span>
+                      )}
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="right" className="max-w-56">
+                    <p className="text-xs !text-white font-medium">{skill.name}</p>
+                    {skill.description && (
+                      <p className="mt-0.5 text-[10px] !text-white/70">{skill.description}</p>
                     )}
-                  </div>
-                </TooltipTrigger>
-                <TooltipContent side="right" className="max-w-56">
-                  <p className="text-xs !text-white font-medium">{skill.name}</p>
-                  {skill.description && (
-                    <p className="mt-0.5 text-[10px] !text-white/70">{skill.description}</p>
-                  )}
-                  <p className="mt-0.5 text-[10px] !text-white/50 truncate">{skill.path}</p>
-                </TooltipContent>
-              </Tooltip>
-            ))}
-          </div>
+                    <p className="mt-0.5 text-[10px] !text-white/50 truncate">{skill.path}</p>
+                  </TooltipContent>
+                </Tooltip>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

@@ -165,7 +165,7 @@ async function runSSELoop(
                 existingParent.children.push(tc);
               } else {
                 // 兜底：若 call_bot 卡片未创建，先创建
-                const parentTool = {
+                const parentTool: import("@/types/ui").UIToolCall = {
                   id: nanoid(),
                   name: "call_bot",
                   input: { name: src.name },
