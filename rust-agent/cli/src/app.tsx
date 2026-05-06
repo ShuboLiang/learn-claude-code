@@ -6,6 +6,7 @@ import {
   createSession,
   clearSession,
   fetchBots,
+  fetchSkills,
   sendBotTask,
   BotInfo,
   fetchSessions,
@@ -282,6 +283,42 @@ export default function App({ serverUrl }: { serverUrl: string }) {
             {
               role: "system",
               content: `可用 Subagent:\n${botList}\n\n使用 /@@botname 任务描述 来委派任务`,
+            },
+          ]);
+        }
+        return;
+      }
+
+      // /skills command: list installed skills
+      if (input.trim().toLowerCase() === "/skills") {
+        try {
+          const skills = await fetchSkills();
+          if (skills.length === 0) {
+            setMessages((prev) => [
+              ...prev,
+              { role: "system", content: "═══ 暂无已安装技能 ═══" },
+            ]);
+          } else {
+            const skillList = skills
+              .map(
+                (s) =>
+                  `  ${s.name}${s.description ? ` - ${s.description}` : ""}${s.tags ? ` [${s.tags}]` : ""}`,
+              )
+              .join("\n");
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "system",
+                content: `═══ 已安装技能 (${skills.length}) ═══\n${skillList}\n════════════════`,
+              },
+            ]);
+          }
+        } catch (err) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "system",
+              content: `获取技能列表失败: ${err instanceof Error ? err.message : String(err)}`,
             },
           ]);
         }

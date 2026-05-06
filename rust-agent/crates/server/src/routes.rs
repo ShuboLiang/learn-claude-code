@@ -94,6 +94,7 @@ pub fn routes(app_state: AppState) -> Router {
         .route("/file", get(read_file).put(write_file))
         .route("/bots", get(list_bots))
         .route("/bots/{name}/task", post(bot_task))
+        .route("/skills", get(list_skills))
         .route("/config", get(get_config))
         .with_state(app_state)
 }
@@ -913,6 +914,26 @@ async fn list_bots(State(state): State<AppState>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "bots": bots,
         "total": bots.len()
+    }))
+}
+
+/// GET /skills — 列出所有已安装的技能
+async fn list_skills(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let skills = state.agent.list_skills();
+    let skills_json: Vec<serde_json::Value> = skills
+        .into_iter()
+        .map(|s| {
+            serde_json::json!({
+                "name": s.name,
+                "description": s.description,
+                "tags": s.tags,
+                "path": s.path.to_string_lossy(),
+            })
+        })
+        .collect();
+    Json(serde_json::json!({
+        "skills": skills_json,
+        "total": skills_json.len()
     }))
 }
 

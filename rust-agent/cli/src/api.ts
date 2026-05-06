@@ -125,6 +125,14 @@ export interface BotInfo {
   description: string;
 }
 
+export async function fetchSkills(): Promise<Array<{ name: string; description: string; tags: string }>> {
+  const { baseUrl } = getConfig();
+  const res = await fetch(`${baseUrl}/skills`);
+  if (!res.ok) throw new Error(`获取技能列表失败: ${res.status}`);
+  const data = await res.json();
+  return data.skills || [];
+}
+
 export async function fetchBots(): Promise<BotInfo[]> {
   const { baseUrl } = getConfig();
   const res = await fetch(`${baseUrl}/bots`);

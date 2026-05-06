@@ -96,6 +96,11 @@ export default function Input({
       setValue("");
       return;
     }
+    if (lower === "/skills") {
+      onSubmit("/skills");
+      setValue("");
+      return;
+    }
     if (lower === "/multiline" || lower === "/m") {
       setIsMultiline(true);
       setValue("");
@@ -114,8 +119,8 @@ export default function Input({
     : isMultiline
       ? "多行模式: 输入 /send 提交, ESC 或 /cancel 取消..."
       : model
-        ? `[${model}] 输入消息, Enter 提交, /@bot 委派任务, /bots 查看bot, /m 多行...`
-        : "输入消息, Enter 提交, /@bot 委派任务, /m 多行...";
+        ? `[${model}] 输入消息, Enter 提交, /@bot 委派任务, /bots 查看bot, /skills 查看技能, /m 多行...`
+        : "输入消息, Enter 提交, /@bot 委派任务, /bots 查看bot, /skills 查看技能, /m 多行...";
 
   return (
     <Box flexDirection="column">
