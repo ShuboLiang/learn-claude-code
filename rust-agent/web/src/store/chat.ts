@@ -590,17 +590,33 @@ export const useChatStore = create<ChatState & ChatActions>()(
     },
 
     setSelectedProfile(profile: string) {
-      const state = get();
+      const { currentSessionId } = get();
       set((s) => {
         s.selectedProfile = profile;
         const p = s.profiles.find((p) => p.name === profile);
-        s.selectedModel = p?.models[0] || "";
+        const model = p?.models[0] || "";
+        s.selectedModel = model;
+
+        if (currentSessionId) {
+          const si = s.sessions.findIndex((ss) => ss.id === currentSessionId);
+          if (si >= 0) {
+            s.sessions[si].profile_name = profile;
+            s.sessions[si].model = model;
+            s.sessions[si].last_active = new Date().toISOString();
+            // 重新排序
+            s.sessions.sort(
+              (a, b) =>
+                new Date(b.last_active).getTime() -
+                new Date(a.last_active).getTime(),
+            );
+          }
+        }
       });
       // 如果有当前会话，同步更新
-      if (state.currentSessionId) {
+      if (currentSessionId) {
         api
           .updateSessionConfig(
-            state.currentSessionId,
+            currentSessionId,
             profile,
             get().selectedModel,
           )
@@ -612,6 +628,20 @@ export const useChatStore = create<ChatState & ChatActions>()(
       const { currentSessionId } = get();
       set((s) => {
         s.selectedModel = model;
+
+        if (currentSessionId) {
+          const si = s.sessions.findIndex((ss) => ss.id === currentSessionId);
+          if (si >= 0) {
+            s.sessions[si].model = model;
+            s.sessions[si].last_active = new Date().toISOString();
+            // 重新排序
+            s.sessions.sort(
+              (a, b) =>
+                new Date(b.last_active).getTime() -
+                new Date(a.last_active).getTime(),
+            );
+          }
+        }
       });
       // 如果有当前会话，同步更新
       if (currentSessionId) {
