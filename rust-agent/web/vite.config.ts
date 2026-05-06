@@ -21,6 +21,7 @@ export default defineConfig({
       '/browse': { target: BACKEND, changeOrigin: true },
       '/watch': { target: BACKEND, changeOrigin: true },
       '/file': { target: BACKEND, changeOrigin: true },
+      '/skills': { target: BACKEND, changeOrigin: true },
     },
   },
 })
