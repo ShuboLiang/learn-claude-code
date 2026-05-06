@@ -14,6 +14,8 @@ pub struct Session {
     pub created_at: DateTime<Utc>,
     pub last_active: DateTime<Utc>,
     pub working_dir: PathBuf,
+    pub profile_name: String,
+    pub model: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -25,6 +27,10 @@ struct SessionRecord {
     messages: Vec<rust_agent_core::api::types::ApiMessage>,
     #[serde(default = "default_working_dir")]
     working_dir: PathBuf,
+    #[serde(default)]
+    profile_name: String,
+    #[serde(default)]
+    model: String,
 }
 
 fn default_working_dir() -> PathBuf {
@@ -40,6 +46,8 @@ impl From<&Session> for SessionRecord {
             last_active: session.last_active,
             messages: session.context.messages().to_vec(),
             working_dir: session.working_dir.clone(),
+            profile_name: session.profile_name.clone(),
+            model: session.model.clone(),
         }
     }
 }
@@ -54,6 +62,8 @@ impl SessionRecord {
             created_at: self.created_at,
             last_active: self.last_active,
             working_dir: self.working_dir,
+            profile_name: self.profile_name,
+            model: self.model,
         }
     }
 }
@@ -171,7 +181,12 @@ impl SessionStore {
         Self { sessions, data_dir }
     }
 
-    pub async fn create(&self, working_dir: PathBuf) -> Arc<RwLock<Session>> {
+    pub async fn create(
+        &self,
+        working_dir: PathBuf,
+        profile_name: String,
+        model: String,
+    ) -> Arc<RwLock<Session>> {
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now();
         let session = Session {
@@ -180,6 +195,8 @@ impl SessionStore {
             created_at: now,
             last_active: now,
             working_dir,
+            profile_name,
+            model,
         };
         let arc = Arc::new(RwLock::new(session));
         self.sessions.insert(id.clone(), arc.clone());
@@ -296,7 +313,7 @@ mod tests {
         tokio::fs::create_dir_all(&tmp).await.unwrap();
 
         let store = SessionStore::new(tmp.clone()).await;
-        let session_arc = store.create(PathBuf::from(".")).await;
+        let session_arc = store.create(PathBuf::from("."), String::new(), String::new()).await;
         let id = session_arc.read().await.id.clone();
 
         // File must exist on disk after persist
@@ -319,7 +336,7 @@ mod tests {
         tokio::fs::create_dir_all(&tmp).await.unwrap();
 
         let store = SessionStore::new(tmp.clone()).await;
-        let session_arc = store.create(PathBuf::from(".")).await;
+        let session_arc = store.create(PathBuf::from("."), String::new(), String::new()).await;
         let id = session_arc.read().await.id.clone();
         store.persist(&id).await;
 
@@ -336,8 +353,8 @@ mod tests {
         tokio::fs::create_dir_all(&tmp).await.unwrap();
 
         let store = SessionStore::new(tmp.clone()).await;
-        let s1 = store.create(PathBuf::from(".")).await;
-        let s2 = store.create(PathBuf::from(".")).await;
+        let s1 = store.create(PathBuf::from("."), String::new(), String::new()).await;
+        let s2 = store.create(PathBuf::from("."), String::new(), String::new()).await;
 
         {
             let mut s1_locked = s1.write().await;
@@ -367,7 +384,7 @@ mod tests {
         tokio::fs::create_dir_all(&tmp).await.unwrap();
 
         let store = SessionStore::new(tmp.clone()).await;
-        let session = store.create(PathBuf::from(".")).await;
+        let session = store.create(PathBuf::from("."), String::new(), String::new()).await;
         let id = session.read().await.id.clone();
         {
             let mut s = session.write().await;
