@@ -78,7 +78,7 @@ export function ChatPane() {
               />
             )}
 
-            {streaming?.active && (
+            {streaming?.active && streamingBlocks.length > 0 && (
               <MessageBubble
                 message={{
                   id: '__streaming__',

@@ -34,11 +34,13 @@ def transform_messages(api_messages: list[dict[str, Any]]) -> list[Message]:
                     result.append(Message(role="user", content="".join(texts)))
         elif role == "assistant":
             if isinstance(content, str):
-                result.append(Message(role="assistant", content=content))
+                if content.strip():
+                    result.append(Message(role="assistant", content=content))
             elif isinstance(content, list):
                 for block in content:
                     if block.get("type") == "text" and isinstance(block.get("text"), str):
-                        result.append(Message(role="assistant", content=block["text"]))
+                        if block["text"].strip():
+                            result.append(Message(role="assistant", content=block["text"]))
                     elif block.get("type") == "tool_use":
                         result.append(
                             Message(

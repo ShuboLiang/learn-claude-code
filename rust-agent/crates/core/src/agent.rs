@@ -662,7 +662,9 @@ impl AgentApp {
                     input,
                 });
             }
-            ctx.push(ApiMessage::assistant_blocks(&assistant_blocks)?);
+            if !assistant_blocks.is_empty() {
+                ctx.push(ApiMessage::assistant_blocks(&assistant_blocks)?);
+            }
 
             // 记录每轮模型输出（thinking + text），便于死循环 / 异常行为回溯
             if !current_thinking.is_empty() {

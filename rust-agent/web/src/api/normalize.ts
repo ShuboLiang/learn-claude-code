@@ -59,12 +59,14 @@ export function normalizeApiMessages(
   for (const msg of apiMessages) {
     if (msg.role === 'assistant') {
       const blocks = assistantBlocks(msg.content, toolCallMap)
-      result.push({
-        id: generateId(),
-        role: 'assistant',
-        content: '',
-        blocks,
-      })
+      if (blocks.length > 0) {
+        result.push({
+          id: generateId(),
+          role: 'assistant',
+          content: '',
+          blocks,
+        })
+      }
     } else {
       // User message: skip if it's purely tool_result blocks
       if (isPureToolResult(msg.content)) continue

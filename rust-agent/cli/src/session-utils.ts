@@ -34,11 +34,15 @@ export function transformMessages(
       }
     } else if (msg.role === "assistant") {
       if (typeof msg.content === "string") {
-        result.push({ role: "assistant", content: msg.content });
+        if (msg.content.trim()) {
+          result.push({ role: "assistant", content: msg.content });
+        }
       } else if (Array.isArray(msg.content)) {
         for (const block of msg.content) {
           if (block?.type === "text" && typeof block.text === "string") {
-            result.push({ role: "assistant", content: block.text });
+            if (block.text.trim()) {
+              result.push({ role: "assistant", content: block.text });
+            }
           } else if (block?.type === "tool_use") {
             result.push({
               role: "tool_call",
