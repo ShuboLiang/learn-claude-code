@@ -10,6 +10,8 @@ export interface UIToolCall {
   status: ToolStatus
   parallelIndex: { index: number; total: number } | null
   isError?: boolean
+  /** Bot 子代理内部的嵌套工具调用（仅 call_bot 有） */
+  children?: UIToolCall[]
 }
 
 // ── UI content blocks for message rendering ──
@@ -45,6 +47,8 @@ export interface StreamingState {
   tools: UIToolCall[]
   /** 记录 blocks 首次出现的顺序，用于流式渲染时保持与 API 一致的顺序 */
   blockOrder: ('thinking' | 'text' | `tool:${string}`)[]
+  /** 当前活跃的 Bot 名称（call_bot 内部的工具调用作为子项） */
+  activeBotName: string | null
   error: { code: string; message: string } | null
   retrying: {
     attempt: number

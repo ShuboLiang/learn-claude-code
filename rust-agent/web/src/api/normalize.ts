@@ -13,18 +13,20 @@ export function normalizeApiMessages(
   apiMessages: ApiMessage[],
   generateId: () => string,
 ): UIMessage[] {
-  console.log('[normalizeApiMessages] 输入消息数量:', apiMessages.length)
-  apiMessages.forEach((m, i) => {
-    console.log(`[normalizeApiMessages] msg[${i}] role=${m.role}, contentType=${typeof m.content}, isArray=${Array.isArray(m.content)}`)
-  })
   const toolCallMap = new Map<string, UIToolCall>()
+  // 用 "消息索引:块索引" 作为 key，避免对象引用不匹配问题
+  const blockIdMap = new Map<string, string>()
 
   // Pass 1: gather tool_use blocks from assistant messages
-  for (const msg of apiMessages) {
+  for (let mi = 0; mi < apiMessages.length; mi++) {
+    const msg = apiMessages[mi]
     if (msg.role !== 'assistant' || typeof msg.content === 'string') continue
-    for (const block of msg.content) {
+    if (!Array.isArray(msg.content)) continue
+    for (let bi = 0; bi < msg.content.length; bi++) {
+      const block = msg.content[bi]
       if (block.type !== 'tool_use') continue
       const id = block.id ?? generateId()
+      blockIdMap.set(`${mi}:${bi}`, id)
       toolCallMap.set(id, {
         id,
         name: block.name,
@@ -56,10 +58,10 @@ export function normalizeApiMessages(
   // Pass 3: build UIMessage[]
   const result: UIMessage[] = []
 
-  for (const msg of apiMessages) {
+  for (let mi = 0; mi < apiMessages.length; mi++) {
+    const msg = apiMessages[mi]
     if (msg.role === 'assistant') {
-      const blocks = assistantBlocks(msg.content, toolCallMap)
-      console.log(`[normalizeApiMessages] assistant msg blocks=${blocks.length}, contentType=${typeof msg.content}`)
+      const blocks = assistantBlocks(msg.content, toolCallMap, blockIdMap, mi)
       if (blocks.length > 0) {
         result.push({
           id: generateId(),
@@ -67,15 +69,10 @@ export function normalizeApiMessages(
           content: '',
           blocks,
         })
-      } else {
-        console.log('[normalizeApiMessages] ⚠️ assistant msg 被跳过（blocks 为空）')
       }
     } else {
       // User message: skip if it's purely tool_result blocks
-      if (isPureToolResult(msg.content)) {
-        console.log('[normalizeApiMessages] user msg 被跳过（纯 tool_result）')
-        continue
-      }
+      if (isPureToolResult(msg.content)) continue
       const text = userText(msg.content)
       result.push({
         id: generateId(),
@@ -86,20 +83,22 @@ export function normalizeApiMessages(
     }
   }
 
-  console.log('[normalizeApiMessages] 输出消息数量:', result.length)
   return result
 }
 
 function assistantBlocks(
   content: string | ApiContentBlock[],
   toolCallMap: Map<string, UIToolCall>,
+  blockIdMap: Map<string, string>,
+  msgIndex: number,
 ): UIBlock[] {
   if (typeof content === 'string') {
     return content ? [{ kind: 'text', content }] : []
   }
 
   const blocks: UIBlock[] = []
-  for (const block of content) {
+  for (let bi = 0; bi < content.length; bi++) {
+    const block = content[bi]
     switch (block.type) {
       case 'text':
         blocks.push({ kind: 'text', content: block.text })
@@ -108,7 +107,7 @@ function assistantBlocks(
         blocks.push({ kind: 'thinking', content: block.thinking })
         break
       case 'tool_use': {
-        const id = block.id ?? ''
+        const id = block.id ?? blockIdMap.get(`${msgIndex}:${bi}`) ?? ''
         const tc = toolCallMap.get(id)
         if (tc) {
           blocks.push({ kind: 'toolCall', toolCall: tc })

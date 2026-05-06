@@ -298,6 +298,12 @@ impl AgentApp {
         self
     }
 
+    /// 清除与指定主会话关联的所有 Bot 活跃会话
+    /// 在清空/删除主会话时调用，防止 Bot 跨主会话共享上下文
+    pub fn clear_bot_sessions_for_parent(&self, parent_session_id: &str) {
+        self.bots.clear_sessions_for_parent(parent_session_id);
+    }
+
     /// 获取当前身份信息
     pub fn identity(&self) -> &AgentIdentity {
         &self.identity
@@ -357,6 +363,7 @@ impl AgentApp {
         user_input: &str,
         cwd: Option<&Path>,
         event_tx: mpsc::Sender<AgentEvent>,
+        parent_session_id: Option<&str>,
     ) -> AgentResult<String> {
         let mut logger = ConversationLogger::create();
 
@@ -385,6 +392,7 @@ impl AgentApp {
                 &mut logger,
                 &event_tx,
                 cwd,
+                parent_session_id,
             )
             .await;
 
@@ -426,6 +434,7 @@ impl AgentApp {
                 &mut logger,
                 &event_tx,
                 cwd,
+                None,
             )
             .await;
 
@@ -446,6 +455,7 @@ impl AgentApp {
         logger: &mut ConversationLogger,
         event_tx: &Arc<mpsc::Sender<AgentEvent>>,
         cwd: Option<&Path>,
+        parent_session_id: Option<&str>,
     ) -> AgentResult<String> {
         let workspace = cwd.unwrap_or(&self.workspace_root);
         let mut toolbox = AgentToolbox::new(
@@ -841,8 +851,9 @@ impl AgentApp {
                         .to_owned();
                     let app = self.clone();
                     let event_tx = Arc::clone(event_tx);
+                    let sid = parent_session_id.unwrap_or("").to_owned();
                     bot_handles.push(tokio::spawn(async move {
-                        app.run_bot(&bot_name, &bot_task, &event_tx).await
+                        app.run_bot(&bot_name, &bot_task, &event_tx, &sid).await
                     }));
                 }
 
@@ -1038,17 +1049,21 @@ impl AgentApp {
             logger,
             event_tx,
             None,
+            None,
         )
         .await
     }
 
     /// 运行 Bot 子代理：用 Bot 的 BOT.md body 作为 system prompt，Bot 专属技能运行
     /// 支持多轮会话：存在活跃会话时恢复上下文继续执行
+    ///
+    /// `parent_session_id`: 创建该 Bot 会话的主会话 ID，用于隔离不同主会话的 Bot 上下文
     async fn run_bot(
         &self,
         bot_name: &str,
         task: &str,
         event_tx: &Arc<mpsc::Sender<AgentEvent>>,
+        parent_session_id: &str,
     ) -> AgentResult<String> {
         let available = self.bots.list();
         let bot_names: Vec<&str> = available.iter().map(|b| b.name.as_str()).collect();
@@ -1059,8 +1074,8 @@ impl AgentApp {
             )
         })?;
 
-        // ── 检测是否有活跃会话（恢复执行） ──
-        let is_resume = self.bots.get_session(bot_name).is_some();
+        // ── 检测是否有活跃会话（仅恢复属于同一主会话的上下文） ──
+        let is_resume = self.bots.get_session(bot_name, parent_session_id).is_some();
 
         // 克隆 AgentApp 并把技能加载器替换为 Bot 专属技能（不继承全局技能）
         let mut bot_app = self.clone();
@@ -1135,9 +1150,9 @@ impl AgentApp {
         sub_logger.log(&format!("=== Bot 子代理系统提示词 ===\n{system_prompt}"));
 
         // ── 恢复活跃会话或创建新上下文 ──
-        let mut bot_ctx = if let Some(session) = self.bots.get_session(bot_name) {
+        let mut bot_ctx = if let Some(session) = self.bots.get_session(bot_name, parent_session_id) {
             sub_logger.log(&format!(
-                "=== Bot 子代理: 恢复会话 {bot_name}，上次创建于 {:?} ===",
+                "=== Bot 子代理: 恢复会话 {bot_name}（主会话 {parent_session_id}），上次创建于 {:?} ===",
                 session.created_at,
             ));
             let mut ctx = session.ctx;
@@ -1145,6 +1160,9 @@ impl AgentApp {
             ctx.push_user_text(task);
             ctx
         } else {
+            sub_logger.log(&format!(
+                "=== Bot 子代理: 创建新会话 {bot_name}（主会话 {parent_session_id}） ===",
+            ));
             let mut ctx = ContextService::new();
             ctx.push_user_text(task);
             ctx
@@ -1160,13 +1178,14 @@ impl AgentApp {
                 &mut sub_logger,
                 event_tx,
                 None,
+                Some(parent_session_id),
             )
             .await;
 
-        // ── 会话持久化：正常返回则保存，出错则清理 ──
+        // ── 会话持久化：正常返回则保存（绑定主会话 ID），出错则清理 ──
         match &result {
             Ok(_) => {
-                bot_app.bots.save_session(bot_name.to_owned(), bot_ctx);
+                bot_app.bots.save_session(bot_name.to_owned(), bot_ctx, parent_session_id.to_owned());
             }
             Err(_) => {
                 bot_app.bots.clear_session(bot_name);

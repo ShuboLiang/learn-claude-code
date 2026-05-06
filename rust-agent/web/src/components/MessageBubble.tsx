@@ -47,8 +47,6 @@ export function MessageBubble({ message, className }: Props) {
           <div className="space-y-3">
             <AssistantBlocks
               blocks={message.blocks}
-              apiCalls={message.apiCalls}
-              tokenUsage={message.tokenUsage}
             />
           </div>
         )}
@@ -72,12 +70,8 @@ export function MessageBubble({ message, className }: Props) {
 
 function AssistantBlocks({
   blocks,
-  apiCalls,
-  tokenUsage,
 }: {
   blocks: UIBlock[]
-  apiCalls?: number
-  tokenUsage?: UIMessage['tokenUsage']
 }) {
   const groups = groupParallelToolCalls(blocks)
 
@@ -93,21 +87,6 @@ function AssistantBlocks({
         return <BlockView key={gi} block={group.block!} />
       })}
 
-      {(apiCalls != null && apiCalls > 0) || tokenUsage ? (
-        <div className="flex items-center gap-3 text-[10px] text-muted-foreground border-t border-border pt-2">
-          {apiCalls != null && apiCalls > 0 && (
-            <span className="inline-flex items-center gap-1">
-              <Zap className="h-3 w-3" />
-              {apiCalls} API call{apiCalls > 1 ? 's' : ''}
-            </span>
-          )}
-          {tokenUsage && (
-            <span>
-              {tokenUsage.input} in / {tokenUsage.output} out tokens
-            </span>
-          )}
-        </div>
-      ) : null}
     </>
   )
 }
@@ -218,6 +197,79 @@ function ToolCallCard({ toolCall }: { toolCall: UIToolCall }) {
             Output
           </summary>
           <pre className="mt-1.5 max-h-80 overflow-auto rounded-lg bg-muted p-2.5 text-[11px] font-mono leading-relaxed whitespace-pre-wrap break-all text-foreground/80">
+            {formatEscape(toolCall.output)}
+          </pre>
+        </details>
+      )}
+
+      {/* Bot 子代理内部的嵌套工具调用 */}
+      {toolCall.children && toolCall.children.length > 0 && (
+        <div className="mt-3 ml-3.5 space-y-1.5">
+          <p className="text-[10px] font-medium text-muted-foreground/70 uppercase tracking-wider">
+            Bot 工具调用
+          </p>
+          {toolCall.children.map((child) => (
+            <NestedToolCall key={child.id} toolCall={child} />
+          ))}
+        </div>
+      )}
+    </details>
+  )
+}
+
+/** 嵌套子工具调用卡片（用于 call_bot 内部的工具调用） */
+function NestedToolCall({ toolCall }: { toolCall: UIToolCall }) {
+  const statusConfig: Record<UIToolCall['status'], { dot: string; label: string }> = {
+    running: { dot: 'bg-yellow-500 shadow-[0_0_6px_rgba(234,179,8,0.4)]', label: '运行中' },
+    done: { dot: 'bg-emerald-500', label: '完成' },
+    error: { dot: 'bg-red-500', label: '错误' },
+  }
+
+  const { dot, label } = statusConfig[toolCall.status]
+  const hasDetail = toolCall.input != null || toolCall.output != null
+
+  const inner = (
+    <div className="flex items-center gap-1.5 min-w-0">
+      <span className={cn('h-1.5 w-1.5 rounded-full shrink-0', dot)} />
+      <span className="text-[11px] font-semibold truncate text-foreground">{toolCall.name}</span>
+      <span className="text-[10px] text-muted-foreground shrink-0">{label}</span>
+    </div>
+  )
+
+  if (!hasDetail) {
+    return (
+      <div className="rounded-lg bg-muted/50 px-2.5 py-1.5 ring-1 ring-border/60">
+        {inner}
+      </div>
+    )
+  }
+
+  return (
+    <details className="rounded-lg bg-muted/50 px-2.5 py-1.5 ring-1 ring-border/60 group">
+      <summary className="cursor-pointer list-none flex items-center gap-1.5">
+        <span className="text-[9px] text-muted-foreground transition-transform group-open:rotate-90 shrink-0">
+          ▶
+        </span>
+        {inner}
+      </summary>
+
+      {toolCall.input != null && (
+        <details className="mt-1.5 ml-3" open>
+          <summary className="cursor-pointer text-[10px] font-medium text-muted-foreground hover:text-foreground">
+            Input
+          </summary>
+          <pre className="mt-1 max-h-60 overflow-auto rounded bg-background p-2 text-[11px] font-mono leading-relaxed whitespace-pre-wrap break-all text-foreground/80">
+            {formatDisplayJSON(toolCall.input)}
+          </pre>
+        </details>
+      )}
+
+      {toolCall.output && (
+        <details className="mt-1.5 ml-3">
+          <summary className="cursor-pointer text-[10px] font-medium text-muted-foreground hover:text-foreground">
+            Output
+          </summary>
+          <pre className="mt-1 max-h-60 overflow-auto rounded bg-background p-2 text-[11px] font-mono leading-relaxed whitespace-pre-wrap break-all text-foreground/80">
             {formatEscape(toolCall.output)}
           </pre>
         </details>

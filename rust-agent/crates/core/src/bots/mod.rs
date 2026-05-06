@@ -45,12 +45,17 @@ pub struct BotMetadata {
 ///
 /// 当 Bot 反问用户后，对话上下文（包含简历解析、打分等中间结果）
 /// 被保存到此结构。用户回复后，Bot 从断点继续执行。
+///
+/// **绑定主会话 ID**：Bot 会话只能被创建它的主会话恢复，
+/// 防止不同主会话间共享 Bot 上下文。
 #[derive(Clone, Debug)]
 pub struct BotSession {
     /// Bot 的对话上下文（包含所有中间结果和对话历史）
     pub ctx: ContextService,
     /// 会话创建时间，用于过期清理
     pub created_at: Instant,
+    /// 创建该 Bot 会话的主会话 ID，用于隔离不同主会话的 Bot 上下文
+    pub parent_session_id: String,
 }
 
 impl BotSession {
@@ -258,34 +263,58 @@ impl BotRegistry {
 
     // ── 会话管理（支持 Bot 多轮交互） ──
 
-    /// 获取 Bot 的活跃会话克隆。过期会话自动过滤。
-    pub fn get_session(&self, bot_name: &str) -> Option<BotSession> {
+    /// 获取 Bot 的活跃会话克隆。
+    /// 只返回属于指定主会话且未过期的会话，防止跨主会话恢复。
+    pub fn get_session(&self, bot_name: &str, parent_session_id: &str) -> Option<BotSession> {
         let sessions = self.sessions.read().unwrap();
-        sessions.get(bot_name).filter(|s| !s.is_expired()).cloned()
+        sessions
+            .get(bot_name)
+            .filter(|s| !s.is_expired() && s.parent_session_id == parent_session_id)
+            .cloned()
     }
 
-    /// 保存（或覆盖）Bot 会话
-    pub fn save_session(&self, bot_name: String, ctx: ContextService) {
+    /// 保存（或覆盖）Bot 会话，绑定到主会话 ID
+    pub fn save_session(
+        &self,
+        bot_name: String,
+        ctx: ContextService,
+        parent_session_id: String,
+    ) {
         let mut sessions = self.sessions.write().unwrap();
         sessions.insert(
             bot_name,
             BotSession {
                 ctx,
                 created_at: Instant::now(),
+                parent_session_id,
             },
         );
     }
 
-    /// 移除并销毁 Bot 会话（任务完成或出错时调用）
+    /// 移除并销毁指定 Bot 的会话
     pub fn clear_session(&self, bot_name: &str) {
         let mut sessions = self.sessions.write().unwrap();
         sessions.remove(bot_name);
+    }
+
+    /// 清除指定主会话关联的所有 Bot 会话
+    pub fn clear_sessions_for_parent(&self,
+        parent_session_id: &str,
+    ) {
+        let mut sessions = self.sessions.write().unwrap();
+        sessions.retain(|_, s| s.parent_session_id != parent_session_id);
     }
 
     /// 清理所有过期会话
     pub fn cleanup_expired_sessions(&self) {
         let mut sessions = self.sessions.write().unwrap();
         sessions.retain(|_, s| !s.is_expired());
+    }
+
+    /// 清除所有 Bot 的活跃会话
+    pub fn clear_all_sessions(&self) {
+        let mut sessions = self.sessions.write().unwrap();
+        sessions.clear();
     }
 }
 

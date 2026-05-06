@@ -1,0 +1,501 @@
+{
+  "version": 2,
+  "nodes": [
+    {
+      "type": "frame",
+      "id": "root",
+      "x": 0,
+      "y": 0,
+      "width": 1200,
+      "height": "fit-content",
+      "layout": "vertical",
+      "gap": 20,
+      "padding": 24,
+      "children": [
+        {
+          "type": "text",
+          "id": "title",
+          "width": "fill-container",
+          "height": "fit-content",
+          "text": "rust-agent 系统架构图",
+          "fontSize": 24,
+          "textAlign": "center",
+          "verticalAlign": "middle",
+          "textColor": "#1F2329"
+        },
+        {
+          "type": "frame",
+          "id": "layers-container",
+          "width": "fill-container",
+          "height": "fit-content",
+          "layout": "vertical",
+          "alignItems": "stretch",
+          "gap": 16,
+          "padding": 0,
+          "children": [
+            {
+              "type": "frame",
+              "id": "row-frontend",
+              "width": "fill-container",
+              "height": "fit-content",
+              "layout": "horizontal",
+              "gap": 24,
+              "padding": 0,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "label-frontend",
+                  "width": 80,
+                  "height": "fit-content",
+                  "text": "前端层",
+                  "fontSize": 18,
+                  "textAlign": "right",
+                  "textColor": "#1F2329"
+                },
+                {
+                  "type": "frame",
+                  "id": "layer-frontend",
+                  "width": "fill-container",
+                  "height": "fit-content",
+                  "fillColor": "#F0F4FC",
+                  "borderColor": "#5178C6",
+                  "borderWidth": 2,
+                  "borderRadius": 8,
+                  "layout": "horizontal",
+                  "gap": 16,
+                  "padding": 24,
+                  "alignItems": "stretch",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "node-web",
+                      "width": "fill-container",
+                      "height": "fit-content",
+                      "layout": "vertical",
+                      "gap": 6,
+                      "padding": 12,
+                      "alignItems": "center",
+                      "fillColor": "#FFFFFF",
+                      "borderColor": "#5178C6",
+                      "borderWidth": 2,
+                      "borderRadius": 8,
+                      "children": [
+                        { "type": "icon", "id": "icon-web", "name": "display", "width": 36, "height": 36, "color": "#5178C6" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "Web UI", "fontSize": 14, "textColor": "#1F2329", "textAlign": "center" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "React + Vite + Zustand", "fontSize": 12, "textColor": "#646A73", "textAlign": "center" }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "node-cli",
+                      "width": "fill-container",
+                      "height": "fit-content",
+                      "layout": "vertical",
+                      "gap": 6,
+                      "padding": 12,
+                      "alignItems": "center",
+                      "fillColor": "#FFFFFF",
+                      "borderColor": "#5178C6",
+                      "borderWidth": 2,
+                      "borderRadius": 8,
+                      "children": [
+                        { "type": "icon", "id": "icon-cli", "name": "terminal", "width": 36, "height": 36, "color": "#5178C6" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "CLI 终端", "fontSize": 14, "textColor": "#1F2329", "textAlign": "center" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "Ink (React in Terminal)", "fontSize": 12, "textColor": "#646A73", "textAlign": "center" }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "row-server",
+              "width": "fill-container",
+              "height": "fit-content",
+              "layout": "horizontal",
+              "gap": 24,
+              "padding": 0,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "label-server",
+                  "width": 80,
+                  "height": "fit-content",
+                  "text": "传输层",
+                  "fontSize": 18,
+                  "textAlign": "right",
+                  "textColor": "#1F2329"
+                },
+                {
+                  "type": "frame",
+                  "id": "layer-server",
+                  "width": "fill-container",
+                  "height": "fit-content",
+                  "fillColor": "#EAE2FE",
+                  "borderColor": "#8569CB",
+                  "borderWidth": 2,
+                  "borderRadius": 8,
+                  "layout": "horizontal",
+                  "gap": 16,
+                  "padding": 24,
+                  "alignItems": "stretch",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "node-axum",
+                      "width": "fill-container",
+                      "height": "fit-content",
+                      "layout": "vertical",
+                      "gap": 6,
+                      "padding": 12,
+                      "alignItems": "center",
+                      "fillColor": "#FFFFFF",
+                      "borderColor": "#8569CB",
+                      "borderWidth": 2,
+                      "borderRadius": 8,
+                      "children": [
+                        { "type": "icon", "id": "icon-server", "name": "server", "width": 36, "height": 36, "color": "#8569CB" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "HTTP Server", "fontSize": 14, "textColor": "#1F2329", "textAlign": "center" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "Axum + REST API", "fontSize": 12, "textColor": "#646A73", "textAlign": "center" }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "node-sse",
+                      "width": "fill-container",
+                      "height": "fit-content",
+                      "layout": "vertical",
+                      "gap": 6,
+                      "padding": 12,
+                      "alignItems": "center",
+                      "fillColor": "#FFFFFF",
+                      "borderColor": "#8569CB",
+                      "borderWidth": 2,
+                      "borderRadius": 8,
+                      "children": [
+                        { "type": "icon", "id": "icon-stream", "name": "dashboard", "width": 36, "height": 36, "color": "#8569CB" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "SSE 实时流", "fontSize": 14, "textColor": "#1F2329", "textAlign": "center" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "SessionBroadcaster", "fontSize": 12, "textColor": "#646A73", "textAlign": "center" }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "row-core",
+              "width": "fill-container",
+              "height": "fit-content",
+              "layout": "horizontal",
+              "gap": 24,
+              "padding": 0,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "label-core",
+                  "width": 80,
+                  "height": "fit-content",
+                  "text": "核心层",
+                  "fontSize": 18,
+                  "textAlign": "right",
+                  "textColor": "#1F2329"
+                },
+                {
+                  "type": "frame",
+                  "id": "layer-core",
+                  "width": "fill-container",
+                  "height": "fit-content",
+                  "fillColor": "#DFF5E5",
+                  "borderColor": "#509863",
+                  "borderWidth": 2,
+                  "borderRadius": 8,
+                  "layout": "horizontal",
+                  "gap": 16,
+                  "padding": 24,
+                  "alignItems": "stretch",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "node-agent",
+                      "width": "fill-container",
+                      "height": "fit-content",
+                      "layout": "vertical",
+                      "gap": 6,
+                      "padding": 12,
+                      "alignItems": "center",
+                      "fillColor": "#FFFFFF",
+                      "borderColor": "#509863",
+                      "borderWidth": 2,
+                      "borderRadius": 8,
+                      "children": [
+                        { "type": "icon", "id": "icon-bot", "name": "bot", "width": 36, "height": 36, "color": "#509863" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "AgentApp", "fontSize": 14, "textColor": "#1F2329", "textAlign": "center" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "Agent 循环控制器", "fontSize": 12, "textColor": "#646A73", "textAlign": "center" }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "node-context",
+                      "width": "fill-container",
+                      "height": "fit-content",
+                      "layout": "vertical",
+                      "gap": 6,
+                      "padding": 12,
+                      "alignItems": "center",
+                      "fillColor": "#FFFFFF",
+                      "borderColor": "#509863",
+                      "borderWidth": 2,
+                      "borderRadius": 8,
+                      "children": [
+                        { "type": "icon", "id": "icon-message", "name": "comment", "width": 36, "height": 36, "color": "#509863" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "ContextService", "fontSize": 14, "textColor": "#1F2329", "textAlign": "center" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "对话上下文管理", "fontSize": 12, "textColor": "#646A73", "textAlign": "center" }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "node-command",
+                      "width": "fill-container",
+                      "height": "fit-content",
+                      "layout": "vertical",
+                      "gap": 6,
+                      "padding": 12,
+                      "alignItems": "center",
+                      "fillColor": "#FFFFFF",
+                      "borderColor": "#509863",
+                      "borderWidth": 2,
+                      "borderRadius": 8,
+                      "children": [
+                        { "type": "icon", "id": "icon-command", "name": "code", "width": 36, "height": 36, "color": "#509863" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "CommandDispatcher", "fontSize": 14, "textColor": "#1F2329", "textAlign": "center" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "用户命令分发", "fontSize": 12, "textColor": "#646A73", "textAlign": "center" }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "row-capability",
+              "width": "fill-container",
+              "height": "fit-content",
+              "layout": "horizontal",
+              "gap": 24,
+              "padding": 0,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "label-capability",
+                  "width": 80,
+                  "height": "fit-content",
+                  "text": "能力层",
+                  "fontSize": 18,
+                  "textAlign": "right",
+                  "textColor": "#1F2329"
+                },
+                {
+                  "type": "frame",
+                  "id": "layer-capability",
+                  "width": "fill-container",
+                  "height": "fit-content",
+                  "fillColor": "#FEF1CE",
+                  "borderColor": "#D4B45B",
+                  "borderWidth": 2,
+                  "borderRadius": 8,
+                  "layout": "horizontal",
+                  "gap": 16,
+                  "padding": 24,
+                  "alignItems": "stretch",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "node-skills",
+                      "width": "fill-container",
+                      "height": "fit-content",
+                      "layout": "vertical",
+                      "gap": 6,
+                      "padding": 12,
+                      "alignItems": "center",
+                      "fillColor": "#FFFFFF",
+                      "borderColor": "#D4B45B",
+                      "borderWidth": 2,
+                      "borderRadius": 8,
+                      "children": [
+                        { "type": "icon", "id": "icon-skills", "name": "lightning", "width": 36, "height": 36, "color": "#D4B45B" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "Skills Hub", "fontSize": 14, "textColor": "#1F2329", "textAlign": "center" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "动态技能加载", "fontSize": 12, "textColor": "#646A73", "textAlign": "center" }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "node-bots",
+                      "width": "fill-container",
+                      "height": "fit-content",
+                      "layout": "vertical",
+                      "gap": 6,
+                      "padding": 12,
+                      "alignItems": "center",
+                      "fillColor": "#FFFFFF",
+                      "borderColor": "#D4B45B",
+                      "borderWidth": 2,
+                      "borderRadius": 8,
+                      "children": [
+                        { "type": "icon", "id": "icon-bots", "name": "crowd", "width": 36, "height": 36, "color": "#D4B45B" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "BotRegistry", "fontSize": 14, "textColor": "#1F2329", "textAlign": "center" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "Bot 角色管理", "fontSize": 12, "textColor": "#646A73", "textAlign": "center" }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "node-tools",
+                      "width": "fill-container",
+                      "height": "fit-content",
+                      "layout": "vertical",
+                      "gap": 6,
+                      "padding": 12,
+                      "alignItems": "center",
+                      "fillColor": "#FFFFFF",
+                      "borderColor": "#D4B45B",
+                      "borderWidth": 2,
+                      "borderRadius": 8,
+                      "children": [
+                        { "type": "icon", "id": "icon-tools", "name": "toolbox", "width": 36, "height": 36, "color": "#D4B45B" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "AgentToolbox", "fontSize": 14, "textColor": "#1F2329", "textAlign": "center" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "工具箱 (bash/curl/文件)", "fontSize": 12, "textColor": "#646A73", "textAlign": "center" }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "row-infra",
+              "width": "fill-container",
+              "height": "fit-content",
+              "layout": "horizontal",
+              "gap": 24,
+              "padding": 0,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "label-infra",
+                  "width": 80,
+                  "height": "fit-content",
+                  "text": "基础设施",
+                  "fontSize": 18,
+                  "textAlign": "right",
+                  "textColor": "#1F2329"
+                },
+                {
+                  "type": "frame",
+                  "id": "layer-infra",
+                  "width": "fill-container",
+                  "height": "fit-content",
+                  "fillColor": "#FEE3E2",
+                  "borderColor": "#D25D5A",
+                  "borderWidth": 2,
+                  "borderRadius": 8,
+                  "layout": "horizontal",
+                  "gap": 16,
+                  "padding": 24,
+                  "alignItems": "stretch",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "node-llm",
+                      "width": "fill-container",
+                      "height": "fit-content",
+                      "layout": "vertical",
+                      "gap": 6,
+                      "padding": 12,
+                      "alignItems": "center",
+                      "fillColor": "#FFFFFF",
+                      "borderColor": "#D25D5A",
+                      "borderWidth": 2,
+                      "borderRadius": 8,
+                      "children": [
+                        { "type": "icon", "id": "icon-brain", "name": "chip", "width": 36, "height": 36, "color": "#D25D5A" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "LLM API", "fontSize": 14, "textColor": "#1F2329", "textAlign": "center" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "OpenAI / Anthropic", "fontSize": 12, "textColor": "#646A73", "textAlign": "center" }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "node-mcp",
+                      "width": "fill-container",
+                      "height": "fit-content",
+                      "layout": "vertical",
+                      "gap": 6,
+                      "padding": 12,
+                      "alignItems": "center",
+                      "fillColor": "#FFFFFF",
+                      "borderColor": "#D25D5A",
+                      "borderWidth": 2,
+                      "borderRadius": 8,
+                      "children": [
+                        { "type": "icon", "id": "icon-plug", "name": "link", "width": 36, "height": 36, "color": "#D25D5A" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "MCP Client", "fontSize": 14, "textColor": "#1F2329", "textAlign": "center" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "模型上下文协议", "fontSize": 12, "textColor": "#646A73", "textAlign": "center" }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "node-fs",
+                      "width": "fill-container",
+                      "height": "fit-content",
+                      "layout": "vertical",
+                      "gap": 6,
+                      "padding": 12,
+                      "alignItems": "center",
+                      "fillColor": "#FFFFFF",
+                      "borderColor": "#D25D5A",
+                      "borderWidth": 2,
+                      "borderRadius": 8,
+                      "children": [
+                        { "type": "icon", "id": "icon-folder", "name": "folder", "width": 36, "height": 36, "color": "#D25D5A" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "文件系统", "fontSize": 14, "textColor": "#1F2329", "textAlign": "center" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "工作目录 / 会话存储", "fontSize": 12, "textColor": "#646A73", "textAlign": "center" }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "node-config",
+                      "width": "fill-container",
+                      "height": "fit-content",
+                      "layout": "vertical",
+                      "gap": 6,
+                      "padding": 12,
+                      "alignItems": "center",
+                      "fillColor": "#FFFFFF",
+                      "borderColor": "#D25D5A",
+                      "borderWidth": 2,
+                      "borderRadius": 8,
+                      "children": [
+                        { "type": "icon", "id": "icon-settings", "name": "settings", "width": 36, "height": 36, "color": "#D25D5A" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "配置管理", "fontSize": 14, "textColor": "#1F2329", "textAlign": "center" },
+                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "AppConfig / TokenTracker", "fontSize": 12, "textColor": "#646A73", "textAlign": "center" }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    { "type": "connector", "connector": { "from": "layer-frontend", "to": "layer-server", "fromAnchor": "bottom", "toAnchor": "top", "lineShape": "polyline", "lineColor": "#BBBFC4", "lineWidth": 2, "endArrow": "arrow", "label": "REST API + SSE" } },
+    { "type": "connector", "connector": { "from": "layer-server", "to": "layer-core", "fromAnchor": "bottom", "toAnchor": "top", "lineShape": "polyline", "lineColor": "#BBBFC4", "lineWidth": 2, "endArrow": "arrow", "label": "handle_user_turn" } },
+    { "type": "connector", "connector": { "from": "layer-core", "to": "layer-capability", "fromAnchor": "bottom", "toAnchor": "top", "lineShape": "polyline", "lineColor": "#BBBFC4", "lineWidth": 2, "endArrow": "arrow" } },
+    { "type": "connector", "connector": { "from": "layer-core", "to": "layer-infra", "fromAnchor": "bottom", "toAnchor": "top", "lineShape": "polyline", "lineColor": "#BBBFC4", "lineWidth": 2, "endArrow": "arrow" } }
+  ]
+}

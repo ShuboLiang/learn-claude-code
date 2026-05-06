@@ -5,7 +5,9 @@
       "Skill(tavily-search)",
       "Bash(cargo test:*)",
       "Bash(cargo check:*)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(ls crates/*/src/)",
+      "Bash(ls crates/*/Cargo.toml)"
     ]
   }
 }

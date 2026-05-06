@@ -166,7 +166,7 @@ pub async fn chat_completions(
     tokio::spawn(async move {
         ctx.push_user_text(&user_input);
         let _ = agent
-            .handle_user_turn(&mut ctx, &user_input, None, event_tx)
+            .handle_user_turn(&mut ctx, &user_input, None, event_tx, None)
             .await;
     });
 

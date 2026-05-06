@@ -260,6 +260,7 @@ async fn delete_session(
 }
 
 /// POST /sessions/:id/clear — 清空会话的对话上下文
+/// 同时清除与该主会话关联的所有 Bot 子代理上下文
 async fn clear_session(State(state): State<AppState>, Path(id): Path<String>) -> impl IntoResponse {
     match state.store.get(&id) {
         Some(session_arc) => {
@@ -268,6 +269,8 @@ async fn clear_session(State(state): State<AppState>, Path(id): Path<String>) ->
             session.last_active = chrono::Utc::now();
             drop(session);
             state.store.persist(&id).await;
+            // 清除与该主会话关联的所有 Bot 上下文
+            state.agent.clear_bot_sessions_for_parent(&id);
             Json(serde_json::json!({ "status": "cleared" })).into_response()
         }
         None => (
@@ -445,7 +448,7 @@ async fn send_message(
         });
 
         if let Err(e) = agent
-            .handle_user_turn(&mut cloned_ctx, &content, Some(&cwd), agent_tx)
+            .handle_user_turn(&mut cloned_ctx, &content, Some(&cwd), agent_tx, Some(&session_id))
             .await
         {
             tracing::error!("[send_message] handle_user_turn 失败: {e:#}");

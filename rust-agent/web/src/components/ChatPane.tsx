@@ -21,7 +21,7 @@ export function ChatPane() {
 
   const streamingBlocks = useMemo(() => {
     if (!streaming) return []
-    return buildStreamingBlocks(streaming)
+    return buildStreamingBlocks(streaming, false)
   }, [streaming])
 
   const scrollDeps = [messages, streamingBlocks]

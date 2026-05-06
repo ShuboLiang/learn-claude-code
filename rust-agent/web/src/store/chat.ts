@@ -8,26 +8,55 @@ import { sendMessageOnly, subscribeSessionStream } from "@/api/sse";
 import { normalizeApiMessages } from "@/api/normalize";
 import type { UIBlock } from "@/types/ui";
 
-/** 根据 StreamingState 的 blockOrder 构造 UIBlock 数组，保持与事件到达顺序一致 */
-export function buildStreamingBlocks(st: {
-  blockOrder: ('thinking' | 'text' | `tool:${string}`)[]
-  thinking: string
-  assistantText: string
-  tools: { id: string; name: string; input: unknown; output: string | null; status: 'running' | 'done' | 'error'; parallelIndex: { index: number; total: number } | null; isError?: boolean }[]
-  error: { code: string; message: string } | null
-}): UIBlock[] {
+/** 根据 StreamingState 的 blockOrder 构造 UIBlock 数组，保持与事件到达顺序一致
+ *
+ * @param st - 流式状态
+ * @param finalized - 是否已完成。流式期(false)只输出文本+迷你状态条；完成时(true)输出全部内容
+ */
+export function buildStreamingBlocks(
+  st: {
+    blockOrder: ('thinking' | 'text' | `tool:${string}`)[]
+    thinking: string
+    assistantText: string
+    tools: { id: string; name: string; input: unknown; output: string | null; status: 'running' | 'done' | 'error'; parallelIndex: { index: number; total: number } | null; isError?: boolean; children?: { id: string; name: string; input: unknown; output: string | null; status: 'running' | 'done' | 'error'; parallelIndex: { index: number; total: number } | null; isError?: boolean }[] }[]
+    error: { code: string; message: string } | null
+  },
+  finalized: boolean = false,
+): UIBlock[] {
   const blocks: UIBlock[] = []
-  for (const key of st.blockOrder) {
-    if (key === 'thinking' && st.thinking) {
+
+  if (finalized) {
+    // 完成时：按原始 blockOrder 输出所有内容（文本 + 工具卡片）
+    for (const key of st.blockOrder) {
+      if (key === 'thinking' && st.thinking) {
+        blocks.push({ kind: 'thinking', content: st.thinking })
+      } else if (key === 'text' && st.assistantText) {
+        blocks.push({ kind: 'text', content: st.assistantText })
+      } else if (key.startsWith('tool:')) {
+        const toolId = key.slice(5)
+        const tc = st.tools.find((t) => t.id === toolId)
+        if (tc) blocks.push({ kind: 'toolCall', toolCall: tc })
+      }
+    }
+  } else {
+    // 流式期：只输出文本内容，工具调用折叠为迷你状态条
+    if (st.thinking) {
       blocks.push({ kind: 'thinking', content: st.thinking })
-    } else if (key === 'text' && st.assistantText) {
+    }
+    if (st.assistantText) {
       blocks.push({ kind: 'text', content: st.assistantText })
-    } else if (key.startsWith('tool:')) {
-      const toolId = key.slice(5)
-      const tc = st.tools.find((t) => t.id === toolId)
-      if (tc) blocks.push({ kind: 'toolCall', toolCall: tc })
+    }
+    const running = st.tools.filter((t) => t.status === 'running').length
+    const done = st.tools.filter((t) => t.status === 'done').length
+    const total = st.tools.length
+    if (total > 0) {
+      blocks.push({
+        kind: 'text',
+        content: `\n\n[工具调用中: ${done}/${total} 完成]`,
+      })
     }
   }
+
   if (st.error) {
     blocks.push({ kind: 'error', code: st.error.code, message: st.error.message })
   }
@@ -78,18 +107,81 @@ async function runSSELoop(
               status: 'running' as const,
               parallelIndex: evt.data.parallel_index ?? null,
             };
-            target.tools.push(tc);
-            target.blockOrder.push(`tool:${tc.id}`);
+            if (evt.data.name === 'call_bot') {
+              // call_bot 容器：标记进入 Bot 上下文，创建带子项数组的条目
+              target.activeBotName = 'call_bot';
+              (tc as UIToolCall & { children: typeof tc[] }).children = [];
+              target.tools.push(tc);
+              target.blockOrder.push(`tool:${tc.id}`);
+            } else if (target.activeBotName) {
+              // Bot 内部的工具调用：作为最近活跃 call_bot 的子项
+              let parentTool: (typeof tc & { children?: typeof tc[] }) | undefined;
+              for (let i = target.tools.length - 1; i >= 0; i--) {
+                const t = target.tools[i] as typeof tc & { children?: typeof tc[] };
+                if (t.name === 'call_bot' && t.status === 'running') {
+                  parentTool = t;
+                  break;
+                }
+              }
+              if (parentTool && parentTool.children) {
+                parentTool.children.push(tc);
+              } else {
+                // 兜底：无活跃 call_bot 时作为普通工具调用
+                target.tools.push(tc);
+                target.blockOrder.push(`tool:${tc.id}`);
+              }
+            } else {
+              // 普通工具调用
+              target.tools.push(tc);
+              target.blockOrder.push(`tool:${tc.id}`);
+            }
             break;
           }
           case "tool_result": {
-            const tc = target.tools.find(
-              (t) => t.name === evt.data.name && t.output === null,
-            );
-            if (tc) {
-              tc.output = evt.data.output;
-              tc.status = 'done';
-            }
+            if (evt.data.name === 'call_bot') {
+              // call_bot 完成：退出 Bot 上下文，更新父条目状态
+              target.activeBotName = null;
+              let parentTool: (typeof tc & { children?: typeof tc[]; output: string | null; status: 'running' | 'done' | 'error' }) | undefined;
+              for (let i = target.tools.length - 1; i >= 0; i--) {
+                const t = target.tools[i] as typeof tc & { children?: typeof tc[]; output: string | null; status: 'running' | 'done' | 'error' };
+                if (t.name === 'call_bot' && t.status === 'running') {
+                  parentTool = t;
+                  break;
+                }
+              }
+              if (parentTool) {
+                parentTool.output = evt.data.output;
+                parentTool.status = 'done';
+              }
+            } else if (target.activeBotName) {
+              // Bot 内部的 tool_result：更新对应子项
+              let parentTool: (typeof tc & { children?: typeof tc[] }) | undefined;
+              for (let i = target.tools.length - 1; i >= 0; i--) {
+                const t = target.tools[i] as typeof tc & { children?: typeof tc[] };
+                if (t.name === 'call_bot' && t.status === 'running') {
+                  parentTool = t;
+                  break;
+                }
+              }
+              if (parentTool && parentTool.children) {
+                const childTc = parentTool.children.find(
+                  (t) => t.name === evt.data.name && t.output === null,
+                );
+                if (childTc) {
+                  childTc.output = evt.data.output;
+                  childTc.status = 'done';
+                }
+              }
+            } else {
+              // 普通 tool_result
+              const tc = target.tools.find(
+                (t) => t.name === evt.data.name && t.output === null,
+              );
+              if (tc) {
+                tc.output = evt.data.output;
+                tc.status = 'done';
+              }
+              }
             break;
           }
           case "turn_end":
@@ -130,7 +222,7 @@ async function runSSELoop(
       set((s) => {
         const target = s.streamingBySession[sid];
         if (!target || target.abort !== abortController) return;
-        const blocks = buildStreamingBlocks(target);
+        const blocks = buildStreamingBlocks(target, true);
         if (blocks.length > 0) {
           const assistantMsg = {
             id: nanoid(),
@@ -141,10 +233,8 @@ async function runSSELoop(
             tokenUsage: target.tokenUsage ?? undefined,
           };
           s.messages.push(assistantMsg);
-          // 同步缓存
-          if (s.messagesBySession[sid]) {
-            s.messagesBySession[sid].push(assistantMsg);
-          }
+          if (!s.messagesBySession[sid]) s.messagesBySession[sid] = [];
+          s.messagesBySession[sid].push(assistantMsg);
         }
         delete s.streamingBySession[sid];
         if (s.currentSessionId === sid) s.streaming = null;
@@ -171,7 +261,27 @@ async function runSSELoop(
         const target = s.streamingBySession[sid];
         if (!target || target.abort !== abortController) return;
         const hydrated = normalizeApiMessages(msgs, nanoid);
-        
+
+        // 从 streaming 中提取 call_bot 的 children 信息，合并到 hydration 结果中
+        // 因为 bot 内部消息不在主会话历史中，需要保留流式期间累积的 children
+        const callBotsWithChildren = target.tools.filter(
+          (t): t is typeof t & { children: { id: string; name: string; input: unknown; output: string | null; status: 'running' | 'done' | 'error'; parallelIndex: { index: number; total: number } | null; isError?: boolean }[] } =>
+            t.name === 'call_bot' && 'children' in t && Array.isArray((t as any).children) && (t as any).children.length > 0
+        );
+        if (callBotsWithChildren.length > 0) {
+          let cbIdx = 0;
+          for (const msg of hydrated) {
+            if (msg.role !== 'assistant') continue;
+            for (const block of msg.blocks) {
+              if (block.kind === 'toolCall' && block.toolCall.name === 'call_bot' && cbIdx < callBotsWithChildren.length) {
+                const streamingCb = callBotsWithChildren[cbIdx];
+                block.toolCall.children = streamingCb.children;
+                cbIdx++;
+              }
+            }
+          }
+        }
+
         // 更新当前显示和缓存
         if (s.currentSessionId === sid) s.messages = hydrated;
         s.messagesBySession[sid] = hydrated;
@@ -208,7 +318,7 @@ async function runSSELoop(
           : "NETWORK";
       const message = err instanceof Error ? err.message : "未知错误";
       if (code !== "ABORT") target.error = { code, message };
-      const blocks = buildStreamingBlocks(target);
+      const blocks = buildStreamingBlocks(target, true);
       if (blocks.length > 0) {
         const assistantMsg = {
           id: nanoid(),
@@ -219,7 +329,8 @@ async function runSSELoop(
           tokenUsage: target.tokenUsage ?? undefined,
         };
         s.messages.push(assistantMsg);
-        if (s.messagesBySession[sid]) s.messagesBySession[sid].push(assistantMsg);
+        if (!s.messagesBySession[sid]) s.messagesBySession[sid] = [];
+        s.messagesBySession[sid].push(assistantMsg);
       }
       delete s.streamingBySession[sid];
       if (s.currentSessionId === sid) s.streaming = null;
@@ -395,12 +506,9 @@ export const useChatStore = create<ChatState & ChatActions>()(
       }
 
       // 2. 异步加载/刷新消息列表
-      console.log('[selectSession] 开始加载消息, 当前缓存长度:', get().messagesBySession[id]?.length ?? 0);
       try {
         const msgs = await api.getMessages(id, abortController.signal);
-        console.log('[selectSession] getMessages 返回原始消息数量:', msgs.length);
         const normalized = normalizeApiMessages(msgs, nanoid);
-        console.log('[selectSession] normalize 后消息数量:', normalized.length);
 
         set((s) => {
           // 仅在当前会话仍然匹配时更新（虽然有 AbortSignal，但双重保险更安全）
@@ -411,10 +519,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
           }
         });
       } catch (err: any) {
-        if (err.name === 'AbortError') {
-          console.log('[selectSession] getMessages 被取消');
-          return;
-        }
+        if (err.name === 'AbortError') return;
         console.error("[selectSession] 加载消息失败:", err);
       }
 
@@ -437,6 +542,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
           thinking: "",
           tools: [],
           blockOrder: [],
+          activeBotName: null,
           error: null,
           retrying: null,
           apiCalls: 0,
@@ -543,6 +649,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
           thinking: "",
           tools: [],
           blockOrder: [],
+          activeBotName: null,
           error: null,
           retrying: null,
           apiCalls: 0,
