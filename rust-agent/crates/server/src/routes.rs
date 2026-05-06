@@ -444,8 +444,27 @@ async fn send_message(
         // 包装 broadcaster 为 mpsc::Sender 接口（通过 tokio::sync::mpsc 桥接）
         let (agent_tx, mut agent_rx) = tokio::sync::mpsc::channel::<AgentEvent>(64);
         tokio::spawn(async move {
-            while let Some(evt) = agent_rx.recv().await {
-                broadcaster_for_agent.send(&sid, evt);
+            let mut no_subscriber_ticks = 0;
+            loop {
+                tokio::select! {
+                    Some(evt) = agent_rx.recv() => {
+                        broadcaster_for_agent.send(&sid, evt);
+                        no_subscriber_ticks = 0;
+                    }
+                    _ = tokio::time::sleep(Duration::from_millis(500)) => {
+                        // 检查 broadcaster 是否还有活跃 subscriber
+                        if broadcaster_for_agent.receiver_count(&sid) == 0 {
+                            no_subscriber_ticks += 1;
+                            if no_subscriber_ticks >= 4 {
+                                // 连续 2 秒无 subscriber，退出 bridge task
+                                // 释放 agent_rx，让 agent_tx.is_closed() 返回 true
+                                break;
+                            }
+                        } else {
+                            no_subscriber_ticks = 0;
+                        }
+                    }
+                }
             }
         });
 

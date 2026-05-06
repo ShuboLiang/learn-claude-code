@@ -83,15 +83,16 @@ async function runSSELoop(
               target.assistantText += evt.data.content;
             } else {
               // Bot 子代理的文本：通过 toolUseId === call_id 匹配到主 Agent 发起的 call_bot 卡片
+              const callId = src.role === "bot" ? src.call_id : undefined;
               let botCard = target.tools.find(
-                (t) => t.name === "call_bot" && t.toolUseId === src.call_id,
+                (t) => t.name === "call_bot" && t.toolUseId === callId,
               );
               if (!botCard) {
                 // 兜底：若 call_bot 卡片未创建（tool_call 事件未到达），先创建
                 botCard = {
                   id: nanoid(),
                   name: "call_bot",
-                  input: { name: src.name },
+                  input: { name: src.role === "bot" ? src.name : "" },
                   output: null,
                   status: "running",
                   parallelIndex: null,
@@ -99,7 +100,7 @@ async function runSSELoop(
                   children: [],
                   botText: "",
                   botThinking: "",
-                  toolUseId: src.call_id,
+                  toolUseId: callId,
                 };
                 target.tools.push(botCard);
                 target.blockOrder.push(`tool:${botCard.id}`);
@@ -117,15 +118,16 @@ async function runSSELoop(
               target.thinking += evt.data.content;
             } else {
               // Bot 子代理的思考：通过 toolUseId === call_id 匹配到主 Agent 发起的 call_bot 卡片
+              const callId = src.role === "bot" ? src.call_id : undefined;
               let botCard = target.tools.find(
-                (t) => t.name === "call_bot" && t.toolUseId === src.call_id,
+                (t) => t.name === "call_bot" && t.toolUseId === callId,
               );
               if (!botCard) {
                 // 兜底：若 call_bot 卡片未创建，先创建
                 botCard = {
                   id: nanoid(),
                   name: "call_bot",
-                  input: { name: src.name },
+                  input: { name: src.role === "bot" ? src.name : "" },
                   output: null,
                   status: "running",
                   parallelIndex: null,
@@ -133,7 +135,7 @@ async function runSSELoop(
                   children: [],
                   botText: "",
                   botThinking: "",
-                  toolUseId: src.call_id,
+                  toolUseId: callId,
                 };
                 target.tools.push(botCard);
                 target.blockOrder.push(`tool:${botCard.id}`);
@@ -157,8 +159,9 @@ async function runSSELoop(
             };
             if (src.role === "bot" && evt.data.name !== "call_bot") {
               // Bot 内部的工具调用：通过 toolUseId === call_id 挂到对应 call_bot 下
+              const callId = src.call_id;
               const existingParent = target.tools.find(
-                (t) => t.name === "call_bot" && t.toolUseId === src.call_id,
+                (t) => t.name === "call_bot" && t.toolUseId === callId,
               );
               if (existingParent) {
                 existingParent.children = existingParent.children || [];
@@ -176,18 +179,22 @@ async function runSSELoop(
                   children: [tc],
                   botText: "",
                   botThinking: "",
-                  toolUseId: src.call_id,
+                  toolUseId: callId,
                 };
                 target.tools.push(parentTool);
                 target.blockOrder.push(`tool:${parentTool.id}`);
               }
             } else if (evt.data.name === "call_bot") {
               // 主 Agent 调用 call_bot：初始化 bot 专属字段，以便后续 bot 事件能匹配
+              // 注意：后端 call_bot 的 ToolCall 事件 id 为 None，
+              // 但 source.call_id 是后端生成的唯一标识，bot 子事件也用同一 call_id
+              const callId = src.role === "bot" ? src.call_id : undefined;
               const callBotTc = {
                 ...tc,
                 children: [],
                 botText: "",
                 botThinking: "",
+                toolUseId: callId, // 用 source.call_id 而非 evt.data.id（后者为 null）
               };
               target.tools.push(callBotTc);
               target.blockOrder.push(`tool:${callBotTc.id}`);
@@ -201,8 +208,9 @@ async function runSSELoop(
             const src = evt.data.source;
             if (src.role === "bot" && evt.data.name !== "call_bot") {
               // Bot 内部的 tool_result：通过 toolUseId 匹配子工具
-              let parentTool = target.tools.find(
-                (t) => t.name === "call_bot" && t.toolUseId === src.call_id,
+              const callId = src.call_id;
+              const parentTool = target.tools.find(
+                (t) => t.name === "call_bot" && t.toolUseId === callId,
               );
               if (parentTool && parentTool.children) {
                 const childTc = parentTool.children.find(
@@ -214,9 +222,11 @@ async function runSSELoop(
                 }
               }
             } else if (evt.data.name === "call_bot") {
-              // 主 Agent 的 call_bot 结果：通过 toolUseId 精确匹配
+              // 主 Agent 的 call_bot 结果：通过 source.call_id 匹配
+              // 注意：后端 call_bot 的 ToolResult 事件 id 也为 None，需用 source.call_id
+              const callId = src.role === "bot" ? src.call_id : undefined;
               const tc = target.tools.find(
-                (t) => t.name === "call_bot" && t.toolUseId === evt.data.id,
+                (t) => t.name === "call_bot" && t.toolUseId === callId,
               );
               if (tc) {
                 tc.output = evt.data.output;

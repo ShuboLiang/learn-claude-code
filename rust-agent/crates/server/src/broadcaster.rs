@@ -82,4 +82,9 @@ impl SessionBroadcaster {
     pub fn has_session(&self, session_id: &str) -> bool {
         self.channels.contains_key(session_id)
     }
+
+    /// 获取指定会话广播频道的当前接收者数量
+    pub fn receiver_count(&self, session_id: &str) -> usize {
+        self.channels.get(session_id).map(|e| e.tx.receiver_count()).unwrap_or(0)
+    }
 }
