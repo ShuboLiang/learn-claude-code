@@ -96,9 +96,11 @@ pub fn create_provider() -> AgentResult<ProviderInfo> {
     let config = crate::infra::config::AppConfig::load()?;
     let profile = config.current_profile()?;
 
+    let model = profile.resolve_model()?;
+
     info!(
         "[配置] 使用 profile: {} ({} / {})",
-        profile.name, profile.provider, profile.model
+        profile.name, profile.provider, model
     );
 
     let provider = match profile.provider.to_lowercase().as_str() {
@@ -114,7 +116,7 @@ pub fn create_provider() -> AgentResult<ProviderInfo> {
 
     Ok(ProviderInfo {
         provider,
-        model: profile.model.clone(),
+        model,
         max_tokens: config.effective_max_tokens(profile),
     })
 }

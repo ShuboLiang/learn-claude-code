@@ -279,6 +279,13 @@ impl AgentApp {
         self
     }
 
+    /// 替换 provider 和模型（用于会话级 profile 切换）
+    pub fn with_provider_and_model(mut self, client: crate::api::LlmProvider, model: String) -> Self {
+        self.client = client;
+        self.model = model;
+        self
+    }
+
     /// 注入 Bot 专属技能（替换全局技能，用于 Bot 沙箱隔离）
     pub fn with_skills(mut self, skills: crate::skills::SkillLoader) -> Self {
         self.skills = Arc::new(RwLock::new(skills));

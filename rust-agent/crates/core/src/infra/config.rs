@@ -9,12 +9,36 @@ use std::fs;
 use std::path::PathBuf;
 
 use anyhow::Context;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::AgentResult;
 
 /// 配置文件名
 const CONFIG_FILE_NAME: &str = "config.json";
+
+/// 模型列表的自定义反序列化：兼容 `"model": "gpt-4o"` 旧格式和 `"models": [...]` 新格式
+fn deserialize_models<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de;
+
+    // 用 serde_json::Value 接住任意 JSON，然后手动转换
+    let value: serde_json::Value = Deserialize::deserialize(deserializer)?;
+    match value {
+        serde_json::Value::String(s) => Ok(vec![s]),
+        serde_json::Value::Array(arr) => arr
+            .into_iter()
+            .map(|v| match v {
+                serde_json::Value::String(s) => Ok(s),
+                _ => Err(de::Error::custom("models 数组中的元素必须是字符串")),
+            })
+            .collect(),
+        _ => Err(de::Error::custom(
+            "models 字段必须是字符串（单个模型）或字符串数组（多个模型）",
+        )),
+    }
+}
 
 /// 单个 API 配置（profile）
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -28,8 +52,10 @@ pub struct ApiProfile {
     pub api_key: String,
     /// API 基础 URL
     pub base_url: String,
-    /// 模型 ID
-    pub model: String,
+    /// 可选模型列表，运行时通过 LLM_MODEL 环境变量或默认取第一个
+    /// 同时兼容旧格式 `"model": "gpt-4o"`（自动转为 `["gpt-4o"]`）
+    #[serde(default, deserialize_with = "deserialize_models", alias = "model")]
+    pub models: Vec<String>,
     /// 最大 token 数（不指定则使用全局默认值）
     pub max_tokens: Option<u32>,
     /// 该 profile 的用量配额规则（不配置则不限制）
@@ -132,6 +158,32 @@ fn default_max_tokens() -> u32 {
     100_000
 }
 
+impl ApiProfile {
+    /// 解析当前应使用的模型
+    ///
+    /// 优先级：环境变量 LLM_MODEL > models[0]（默认）
+    /// 如果 LLM_MODEL 指定了模型但不在列表中，返回错误
+    pub fn resolve_model(&self) -> AgentResult<String> {
+        if let Ok(env_model) = std::env::var("LLM_MODEL") {
+            if self.models.contains(&env_model) {
+                return Ok(env_model);
+            }
+            anyhow::bail!(
+                "环境变量 LLM_MODEL 指定的模型 '{}' 不在 profile '{}' 的 models 列表中\n\
+                 可用模型: {}",
+                env_model,
+                self.name,
+                self.models.join(", ")
+            );
+        }
+
+        self.models
+            .first()
+            .cloned()
+            .context(format!("profile '{}' 的 models 列表为空", self.name))
+    }
+}
+
 impl AppConfig {
     /// 获取配置文件路径
     pub fn file_path() -> AgentResult<PathBuf> {
@@ -156,7 +208,7 @@ impl AppConfig {
                    \"provider\": \"openai\",\n      \
                    \"api_key\": \"sk-...\",\n      \
                    \"base_url\": \"https://api.openai.com\",\n      \
-                   \"model\": \"gpt-4o\",\n      \
+                   \"models\": [\"gpt-4o\", \"gpt-4o-mini\"],\n      \
                    \"max_tokens\": 65536,\n      \
                    \"quotas\": [\n        {{ \"window\": \"5h\", \"max_calls\": 1200 }}\n      ]\n    }}\n  \
                    ]\n\

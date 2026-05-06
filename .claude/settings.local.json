@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(git add:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(npm install:*)",
+      "Bash(node -e \"require\\('tailwindcss-animate'\\); console.log\\('tailwindcss-animate 加载成功'\\);\")"
     ]
   }
 }
