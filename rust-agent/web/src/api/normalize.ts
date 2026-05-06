@@ -13,6 +13,10 @@ export function normalizeApiMessages(
   apiMessages: ApiMessage[],
   generateId: () => string,
 ): UIMessage[] {
+  console.log('[normalizeApiMessages] 输入消息数量:', apiMessages.length)
+  apiMessages.forEach((m, i) => {
+    console.log(`[normalizeApiMessages] msg[${i}] role=${m.role}, contentType=${typeof m.content}, isArray=${Array.isArray(m.content)}`)
+  })
   const toolCallMap = new Map<string, UIToolCall>()
 
   // Pass 1: gather tool_use blocks from assistant messages

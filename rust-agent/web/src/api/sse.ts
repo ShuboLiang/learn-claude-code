@@ -90,11 +90,38 @@ function parseFrame(frame: string): BufferedEvent | null {
 }
 
 /**
- * POST a user message to a session and stream SSE events back.
+ * POST a user message to a session.
+ * 返回 { status: "started" }，SSE 流需通过 subscribeSessionStream 订阅。
  */
-export function streamSendMessage(
+export async function sendMessageOnly(
   sessionId: string,
   content: string,
+  signal: AbortSignal,
+): Promise<{ status: string }> {
+  const res = await fetch(`/sessions/${encodeURIComponent(sessionId)}/messages`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content }),
+    signal,
+  })
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`
+    try {
+      const body = await res.json()
+      msg = body.message ?? msg
+    } catch {
+      /* ignore */
+    }
+    throw new Error(msg)
+  }
+  return res.json()
+}
+
+/**
+ * 订阅会话的 SSE 实时流（支持刷新后重连）。
+ */
+export function subscribeSessionStream(
+  sessionId: string,
   signal: AbortController,
 ): AsyncGenerator<SSEEvent, void, undefined> {
   return parseSSEStream(
@@ -103,16 +130,16 @@ export function streamSendMessage(
         start: async (controller) => {
           try {
             const res = await fetch(
-              `/sessions/${encodeURIComponent(sessionId)}/messages`,
-              {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ content }),
-                signal: signal.signal,
-              },
+              `/sessions/${encodeURIComponent(sessionId)}/stream`,
+              { signal: signal.signal },
             )
 
             if (!res.ok) {
+              if (res.status === 404) {
+                // 会话无活跃流 — 静默关闭，不抛错
+                controller.close()
+                return
+              }
               let msg = `HTTP ${res.status}`
               try {
                 const body = await res.json()

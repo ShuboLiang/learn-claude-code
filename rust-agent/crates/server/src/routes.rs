@@ -21,6 +21,7 @@ use rust_agent_core::infra::config::AppConfig;
 use rust_agent_core::bots::BotRegistry;
 use rust_agent_core::context::ContextService;
 use rust_agent_core::mpsc;
+use crate::broadcaster::SessionBroadcaster;
 use dashmap::DashMap;
 
 use crate::openai_compat;
@@ -46,6 +47,7 @@ pub struct AppState {
     pub bot_registry: Arc<BotRegistry>,
     pub config: Arc<AppConfig>,
     pub providers: Arc<DashMap<String, LlmProvider>>,
+    pub broadcaster: Arc<SessionBroadcaster>,
 }
 
 impl AppState {
@@ -80,6 +82,7 @@ pub fn routes(app_state: AppState) -> Router {
             "/sessions/{id}/messages",
             get(get_session_messages).post(send_message),
         )
+        .route("/sessions/{id}/stream", get(stream_session))
         .route("/sessions/{id}/clear", post(clear_session))
         .route("/sessions/{id}/config", put(update_session_config))
         .route(
@@ -382,12 +385,14 @@ async fn send_message(
         }
     };
 
-    let (event_tx, event_rx) = mpsc::channel(64);
     let base_agent = state.agent.clone();
     let state_clone = state.clone();
     let content = body.content;
     let session_id = id;
     let store = state.store.clone();
+    let broadcaster = state.broadcaster.clone();
+    // 获取或创建该会话的广播发送端
+    let event_tx = broadcaster.get_or_create(&session_id);
 
     tokio::spawn(async move {
         tracing::info!("[send_message] 等待获取 session 读锁...");
@@ -404,13 +409,11 @@ async fn send_message(
             match state_clone.get_or_create_provider(&session_profile) {
                 Ok(provider) => Arc::new(base_agent.as_ref().clone().with_provider_and_model(provider, session_model)),
                 Err(e) => {
-                    let _ = event_tx
-                        .send(AgentEvent::Error {
-                            code: "profile_error".to_owned(),
-                            message: format!("{e:#}"),
-                        })
-                        .await;
-                    let _ = event_tx.send(AgentEvent::Done).await;
+                    broadcaster.send(&session_id, AgentEvent::Error {
+                        code: "profile_error".to_owned(),
+                        message: format!("{e:#}"),
+                    });
+                    broadcaster.send(&session_id, AgentEvent::Done);
                     return;
                 }
             }
@@ -431,17 +434,25 @@ async fn send_message(
             session.context.clone()
         };
         tracing::info!("[send_message] 开始调用 handle_user_turn（锁外运行）");
+        let broadcaster_for_agent = broadcaster.clone();
+        let sid = session_id.clone();
+        // 包装 broadcaster 为 mpsc::Sender 接口（通过 tokio::sync::mpsc 桥接）
+        let (agent_tx, mut agent_rx) = tokio::sync::mpsc::channel::<AgentEvent>(64);
+        tokio::spawn(async move {
+            while let Some(evt) = agent_rx.recv().await {
+                broadcaster_for_agent.send(&sid, evt);
+            }
+        });
+
         if let Err(e) = agent
-            .handle_user_turn(&mut cloned_ctx, &content, Some(&cwd), event_tx.clone())
+            .handle_user_turn(&mut cloned_ctx, &content, Some(&cwd), agent_tx)
             .await
         {
             tracing::error!("[send_message] handle_user_turn 失败: {e:#}");
-            let _ = event_tx
-                .send(rust_agent_core::agent::AgentEvent::Error {
-                    code: "agent_error".to_owned(),
-                    message: format!("{e:#}"),
-                })
-                .await;
+            broadcaster.send(&session_id, rust_agent_core::agent::AgentEvent::Error {
+                code: "agent_error".to_owned(),
+                message: format!("{e:#}"),
+            });
         }
         tracing::info!("[send_message] handle_user_turn 完成");
         // 将修改后的 context 写回 session
@@ -451,16 +462,46 @@ async fn send_message(
             session.last_active = chrono::Utc::now();
         }
         store.persist(&session_id).await;
-        // 无论成功还是失败，都发送 Done 事件，让客户端知道 SSE 流已结束
-        let _ = event_tx
-            .send(rust_agent_core::agent::AgentEvent::Done)
-            .await;
+        // 发送 Done 事件，通知所有订阅者流已结束
+        broadcaster.send(&session_id, rust_agent_core::agent::AgentEvent::Done);
         tracing::info!("[send_message] Done 事件已发送");
+        // 清理广播频道（延迟几秒，让 lagging subscriber 有机会收到 Done）
+        let broadcaster_cleanup = broadcaster.clone();
+        let sid_cleanup = session_id.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            broadcaster_cleanup.remove(&sid_cleanup);
+            tracing::info!("[send_message] 广播频道已清理: {sid_cleanup}");
+        });
     });
 
-    // 将 AgentEvent 流转换为 SSE 流
-    let stream = tokio_stream::wrappers::ReceiverStream::new(event_rx)
-        .map(agent_event_to_sse)
+    // fire-and-forget：立即返回启动状态
+    Json(serde_json::json!({ "status": "started" })).into_response()
+}
+
+/// GET /sessions/{id}/stream — 订阅会话的 SSE 实时流
+async fn stream_session(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let rx = match state.broadcaster.subscribe(&id) {
+        Some(rx) => rx,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({
+                    "error": { "code": "no_active_stream", "message": "会话无活跃流或流已结束" }
+                })),
+            )
+                .into_response();
+        }
+    };
+
+    let stream = tokio_stream::wrappers::BroadcastStream::new(rx)
+        .filter_map(|result| match result {
+            Ok(evt) => Some(agent_event_to_sse(evt)),
+            Err(_) => None, // 忽略 lagging subscriber 错误
+        })
         .map(Ok::<_, std::convert::Infallible>);
 
     axum::response::sse::Sse::new(stream)
@@ -908,7 +949,7 @@ async fn bot_task(
         }
     };
 
-    let (event_tx, event_rx) = mpsc::channel(64);
+    let (event_tx, event_rx): (tokio::sync::mpsc::Sender<AgentEvent>, _) = mpsc::channel(64);
 
     let agent = state.agent.clone();
     let user_content = body.content.clone();

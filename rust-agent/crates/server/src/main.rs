@@ -14,6 +14,7 @@ use rust_agent_core::infra::config::AppConfig;
 use rust_agent_core::bots::BotRegistry;
 use dashmap::DashMap;
 
+mod broadcaster;
 mod openai_compat;
 mod routes;
 mod session;
@@ -113,6 +114,7 @@ async fn main() -> anyhow::Result<()> {
         bot_registry,
         config,
         providers,
+        broadcaster: Arc::new(broadcaster::SessionBroadcaster::new(256)),
     };
 
     let app = Router::new()

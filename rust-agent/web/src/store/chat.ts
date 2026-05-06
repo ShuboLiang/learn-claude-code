@@ -4,9 +4,185 @@ import { nanoid } from "nanoid";
 import type { ProfileInfo, SessionSummary } from "@/types/wire";
 import type { UIMessage, StreamingState } from "@/types/ui";
 import * as api from "@/api/client";
-import { streamSendMessage } from "@/api/sse";
+import { sendMessageOnly, subscribeSessionStream } from "@/api/sse";
 import { normalizeApiMessages } from "@/api/normalize";
 import { pushToolCall, attachToolResult } from "@/api/match";
+
+// ── SSE 事件循环（供 sendMessage 和 selectSession 复用）──
+
+async function runSSELoop(
+  sid: string,
+  abortController: AbortController,
+  set: (fn: (s: ChatState & ChatActions) => void) => void,
+  get: () => ChatState & ChatActions,
+) {
+  const isAborted = () => abortController.signal.aborted;
+
+  try {
+    const stream = subscribeSessionStream(sid, abortController);
+
+    for await (const evt of stream) {
+      if (isAborted()) break;
+
+      set((s) => {
+        const target = s.streamingBySession[sid];
+        if (!target || target.abort !== abortController) return;
+
+        switch (evt.event) {
+          case "text_delta":
+            target.assistantText += evt.data.content;
+            break;
+          case "thinking_delta":
+            target.thinking += evt.data.content;
+            break;
+          case "tool_call":
+            pushToolCall(target.tools, evt, nanoid);
+            break;
+          case "tool_result":
+            attachToolResult(target.tools, evt);
+            break;
+          case "turn_end":
+            target.apiCalls = evt.data.api_calls;
+            if (evt.data.token_usage) {
+              target.tokenUsage = {
+                input: evt.data.token_usage.input_tokens,
+                output: evt.data.token_usage.output_tokens,
+              };
+            }
+            break;
+          case "error":
+            target.error = {
+              code: evt.data.code,
+              message: evt.data.message,
+            };
+            break;
+          case "retrying":
+            target.retrying = {
+              attempt: evt.data.attempt,
+              maxRetries: evt.data.max_retries,
+              waitSeconds: evt.data.wait_seconds,
+              detail: evt.data.detail,
+            };
+            break;
+          case "done":
+            target.active = false;
+            break;
+        }
+
+        // 同步到当前展示的 streaming
+        if (s.currentSessionId === sid) s.streaming = target;
+      });
+    }
+
+    // ---- 流结束后的清理与 hydration ----
+    const finalize = () => {
+      set((s) => {
+        const target = s.streamingBySession[sid];
+        if (!target || target.abort !== abortController) return;
+        const blocks: UIMessage["blocks"] = [];
+        if (target.thinking)
+          blocks.push({ kind: "thinking", content: target.thinking });
+        if (target.assistantText)
+          blocks.push({ kind: "text", content: target.assistantText });
+        for (const tc of target.tools)
+          blocks.push({ kind: "toolCall", toolCall: tc });
+        if (target.error)
+          blocks.push({
+            kind: "error",
+            code: target.error.code,
+            message: target.error.message,
+          });
+        if (blocks.length > 0) {
+          s.messages.push({
+            id: nanoid(),
+            role: "assistant",
+            content: "",
+            blocks,
+            apiCalls: target.apiCalls,
+            tokenUsage: target.tokenUsage ?? undefined,
+          });
+        }
+        delete s.streamingBySession[sid];
+        if (s.currentSessionId === sid) s.streaming = null;
+      });
+    };
+
+    if (isAborted()) {
+      finalize();
+      return;
+    }
+
+    try {
+      const msgs = await api.getMessages(sid);
+      set((s) => {
+        const target = s.streamingBySession[sid];
+        if (!target || target.abort !== abortController) return;
+        const hydrated = normalizeApiMessages(msgs, nanoid);
+        const prevLen = s.messages.length;
+        if (hydrated.length > prevLen) {
+          for (let i = prevLen; i < hydrated.length; i++)
+            s.messages.push(hydrated[i]);
+        } else {
+          s.messages = hydrated;
+        }
+        if (target.error) {
+          s.messages.push({
+            id: nanoid(),
+            role: "assistant",
+            content: "",
+            blocks: [
+              {
+                kind: "error",
+                code: target.error.code,
+                message: target.error.message,
+              },
+            ],
+          });
+        }
+        delete s.streamingBySession[sid];
+        if (s.currentSessionId === sid) s.streaming = null;
+      });
+    } catch {
+      finalize();
+    }
+  } catch (err: unknown) {
+    set((s) => {
+      const target = s.streamingBySession[sid];
+      if (!target || target.abort !== abortController) return;
+      const code =
+        err instanceof DOMException && err.name === "AbortError"
+          ? "ABORT"
+          : "NETWORK";
+      const message = err instanceof Error ? err.message : "未知错误";
+      if (code !== "ABORT") target.error = { code, message };
+      const blocks: UIMessage["blocks"] = [];
+      if (target.thinking)
+        blocks.push({ kind: "thinking", content: target.thinking });
+      if (target.assistantText)
+        blocks.push({ kind: "text", content: target.assistantText });
+      for (const tc of target.tools)
+        blocks.push({ kind: "toolCall", toolCall: tc });
+      if (target.error)
+        blocks.push({
+          kind: "error",
+          code: target.error.code,
+          message: target.error.message,
+        });
+      if (blocks.length > 0) {
+        s.messages.push({
+          id: nanoid(),
+          role: "assistant",
+          content: "",
+          blocks,
+          apiCalls: target.apiCalls,
+          tokenUsage: target.tokenUsage ?? undefined,
+        });
+      }
+      delete s.streamingBySession[sid];
+      if (s.currentSessionId === sid) s.streaming = null;
+    });
+  }
+}
 
 // ── State shape ──
 
@@ -157,13 +333,63 @@ export const useChatStore = create<ChatState & ChatActions>()(
       }
       try {
         const msgs = await api.getMessages(id);
+        console.log('[selectSession] getMessages 返回消息数量:', msgs.length);
+        const normalized = normalizeApiMessages(msgs, nanoid);
+        console.log('[selectSession] normalize 后消息数量:', normalized.length);
         set((s) => {
-          s.messages = normalizeApiMessages(msgs, nanoid);
+          s.messages = normalized;
         });
       } catch {
         // 加载失败时保留现有 messages（可能是旧会话的内容）
         // 或者如果是全新会话，messages 自然为空
       }
+
+      // 尝试恢复会话的实时 SSE 流（刷新后或切回时）
+      // 如果服务端有活跃流，自动订阅；如果无流（404），静默忽略
+      const abortController = new AbortController();
+      const existingSt = get().streamingBySession[id];
+
+      if (existingSt && existingSt.active) {
+        // 已有活跃流式状态（切会话再切回）：复用已有状态，只更新 abort controller
+        // 避免用空的 recoverSt 覆盖已累积的 assistantText/thinking/tools
+        set((s) => {
+          const st = s.streamingBySession[id];
+          if (st) {
+            st.abort = abortController;
+            if (s.currentSessionId === id) s.streaming = st;
+          }
+        });
+        console.log(
+          "[selectSession] 复用已有活跃流状态, assistantText 长度:",
+          existingSt.assistantText.length,
+        );
+      } else {
+        // 无可复用状态（刷新浏览器后）：创建新的空状态
+        const recoverSt: StreamingState = {
+          active: true,
+          assistantText: "",
+          thinking: "",
+          tools: [],
+          error: null,
+          retrying: null,
+          apiCalls: 0,
+          tokenUsage: null,
+          abort: abortController,
+        };
+        set((s) => {
+          s.streamingBySession[id] = recoverSt;
+          if (s.currentSessionId === id) s.streaming = recoverSt;
+        });
+        console.log("[selectSession] 创建新的流恢复状态");
+      }
+
+      // 尝试订阅，失败（无活跃流）时清理
+      runSSELoop(id, abortController, set, get).catch(() => {
+        set((s) => {
+          delete s.streamingBySession[id];
+          if (s.currentSessionId === id) s.streaming = null;
+        });
+      });
     },
 
     async deleteSession(id: string) {
@@ -253,172 +479,25 @@ export const useChatStore = create<ChatState & ChatActions>()(
         if (s.currentSessionId === sid) s.streaming = st;
       });
 
-      const isAborted = () => abortController.signal.aborted;
-
+      // 先 POST 发送消息，然后订阅 SSE 流
       try {
-        const stream = streamSendMessage(sid, content, abortController);
-
-        for await (const evt of stream) {
-          if (isAborted()) break;
-
-          set((s) => {
-            const target = s.streamingBySession[sid];
-            if (!target || target.abort !== abortController) return;
-
-            switch (evt.event) {
-              case "text_delta":
-                target.assistantText += evt.data.content;
-                break;
-              case "thinking_delta":
-                target.thinking += evt.data.content;
-                break;
-              case "tool_call":
-                pushToolCall(target.tools, evt, nanoid);
-                break;
-              case "tool_result":
-                attachToolResult(target.tools, evt);
-                break;
-              case "turn_end":
-                target.apiCalls = evt.data.api_calls;
-                if (evt.data.token_usage) {
-                  target.tokenUsage = {
-                    input: evt.data.token_usage.input_tokens,
-                    output: evt.data.token_usage.output_tokens,
-                  };
-                }
-                break;
-              case "error":
-                target.error = {
-                  code: evt.data.code,
-                  message: evt.data.message,
-                };
-                break;
-              case "retrying":
-                target.retrying = {
-                  attempt: evt.data.attempt,
-                  maxRetries: evt.data.max_retries,
-                  waitSeconds: evt.data.wait_seconds,
-                  detail: evt.data.detail,
-                };
-                break;
-              case "done":
-                target.active = false;
-                break;
-            }
-
-            // 同步到当前展示的 streaming
-            if (s.currentSessionId === sid) s.streaming = target;
-          });
-        }
-
-        // ---- 流结束后的清理与 hydration ----
-        const finalize = () => {
-          set((s) => {
-            const target = s.streamingBySession[sid];
-            if (!target || target.abort !== abortController) return;
-            const blocks: UIMessage["blocks"] = [];
-            if (target.thinking)
-              blocks.push({ kind: "thinking", content: target.thinking });
-            if (target.assistantText)
-              blocks.push({ kind: "text", content: target.assistantText });
-            for (const tc of target.tools)
-              blocks.push({ kind: "toolCall", toolCall: tc });
-            if (target.error)
-              blocks.push({
-                kind: "error",
-                code: target.error.code,
-                message: target.error.message,
-              });
-            if (blocks.length > 0) {
-              s.messages.push({
-                id: nanoid(),
-                role: "assistant",
-                content: "",
-                blocks,
-                apiCalls: target.apiCalls,
-                tokenUsage: target.tokenUsage ?? undefined,
-              });
-            }
-            delete s.streamingBySession[sid];
-            if (s.currentSessionId === sid) s.streaming = null;
-          });
-        };
-
-        if (isAborted()) {
-          finalize();
-          return;
-        }
-
-        try {
-          const msgs = await api.getMessages(sid);
-          set((s) => {
-            const target = s.streamingBySession[sid];
-            if (!target || target.abort !== abortController) return;
-            const hydrated = normalizeApiMessages(msgs, nanoid);
-            const prevLen = s.messages.length;
-            if (hydrated.length > prevLen) {
-              for (let i = prevLen; i < hydrated.length; i++)
-                s.messages.push(hydrated[i]);
-            } else {
-              s.messages = hydrated;
-            }
-            if (target.error) {
-              s.messages.push({
-                id: nanoid(),
-                role: "assistant",
-                content: "",
-                blocks: [
-                  {
-                    kind: "error",
-                    code: target.error.code,
-                    message: target.error.message,
-                  },
-                ],
-              });
-            }
-            delete s.streamingBySession[sid];
-            if (s.currentSessionId === sid) s.streaming = null;
-          });
-        } catch {
-          finalize();
-        }
+        await sendMessageOnly(sid, content, abortController.signal);
       } catch (err: unknown) {
         set((s) => {
           const target = s.streamingBySession[sid];
           if (!target || target.abort !== abortController) return;
-          const code =
-            err instanceof DOMException && err.name === "AbortError"
-              ? "ABORT"
-              : "NETWORK";
-          const message = err instanceof Error ? err.message : "未知错误";
-          if (code !== "ABORT") target.error = { code, message };
-          const blocks: UIMessage["blocks"] = [];
-          if (target.thinking)
-            blocks.push({ kind: "thinking", content: target.thinking });
-          if (target.assistantText)
-            blocks.push({ kind: "text", content: target.assistantText });
-          for (const tc of target.tools)
-            blocks.push({ kind: "toolCall", toolCall: tc });
-          if (target.error)
-            blocks.push({
-              kind: "error",
-              code: target.error.code,
-              message: target.error.message,
-            });
-          if (blocks.length > 0) {
-            s.messages.push({
-              id: nanoid(),
-              role: "assistant",
-              content: "",
-              blocks,
-              apiCalls: target.apiCalls,
-              tokenUsage: target.tokenUsage ?? undefined,
-            });
-          }
+          target.error = {
+            code: "NETWORK",
+            message: err instanceof Error ? err.message : "发送失败",
+          };
           delete s.streamingBySession[sid];
           if (s.currentSessionId === sid) s.streaming = null;
         });
+        return;
       }
+
+      // 订阅 SSE 实时流
+      await runSSELoop(sid, abortController, set, get);
     },
 
     async handleCommand(cmd: string) {
