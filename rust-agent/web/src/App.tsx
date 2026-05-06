@@ -52,9 +52,6 @@ function App() {
             rust<span className="text-primary">-agent</span>
           </h1>
         </div>
-        <span className="ml-auto text-[10px] text-muted-foreground/60">
-          Ctrl+N 新建 &middot; Ctrl+L 清空
-        </span>
       </header>
 
       {/* Main content */}
