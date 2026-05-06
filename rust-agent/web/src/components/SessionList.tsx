@@ -44,7 +44,7 @@ export function SessionList() {
           size="icon"
           className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
           onClick={() => setCollapsed(!collapsed)}
-          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          title={collapsed ? '展开侧栏' : '收起侧栏'}
         >
           {collapsed ? (
             <PanelLeftOpen className="h-4 w-4" />
@@ -56,14 +56,14 @@ export function SessionList() {
         {!collapsed && (
           <>
             <span className="ml-2 flex-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
-              Sessions
+              会话
             </span>
             <Button
               variant="ghost"
               size="icon"
               className="h-7 w-7 text-muted-foreground hover:text-foreground"
               onClick={openNewDialog}
-              title="New session"
+              title="新建会话"
             >
               <Plus className="h-3.5 w-3.5" />
             </Button>
@@ -79,7 +79,7 @@ export function SessionList() {
             size="icon"
             className="h-8 w-8 text-muted-foreground hover:text-foreground"
             onClick={openNewDialog}
-            title="New session"
+            title="新建会话"
           >
             <Plus className="h-4 w-4" />
           </Button>
@@ -104,10 +104,10 @@ export function SessionList() {
               </TooltipTrigger>
               <TooltipContent side="right" className="max-w-56">
                 <p className="truncate text-xs !text-white">
-                  {s.preview || 'New session'}
+                  {s.preview || '新建会话'}
                 </p>
                 <p className="text-[10px] !text-white/70">
-                  {s.message_count} msgs &middot; {relativeTime(s.last_active)}
+                  {s.message_count} 条消息 &middot;{relativeTime(s.last_active)}
                 </p>
                 <p className="mt-0.5 truncate text-[10px] !text-white/50">
                   {shortPath(s.working_dir)}
@@ -120,7 +120,7 @@ export function SessionList() {
         <div className="flex-1 overflow-y-auto overflow-x-hidden">
           {sessions.length === 0 ? (
             <div className="px-3 py-10 text-center">
-              <p className="text-xs text-muted-foreground">No sessions yet</p>
+              <p className="text-xs text-muted-foreground">暂无会话</p>
               <Button
                 variant="outline"
                 size="sm"
@@ -128,7 +128,7 @@ export function SessionList() {
                 onClick={openNewDialog}
               >
                 <Plus className="mr-1 h-3 w-3" />
-                New Session
+                新建会话
               </Button>
             </div>
           ) : (
@@ -157,10 +157,10 @@ export function SessionList() {
                         </div>
                         <div className="min-w-0 flex-1">
                           <p className="line-clamp-2 break-words text-[11px] font-medium leading-snug text-foreground">
-                            {s.preview || 'New session'}
+                            {s.preview || '新建会话'}
                           </p>
                           <p className="mt-0.5 text-[10px] text-muted-foreground/80">
-                            {s.message_count} msgs &middot; {relativeTime(s.last_active)}
+                            {s.message_count} 条消息 &middot;{relativeTime(s.last_active)}
                           </p>
                           <p className="mt-0.5 flex items-center gap-1 text-[10px] text-muted-foreground/50">
                             <Folder className="h-2.5 w-2.5 shrink-0" />
@@ -170,7 +170,7 @@ export function SessionList() {
                       </button>
                     </TooltipTrigger>
                     <TooltipContent side="right" className="max-w-64">
-                      <p className="break-all text-xs !text-white">{s.preview || 'New session'}</p>
+                      <p className="break-all text-xs !text-white">{s.preview || '新建会话'}</p>
                       <p className="mt-0.5 truncate text-[10px] !text-white/60">
                         {s.working_dir}
                       </p>
@@ -184,7 +184,7 @@ export function SessionList() {
                       e.stopPropagation()
                       setDeleteTarget(s.id)
                     }}
-                    title="Delete"
+                    title="删除"
                   >
                     <Trash2 className="h-3 w-3" />
                   </Button>
@@ -245,7 +245,7 @@ function relativeTime(iso: string): string {
   const now = Date.now()
   const diff = now - then
   const mins = Math.floor(diff / 60_000)
-  if (mins < 1) return 'now'
+  if (mins < 1) return '刚刚'
   if (mins < 60) return `${mins}m`
   const hours = Math.floor(mins / 60)
   if (hours < 24) return `${hours}h`

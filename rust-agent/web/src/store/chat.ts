@@ -79,7 +79,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
           s.selectedModel = config.current_model || p?.models[0] || ''
         })
       } catch (err) {
-        console.error('Failed to load config:', err)
+        console.error('加载配置失败:', err)
       }
     },
 
@@ -94,7 +94,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
         })
       } catch (err) {
         set((s) => {
-          s.loadError = err instanceof Error ? err.message : 'Failed to load sessions'
+          s.loadError = err instanceof Error ? err.message : '加载会话失败'
         })
       }
     },
@@ -291,7 +291,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
             if (s.streaming?.abort === abortController) {
               s.streaming.error = {
                 code: 'NETWORK',
-                message: err instanceof Error ? err.message : 'Unknown error',
+                message: err instanceof Error ? err.message : '未知错误',
               }
               s.streaming.active = false
             }

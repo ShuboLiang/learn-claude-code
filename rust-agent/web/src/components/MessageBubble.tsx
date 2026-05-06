@@ -163,9 +163,9 @@ function BlockView({ block }: { block: UIBlock }) {
 
 function ToolCallCard({ toolCall }: { toolCall: UIToolCall }) {
   const statusConfig: Record<UIToolCall['status'], { dot: string; label: string }> = {
-    running: { dot: 'bg-yellow-500 shadow-[0_0_6px_rgba(234,179,8,0.4)]', label: 'Running' },
-    done: { dot: 'bg-emerald-500', label: 'Done' },
-    error: { dot: 'bg-red-500', label: 'Error' },
+    running: { dot: 'bg-yellow-500 shadow-[0_0_6px_rgba(234,179,8,0.4)]', label: '运行中' },
+    done: { dot: 'bg-emerald-500', label: '完成' },
+    error: { dot: 'bg-red-500', label: '错误' },
   }
 
   const { dot, label } = statusConfig[toolCall.status]

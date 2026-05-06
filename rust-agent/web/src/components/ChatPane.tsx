@@ -117,7 +117,7 @@ export function ChatPane() {
             'absolute bottom-4 right-4 flex h-8 w-8 items-center justify-center rounded-full border bg-background shadow-md transition-all hover:shadow-lg',
             isAtBottom ? 'pointer-events-none translate-y-2 opacity-0' : 'opacity-100',
           )}
-          aria-label="Scroll to bottom"
+          aria-label="滚动到底部"
         >
           <ArrowDown className="h-4 w-4" />
         </button>

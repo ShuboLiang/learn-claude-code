@@ -90,7 +90,7 @@ export function WorkspacePanel() {
           size="icon"
           className="h-7 w-7 shrink-0 text-muted-foreground hover:text-foreground"
           onClick={() => setCollapsed(!collapsed)}
-          title={collapsed ? 'Expand workspace' : 'Collapse workspace'}
+          title={collapsed ? '展开工作区' : '收起工作区'}
         >
           {collapsed ? (
             <PanelRightOpen className="h-4 w-4" />
@@ -101,7 +101,7 @@ export function WorkspacePanel() {
 
         {!collapsed && (
           <span className="ml-2 flex-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase">
-            Files
+            文件
           </span>
         )}
       </div>

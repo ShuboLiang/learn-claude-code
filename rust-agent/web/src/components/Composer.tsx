@@ -4,8 +4,8 @@ import { cn } from '@/lib/utils'
 import { useChatStore } from '@/store/chat'
 
 const COMMANDS: { cmd: string; label: string; icon: React.ReactNode }[] = [
-  { cmd: '/clear', label: 'Clear', icon: <Trash2 className="h-3 w-3" /> },
-  { cmd: '/bots', label: 'Bots', icon: <Bot className="h-3 w-3" /> },
+  { cmd: '/clear', label: '清空', icon: <Trash2 className="h-3 w-3" /> },
+  { cmd: '/bots', label: '机器人', icon: <Bot className="h-3 w-3" /> },
 ]
 
 export function Composer() {
@@ -100,7 +100,7 @@ export function Composer() {
               handleInput()
             }}
             onKeyDown={handleKeyDown}
-            placeholder="Send a message...  / for commands"
+            placeholder="输入消息... / 使用命令"
             rows={1}
             className="flex-1 resize-none bg-transparent px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
           />
@@ -108,7 +108,7 @@ export function Composer() {
           {streaming?.active ? (
             <button
               onClick={cancelStream}
-              title="Stop generating"
+              title="停止生成"
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-destructive text-destructive-foreground transition-colors hover:bg-destructive/90"
             >
               <Square className="h-3.5 w-3.5" />
@@ -117,7 +117,7 @@ export function Composer() {
             <button
               onClick={handleSend}
               disabled={!hasText}
-              title="Send message"
+              title="发送消息"
               className={cn(
                 'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-all',
                 hasText
@@ -131,7 +131,7 @@ export function Composer() {
         </div>
 
         <p className="mt-1.5 text-center text-[10px] text-muted-foreground/50">
-          Enter to send &middot; Shift+Enter for new line
+          回车发送 &middot; Shift+回车换行
         </p>
       </div>
     </div>

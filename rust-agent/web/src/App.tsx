@@ -53,7 +53,7 @@ function App() {
           </h1>
         </div>
         <span className="ml-auto text-[10px] text-muted-foreground/60">
-          Ctrl+N new &middot; Ctrl+L clear
+          Ctrl+N 新建 &middot; Ctrl+L 清空
         </span>
       </header>
 
@@ -72,7 +72,7 @@ function App() {
                 rust-agent
               </p>
               <p className="mt-1 text-sm text-muted-foreground">
-                AI-powered coding assistant
+                AI 编程助手
               </p>
             </div>
             <button
