@@ -6,7 +6,33 @@ import type { UIMessage, StreamingState } from "@/types/ui";
 import * as api from "@/api/client";
 import { sendMessageOnly, subscribeSessionStream } from "@/api/sse";
 import { normalizeApiMessages } from "@/api/normalize";
-import { pushToolCall, attachToolResult } from "@/api/match";
+import type { UIBlock } from "@/types/ui";
+
+/** 根据 StreamingState 的 blockOrder 构造 UIBlock 数组，保持与事件到达顺序一致 */
+export function buildStreamingBlocks(st: {
+  blockOrder: ('thinking' | 'text' | `tool:${string}`)[]
+  thinking: string
+  assistantText: string
+  tools: { id: string; name: string; input: unknown; output: string | null; status: 'running' | 'done' | 'error'; parallelIndex: { index: number; total: number } | null; isError?: boolean }[]
+  error: { code: string; message: string } | null
+}): UIBlock[] {
+  const blocks: UIBlock[] = []
+  for (const key of st.blockOrder) {
+    if (key === 'thinking' && st.thinking) {
+      blocks.push({ kind: 'thinking', content: st.thinking })
+    } else if (key === 'text' && st.assistantText) {
+      blocks.push({ kind: 'text', content: st.assistantText })
+    } else if (key.startsWith('tool:')) {
+      const toolId = key.slice(5)
+      const tc = st.tools.find((t) => t.id === toolId)
+      if (tc) blocks.push({ kind: 'toolCall', toolCall: tc })
+    }
+  }
+  if (st.error) {
+    blocks.push({ kind: 'error', code: st.error.code, message: st.error.message })
+  }
+  return blocks
+}
 
 // ── SSE 事件循环（供 sendMessage 和 selectSession 复用）──
 
@@ -30,17 +56,40 @@ async function runSSELoop(
 
         switch (evt.event) {
           case "text_delta":
+            if (!target.assistantText && !target.blockOrder.includes('text')) {
+              target.blockOrder.push('text');
+            }
             target.assistantText += evt.data.content;
             break;
           case "thinking_delta":
+            if (!target.thinking && !target.blockOrder.includes('thinking')) {
+              target.blockOrder.push('thinking');
+            }
             target.thinking += evt.data.content;
             break;
-          case "tool_call":
-            pushToolCall(target.tools, evt, nanoid);
+          case "tool_call": {
+            const tc = {
+              id: nanoid(),
+              name: evt.data.name,
+              input: evt.data.input,
+              output: null,
+              status: 'running' as const,
+              parallelIndex: evt.data.parallel_index ?? null,
+            };
+            target.tools.push(tc);
+            target.blockOrder.push(`tool:${tc.id}`);
             break;
-          case "tool_result":
-            attachToolResult(target.tools, evt);
+          }
+          case "tool_result": {
+            const tc = target.tools.find(
+              (t) => t.name === evt.data.name && t.output === null,
+            );
+            if (tc) {
+              tc.output = evt.data.output;
+              tc.status = 'done';
+            }
             break;
+          }
           case "turn_end":
             target.apiCalls = evt.data.api_calls;
             if (evt.data.token_usage) {
@@ -79,19 +128,7 @@ async function runSSELoop(
       set((s) => {
         const target = s.streamingBySession[sid];
         if (!target || target.abort !== abortController) return;
-        const blocks: UIMessage["blocks"] = [];
-        if (target.thinking)
-          blocks.push({ kind: "thinking", content: target.thinking });
-        if (target.assistantText)
-          blocks.push({ kind: "text", content: target.assistantText });
-        for (const tc of target.tools)
-          blocks.push({ kind: "toolCall", toolCall: tc });
-        if (target.error)
-          blocks.push({
-            kind: "error",
-            code: target.error.code,
-            message: target.error.message,
-          });
+        const blocks = buildStreamingBlocks(target);
         if (blocks.length > 0) {
           s.messages.push({
             id: nanoid(),
@@ -155,19 +192,7 @@ async function runSSELoop(
           : "NETWORK";
       const message = err instanceof Error ? err.message : "未知错误";
       if (code !== "ABORT") target.error = { code, message };
-      const blocks: UIMessage["blocks"] = [];
-      if (target.thinking)
-        blocks.push({ kind: "thinking", content: target.thinking });
-      if (target.assistantText)
-        blocks.push({ kind: "text", content: target.assistantText });
-      for (const tc of target.tools)
-        blocks.push({ kind: "toolCall", toolCall: tc });
-      if (target.error)
-        blocks.push({
-          kind: "error",
-          code: target.error.code,
-          message: target.error.message,
-        });
+      const blocks = buildStreamingBlocks(target);
       if (blocks.length > 0) {
         s.messages.push({
           id: nanoid(),
@@ -370,6 +395,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
           assistantText: "",
           thinking: "",
           tools: [],
+          blockOrder: [],
           error: null,
           retrying: null,
           apiCalls: 0,
@@ -469,6 +495,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
           assistantText: "",
           thinking: "",
           tools: [],
+          blockOrder: [],
           error: null,
           retrying: null,
           apiCalls: 0,

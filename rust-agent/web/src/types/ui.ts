@@ -43,6 +43,8 @@ export interface StreamingState {
   assistantText: string
   thinking: string
   tools: UIToolCall[]
+  /** 记录 blocks 首次出现的顺序，用于流式渲染时保持与 API 一致的顺序 */
+  blockOrder: ('thinking' | 'text' | `tool:${string}`)[]
   error: { code: string; message: string } | null
   retrying: {
     attempt: number

@@ -1,7 +1,8 @@
 import { ArrowDown, ChevronDown } from 'lucide-react'
+import { useMemo } from 'react'
 import { MessageBubble } from '@/components/MessageBubble'
 import { Composer } from '@/components/Composer'
-import { useChatStore } from '@/store/chat'
+import { useChatStore, buildStreamingBlocks } from '@/store/chat'
 import { RetryBanner } from '@/components/RetryBanner'
 import { useAutoScroll } from '@/hooks/useAutoScroll'
 import { cn } from '@/lib/utils'
@@ -18,12 +19,12 @@ export function ChatPane() {
   const currentModels =
     profiles.find((p) => p.name === selectedProfile)?.models || []
 
-  const scrollDeps = [
-    messages,
-    streaming?.assistantText,
-    streaming?.tools,
-    streaming?.thinking,
-  ]
+  const streamingBlocks = useMemo(() => {
+    if (!streaming) return []
+    return buildStreamingBlocks(streaming)
+  }, [streaming])
+
+  const scrollDeps = [messages, streamingBlocks]
 
   const [scrollRef, isAtBottom] = useAutoScroll(scrollDeps)
 
@@ -83,21 +84,7 @@ export function ChatPane() {
                   id: '__streaming__',
                   role: 'assistant',
                   content: '',
-                  blocks: [
-                    ...(streaming.thinking
-                      ? [{ kind: 'thinking' as const, content: streaming.thinking }]
-                      : []),
-                    ...(streaming.assistantText
-                      ? [{ kind: 'text' as const, content: streaming.assistantText }]
-                      : []),
-                    ...streaming.tools.map((tc) => ({
-                      kind: 'toolCall' as const,
-                      toolCall: tc,
-                    })),
-                    ...(streaming.error
-                      ? [{ kind: 'error' as const, ...streaming.error }]
-                      : []),
-                  ],
+                  blocks: streamingBlocks,
                 }}
               />
             )}

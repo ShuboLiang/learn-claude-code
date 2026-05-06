@@ -81,7 +81,7 @@ pub struct SessionSummary {
 }
 
 fn extract_preview(messages: &[rust_agent_core::api::types::ApiMessage]) -> String {
-    for msg in messages {
+    for msg in messages.iter().rev() {
         if msg.role != "user" {
             continue;
         }
@@ -300,6 +300,8 @@ mod tests {
             created_at: Utc::now(),
             last_active: Utc::now(),
             working_dir: PathBuf::from("."),
+            profile_name: String::new(),
+            model: String::new(),
         };
         let record = SessionRecord::from(&session);
         let json = serde_json::to_string(&record).unwrap();
@@ -378,6 +380,27 @@ mod tests {
         assert!(list[0].last_active >= list[1].last_active);
         assert_eq!(list[0].preview, "second session");
         assert_eq!(list[1].preview, "first session");
+
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+    }
+
+    #[tokio::test]
+    async fn session_store_preview_uses_latest_user_message() {
+        let tmp = std::env::temp_dir().join(format!("rust-agent-test-{}", uuid::Uuid::new_v4()));
+        tokio::fs::create_dir_all(&tmp).await.unwrap();
+
+        let store = SessionStore::new(tmp.clone()).await;
+        let session = store.create(PathBuf::from("."), String::new(), String::new()).await;
+        let id = session.read().await.id.clone();
+        {
+            let mut s = session.write().await;
+            s.context.push_user_text("first message");
+            s.context.push_user_text("second message");
+        }
+        store.persist(&id).await;
+
+        let list = store.list().await;
+        assert_eq!(list[0].preview, "second message");
 
         let _ = tokio::fs::remove_dir_all(&tmp).await;
     }
