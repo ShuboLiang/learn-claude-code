@@ -12,13 +12,16 @@ use axum::{
     response::sse::KeepAlive,
     routing::{get, post},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt;
 
-use rust_agent_core::agent::AgentApp;
+use rust_agent_core::agent::{AgentApp, AgentEvent};
+use rust_agent_core::api::LlmProvider;
+use rust_agent_core::infra::config::AppConfig;
 use rust_agent_core::bots::BotRegistry;
 use rust_agent_core::context::ContextService;
 use rust_agent_core::mpsc;
+use dashmap::DashMap;
 
 use crate::openai_compat;
 use crate::session::SessionStore;
@@ -41,6 +44,30 @@ pub struct AppState {
     pub store: SessionStore,
     pub agent: Arc<AgentApp>,
     pub bot_registry: Arc<BotRegistry>,
+    pub config: Arc<AppConfig>,
+    pub providers: Arc<DashMap<String, LlmProvider>>,
+}
+
+impl AppState {
+    /// 按 profile 名获取或创建缓存的 provider
+    pub fn get_or_create_provider(&self, profile_name: &str) -> Result<LlmProvider, anyhow::Error> {
+        use anyhow::Context;
+        if let Some(p) = self.providers.get(profile_name) {
+            return Ok(p.clone());
+        }
+        let profile = self.config.find_profile(profile_name)
+            .context(format!("profile '{}' 不在配置中", profile_name))?;
+        let provider = match profile.provider.to_lowercase().as_str() {
+            "openai" => LlmProvider::OpenAI(
+                rust_agent_core::api::openai::OpenAIClient::new(&profile.api_key, &profile.base_url)?
+            ),
+            _ => LlmProvider::Anthropic(
+                rust_agent_core::api::anthropic::AnthropicClient::new(&profile.api_key, &profile.base_url)?
+            ),
+        };
+        self.providers.insert(profile_name.to_owned(), provider.clone());
+        Ok(provider)
+    }
 }
 
 /// 构建所有 API 路由
@@ -63,6 +90,7 @@ pub fn routes(app_state: AppState) -> Router {
         .route("/file", get(read_file).put(write_file))
         .route("/bots", get(list_bots))
         .route("/bots/{name}/task", post(bot_task))
+        .route("/config", get(get_config))
         .with_state(app_state)
 }
 
@@ -97,13 +125,47 @@ async fn health_check() -> Json<serde_json::Value> {
     Json(serde_json::json!({ "status": "ok" }))
 }
 
+/// 配置信息（脱敏，不返回 api_key）
+#[derive(Serialize)]
+struct ProfileInfo {
+    name: String,
+    provider: String,
+    models: Vec<String>,
+}
+
+/// GET /config — 返回可用 profiles 和当前默认值
+async fn get_config(State(state): State<AppState>) -> impl IntoResponse {
+    let profiles: Vec<ProfileInfo> = state
+        .config
+        .profiles
+        .iter()
+        .map(|p| ProfileInfo {
+            name: p.name.clone(),
+            provider: p.provider.clone(),
+            models: p.models.clone(),
+        })
+        .collect();
+    let current = state.config.current_profile().ok();
+    Json(serde_json::json!({
+        "default_profile": state.config.default_profile,
+        "current_profile": current.map(|p| p.name.as_str()).unwrap_or(""),
+        "current_model": state.agent.model(),
+        "profiles": profiles,
+    }))
+    .into_response()
+}
+
 #[derive(Deserialize)]
 struct CreateSessionRequest {
     #[serde(default)]
     working_dir: Option<String>,
+    #[serde(default)]
+    profile: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
 }
 
-/// POST /sessions — 创建新会话（仅在内存中创建，首次对话时才持久化到磁盘）
+/// POST /sessions — 创建新会话
 async fn create_session(
     State(state): State<AppState>,
     Json(body): Json<CreateSessionRequest>,
@@ -112,19 +174,38 @@ async fn create_session(
         .working_dir
         .map(PathBuf::from)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-    let session_arc = state.store.create(working_dir).await;
+
+    // 解析 profile 和 model：传入值优先，否则回退到全局默认
+    let profile_name = body
+        .profile
+        .filter(|p| !p.is_empty())
+        .or_else(|| {
+            state.config.current_profile().ok().map(|p| p.name.clone())
+        })
+        .unwrap_or_default();
+
+    let model = body
+        .model
+        .filter(|m| !m.is_empty())
+        .or_else(|| {
+            state.config.current_profile().ok()
+                .and_then(|p| p.resolve_model().ok())
+        })
+        .unwrap_or_default();
+
+    let session_arc = state.store.create(working_dir, profile_name, model).await;
     let session = session_arc.read().await;
-    let model = state.agent.model().to_owned();
+    let session_model = session.model.clone();
+    let session_profile = session.profile_name.clone();
     let id = session.id.clone();
     let created_at = session.created_at.to_rfc3339();
     let wd = session.working_dir.display().to_string();
     drop(session);
-    // 不在此处 persist，避免产生空会话文件
-    // 文件将在首次 send_message 时（有实际对话内容后）才写入磁盘
 
     Json(serde_json::json!({
         "id": id,
-        "model": model,
+        "model": session_model,
+        "profile": session_profile,
         "created_at": created_at,
         "working_dir": wd,
     }))
@@ -213,15 +294,40 @@ async fn send_message(
     };
 
     let (event_tx, event_rx) = mpsc::channel(64);
-    let agent = state.agent.clone();
+    let base_agent = state.agent.clone();
+    let state_clone = state.clone();
     let content = body.content;
     let session_id = id;
     let store = state.store.clone();
 
     tokio::spawn(async move {
-        tracing::info!("[send_message] 等待获取 session 写锁...");
-        let mut session = session_arc.write().await;
+        tracing::info!("[send_message] 等待获取 session 读锁...");
+        let session = session_arc.read().await;
         let cwd = session.working_dir.clone();
+        let session_profile = session.profile_name.clone();
+        let session_model = session.model.clone();
+        drop(session);
+
+        // 按会话配置创建 agent 变体
+        let agent = if session_profile.is_empty() {
+            base_agent // 旧会话没有 profile 信息，使用全局默认
+        } else {
+            match state_clone.get_or_create_provider(&session_profile) {
+                Ok(provider) => Arc::new(base_agent.as_ref().clone().with_provider_and_model(provider, session_model)),
+                Err(e) => {
+                    let _ = event_tx
+                        .send(AgentEvent::Error {
+                            code: "profile_error".to_owned(),
+                            message: format!("{e:#}"),
+                        })
+                        .await;
+                    let _ = event_tx.send(AgentEvent::Done).await;
+                    return;
+                }
+            }
+        };
+
+        let mut session = session_arc.write().await;
         tracing::info!("[send_message] 获取写锁成功，开始调用 handle_user_turn");
         if let Err(e) = agent
             .handle_user_turn(&mut session.context, &content, Some(&cwd), event_tx.clone())

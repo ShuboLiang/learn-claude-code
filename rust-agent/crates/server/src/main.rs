@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::Router;
@@ -8,7 +9,10 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 
 use rust_agent_core::agent::AgentApp;
+use rust_agent_core::api::LlmProvider;
+use rust_agent_core::infra::config::AppConfig;
 use rust_agent_core::bots::BotRegistry;
+use dashmap::DashMap;
 
 mod openai_compat;
 mod routes;
@@ -79,6 +83,23 @@ async fn main() -> anyhow::Result<()> {
 
     let agent = Arc::new(AgentApp::from_env().await?);
 
+    let config = Arc::new(AppConfig::load().unwrap_or_else(|e| {
+        tracing::warn!("加载配置失败: {e:#}，使用空配置");
+        AppConfig {
+            default_profile: String::new(),
+            profiles: vec![],
+            default_max_tokens: 100_000,
+            extra_env: HashMap::new(),
+            skills_dirs: vec![],
+            agent_nickname: None,
+            agent_role: None,
+            curl_blacklist: None,
+            mcp_servers: vec![],
+        }
+    }));
+
+    let providers: Arc<DashMap<String, LlmProvider>> = Arc::new(DashMap::new());
+
     let data_dir = dirs::home_dir()
         .map(|p| p.join(".rust-agent").join("sessions"))
         .unwrap_or_else(|| std::path::PathBuf::from("./sessions"));
@@ -90,6 +111,8 @@ async fn main() -> anyhow::Result<()> {
         store,
         agent,
         bot_registry,
+        config,
+        providers,
     };
 
     let app = Router::new()
