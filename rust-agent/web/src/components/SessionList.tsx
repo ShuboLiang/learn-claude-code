@@ -231,7 +231,7 @@ export function SessionList() {
 
       {/* Skills section */}
       {!collapsed && (
-        <div className="border-t border-border/50 px-3 py-2">
+        <div className="border-t border-border/50 px-3 py-2 flex flex-col min-h-0">
           <div className="flex items-center gap-1.5 mb-1.5">
             <Wrench className="h-3 w-3 text-muted-foreground/70" />
             <span className="text-[10px] font-semibold tracking-wide text-muted-foreground/70 uppercase">
@@ -243,7 +243,7 @@ export function SessionList() {
               暂无已安装技能
             </p>
           ) : (
-            <div className="space-y-0.5">
+            <div className="space-y-0.5 max-h-40 overflow-y-auto">
               {skills.map((skill) => (
                 <Tooltip key={skill.name}>
                   <TooltipTrigger asChild>
