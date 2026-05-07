@@ -10,7 +10,7 @@ interface TreeNode {
   name: string
   kind: 'file' | 'directory'
   size?: number
-  children?: TreeNode[] | null // null = not loaded
+  children?: TreeNode[] | null // null = 未加载，[] = 空目录
 }
 
 function formatSize(bytes?: number): string {
@@ -43,7 +43,7 @@ function NodeRenderer({ node, style, tree }: NodeRendererProps<TreeNode>) {
     if (node.isOpen) {
       tree.close(node.id)
     } else {
-      // Load children if not yet loaded, then open
+      // 未加载时先加载子节点，再展开
       if (!treeNodes[node.id]) {
         await loadChildren(node.id)
       }
@@ -61,7 +61,7 @@ function NodeRenderer({ node, style, tree }: NodeRendererProps<TreeNode>) {
         !isDir && 'cursor-default',
       )}
     >
-      {/* Expand chevron */}
+      {/* 展开箭头 */}
       {isDir ? (
         isLoading ? (
           <Loader2 className="h-3 w-3 shrink-0 animate-spin text-muted-foreground" />
@@ -77,7 +77,7 @@ function NodeRenderer({ node, style, tree }: NodeRendererProps<TreeNode>) {
         <span className="w-3 shrink-0" />
       )}
 
-      {/* Icon */}
+      {/* 图标 */}
       {isDir ? (
         node.isOpen ? (
           <FolderOpen className="h-3.5 w-3.5 shrink-0 text-yellow-500/80" />
@@ -88,10 +88,10 @@ function NodeRenderer({ node, style, tree }: NodeRendererProps<TreeNode>) {
         <File className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
       )}
 
-      {/* Name */}
+      {/* 名称 */}
       <span className="truncate">{node.data.name}</span>
 
-      {/* Size */}
+      {/* 大小 */}
       {!isDir && size !== undefined && (
         <span className="ml-auto shrink-0 text-[10px] text-muted-foreground/50">
           {formatSize(size)}
@@ -111,6 +111,11 @@ export function FileTree() {
   const treeRef = useRef<TreeApi<TreeNode>>(null)
   const [height, setHeight] = useState(300)
 
+  // 用于强制 Tree 重新挂载的版本号
+  const [treeVersion, setTreeVersion] = useState(0)
+  // 保存 Tree 被卸载前的展开状态，用于重新挂载后恢复
+  const savedOpenState = useRef<Record<string, boolean>>({})
+
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
@@ -123,30 +128,42 @@ export function FileTree() {
     return () => obs.disconnect()
   }, [])
 
-  // treeNodes 更新后强制刷新 react-arborist，避免子节点缓存导致文件变化不显示
+  // treeNodes 变化时：保存当前展开状态 → 增加 treeVersion → Tree 重新挂载 → 恢复展开状态
+  useEffect(() => {
+    const tree = treeRef.current
+    if (tree) {
+      savedOpenState.current = { ...tree.openState }
+    }
+    setTreeVersion((v) => v + 1)
+  }, [treeNodes])
+
+  // 新 Tree 挂载后恢复之前的展开状态
   useEffect(() => {
     const tree = treeRef.current
     if (!tree) return
-    tree.update(tree.props)
-  }, [treeNodes])
+    for (const [id, isOpen] of Object.entries(savedOpenState.current)) {
+      if (isOpen) tree.open(id)
+    }
+  }, [treeVersion])
 
+  // 构建完整树结构：所有已加载的目录的子节点直接嵌入 data 中
   const data = useMemo<TreeNode[]>(() => {
     if (!rootPath) return []
-    const entries = treeNodes[rootPath]
-    if (!entries) return []
-    return entries.map(entryToNode)
-  }, [rootPath, treeNodes])
 
-  const childrenAccessor = useCallback(
-    (node: TreeNode): TreeNode[] | null => {
-      if (node.kind !== 'directory') return null
-      // Load children from store (null in store = not loaded yet)
-      const entries = treeNodes[node.id]
-      if (!entries) return null
-      return entries.map(entryToNode)
-    },
-    [treeNodes],
-  )
+    function buildTree(dirPath: string): TreeNode[] {
+      const entries = treeNodes[dirPath]
+      if (!entries) return []
+      return entries.map((e) => {
+        const node = entryToNode(e)
+        if (e.kind === 'directory' && treeNodes[e.path] !== undefined) {
+          node.children = buildTree(e.path)
+        }
+        return node
+      })
+    }
+
+    return buildTree(rootPath)
+  }, [rootPath, treeNodes])
 
   const handleSelect = useCallback(
     (nodes: NodeApi<TreeNode>[]) => {
@@ -183,9 +200,9 @@ export function FileTree() {
       </div>
       <div className="h-[calc(100%-28px)]">
         <Tree<TreeNode>
+          key={treeVersion}
           ref={treeRef}
           data={data}
-          childrenAccessor={childrenAccessor}
           onSelect={handleSelect}
           rowHeight={26}
           width="100%"
