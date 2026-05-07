@@ -34,7 +34,9 @@ export async function streamWatchEvents(
       if (done) break
 
       buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
+      // Windows SSE 事件使用 \r\n，先统一为 \n 再解析
+      const normalized = buffer.replace(/\r\n/g, '\n')
+      const lines = normalized.split('\n')
       buffer = lines.pop() || ''
 
       let currentEvent = ''

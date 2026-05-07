@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState, useRef, useEffect } from 'react'
-import { Tree, type NodeApi, type NodeRendererProps } from 'react-arborist'
+import { Tree, type NodeApi, type NodeRendererProps, type TreeApi } from 'react-arborist'
 import { ChevronRight, Folder, FolderOpen, File, Loader2 } from 'lucide-react'
 import { useWorkspaceStore } from '@/store/workspace'
 import type { BrowseEntry } from '@/api/client'
@@ -108,6 +108,7 @@ export function FileTree() {
   const openFile = useWorkspaceStore((s) => s.openFile)
   const sessionId = useWorkspaceStore((s) => s.sessionId)
   const containerRef = useRef<HTMLDivElement>(null)
+  const treeRef = useRef<TreeApi<TreeNode>>(null)
   const [height, setHeight] = useState(300)
 
   useEffect(() => {
@@ -121,6 +122,13 @@ export function FileTree() {
     obs.observe(el)
     return () => obs.disconnect()
   }, [])
+
+  // treeNodes 更新后强制刷新 react-arborist，避免子节点缓存导致文件变化不显示
+  useEffect(() => {
+    const tree = treeRef.current
+    if (!tree) return
+    tree.update(tree.props)
+  }, [treeNodes])
 
   const data = useMemo<TreeNode[]>(() => {
     if (!rootPath) return []
@@ -175,6 +183,7 @@ export function FileTree() {
       </div>
       <div className="h-[calc(100%-28px)]">
         <Tree<TreeNode>
+          ref={treeRef}
           data={data}
           childrenAccessor={childrenAccessor}
           onSelect={handleSelect}
