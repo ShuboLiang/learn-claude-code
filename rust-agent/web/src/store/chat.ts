@@ -435,11 +435,14 @@ interface ChatState {
   selectedModel: string;
   /** 用于取消正在进行的 getMessages 请求 */
   loadAbortController: AbortController | null;
+  /** 已安装的技能列表 */
+  skills: api.SkillInfo[];
 }
 
 interface ChatActions {
   loadSessions: () => Promise<void>;
   loadConfig: () => Promise<void>;
+  loadSkills: () => Promise<void>;
   createSession: (workingDir?: string) => Promise<void>;
   selectSession: (id: string) => Promise<void>;
   deleteSession: (id: string) => Promise<void>;
@@ -485,6 +488,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
     selectedProfile: "",
     selectedModel: "",
     loadAbortController: null,
+    skills: [],
 
     // ── Config action ──
 
@@ -501,6 +505,17 @@ export const useChatStore = create<ChatState & ChatActions>()(
         });
       } catch (err) {
         console.error("加载配置失败:", err);
+      }
+    },
+
+    async loadSkills() {
+      try {
+        const skills = await api.listSkills();
+        set((s) => {
+          s.skills = skills;
+        });
+      } catch (err) {
+        console.error("加载技能列表失败:", err);
       }
     },
 

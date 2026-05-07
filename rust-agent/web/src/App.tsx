@@ -8,13 +8,15 @@ import { useChatStore } from '@/store/chat'
 function App() {
   const loadSessions = useChatStore((s) => s.loadSessions)
   const loadConfig = useChatStore((s) => s.loadConfig)
+  const loadSkills = useChatStore((s) => s.loadSkills)
   const currentSessionId = useChatStore((s) => s.currentSessionId)
   const createSession = useChatStore((s) => s.createSession)
   const clearCurrent = useChatStore((s) => s.clearCurrent)
 
   useEffect(() => {
     loadConfig()
-  }, [loadConfig])
+    loadSkills()
+  }, [loadConfig, loadSkills])
 
   useEffect(() => {
     loadSessions()

@@ -1,9 +1,9 @@
 import { useState, useRef, useCallback, useMemo, type KeyboardEvent } from 'react'
-import { Square, ArrowUp, Trash2, Bot, CornerDownLeft } from 'lucide-react'
+import { Square, ArrowUp, Trash2, Bot, CornerDownLeft, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useChatStore } from '@/store/chat'
 
-const COMMANDS: { cmd: string; label: string; desc: string; icon: React.ReactNode }[] = [
+const BASE_COMMANDS: { cmd: string; label: string; desc: string; icon: React.ReactNode }[] = [
   { cmd: '/clear', label: '清空上下文', desc: '清空当前会话的对话历史', icon: <Trash2 className="h-3.5 w-3.5" /> },
   { cmd: '/bots', label: '查看机器人', desc: '列出所有可用的 Bot 助手', icon: <Bot className="h-3.5 w-3.5" /> },
 ]
@@ -17,18 +17,30 @@ export function Composer() {
   const streaming = useChatStore((s) => s.streaming)
   const clearCurrent = useChatStore((s) => s.clearCurrent)
   const handleCommand = useChatStore((s) => s.handleCommand)
+  const skills = useChatStore((s) => s.skills)
+
+  // 动态命令列表：基础命令 + 已安装技能
+  const allCommands = useMemo(() => {
+    const skillCmds = skills.map((s) => ({
+      cmd: `/skill:${s.name}`,
+      label: s.name,
+      desc: s.description || '加载此技能并执行相关任务',
+      icon: <Sparkles className="h-3.5 w-3.5" />,
+    }))
+    return [...BASE_COMMANDS, ...skillCmds]
+  }, [skills])
 
   // 命令提示逻辑
   const isCmdMode = useMemo(() => {
     const t = text.trimStart()
-    return t.startsWith('/') && !t.includes(' ') && COMMANDS.some((c) => c.cmd.startsWith(t))
-  }, [text])
+    return t.startsWith('/') && !t.includes(' ') && allCommands.some((c) => c.cmd.startsWith(t))
+  }, [text, allCommands])
 
   const matchingCmds = useMemo(() => {
     if (!text.trimStart().startsWith('/')) return []
     const prefix = text.trimStart()
-    return COMMANDS.filter((c) => c.cmd.startsWith(prefix))
-  }, [text])
+    return allCommands.filter((c) => c.cmd.startsWith(prefix))
+  }, [text, allCommands])
 
   const acceptCommand = useCallback((cmd: string) => {
     setText(cmd + ' ')
@@ -52,7 +64,12 @@ export function Composer() {
           handleCommand('/bots')
           break
         default:
-          sendMessage(formatted)
+          if (cmd.startsWith('/skill:')) {
+            const skillName = cmd.slice(7)
+            sendMessage(`请加载 ${skillName} 技能并执行相关任务。`)
+          } else {
+            sendMessage(formatted)
+          }
       }
       setText('')
       setCmdIndex(0)
@@ -120,7 +137,7 @@ export function Composer() {
       <div className="mx-auto max-w-2xl">
         {/* Command chips */}
         <div className="mb-2 flex items-center gap-1">
-          {COMMANDS.map(({ cmd, label, icon }) => (
+          {BASE_COMMANDS.map(({ cmd, label, icon }) => (
             <button
               key={cmd}
               onClick={() => insertCommand(cmd)}
