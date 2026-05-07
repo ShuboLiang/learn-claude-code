@@ -39,7 +39,7 @@ export function Composer() {
     if (t.startsWith('/skill:')) {
       return skillCommands.some((c) => c.cmd.startsWith(t))
     }
-    return BASE_COMMANDS.some((c) => c.cmd.startsWith(t)) || t === '/'
+    return BASE_COMMANDS.some((c) => c.cmd.startsWith(t)) || t === '/' || '/skill:'.startsWith(t)
   }, [text, skillCommands])
 
   const matchingCmds = useMemo(() => {
