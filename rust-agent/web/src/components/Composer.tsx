@@ -19,28 +19,46 @@ export function Composer() {
   const handleCommand = useChatStore((s) => s.handleCommand)
   const skills = useChatStore((s) => s.skills)
 
-  // 动态命令列表：基础命令 + 已安装技能
-  const allCommands = useMemo(() => {
-    const skillCmds = skills.map((s) => ({
+  // 技能命令列表
+  const skillCommands = useMemo(() => {
+    return skills.map((s) => ({
       cmd: `/skill:${s.name}`,
       label: s.name,
       desc: s.description || '加载此技能并执行相关任务',
       icon: <Sparkles className="h-3.5 w-3.5" />,
     }))
-    return [...BASE_COMMANDS, ...skillCmds]
   }, [skills])
 
-  // 命令提示逻辑
+  // 命令提示逻辑：
+  // - 输入 / 时只显示基础命令 + /skill: 入口
+  // - 输入 /skill: 时显示技能列表
   const isCmdMode = useMemo(() => {
     const t = text.trimStart()
-    return t.startsWith('/') && !t.includes(' ') && allCommands.some((c) => c.cmd.startsWith(t))
-  }, [text, allCommands])
+    if (!t.startsWith('/') || t.includes(' ')) return false
+    if (t.startsWith('/skill:')) {
+      return skillCommands.some((c) => c.cmd.startsWith(t))
+    }
+    return BASE_COMMANDS.some((c) => c.cmd.startsWith(t)) || t === '/'
+  }, [text, skillCommands])
 
   const matchingCmds = useMemo(() => {
-    if (!text.trimStart().startsWith('/')) return []
-    const prefix = text.trimStart()
-    return allCommands.filter((c) => c.cmd.startsWith(prefix))
-  }, [text, allCommands])
+    const t = text.trimStart()
+    if (!t.startsWith('/')) return []
+    if (t.startsWith('/skill:')) {
+      return skillCommands.filter((c) => c.cmd.startsWith(t))
+    }
+    // 输入 / 或 /c、/b 等：只显示基础命令 + /skill: 入口
+    const base = BASE_COMMANDS.filter((c) => c.cmd.startsWith(t))
+    if (t === '/' || '/skill:'.startsWith(t)) {
+      base.push({
+        cmd: '/skill:',
+        label: '加载技能',
+        desc: `查看已安装的 ${skillCommands.length} 个技能`,
+        icon: <Sparkles className="h-3.5 w-3.5" />,
+      })
+    }
+    return base
+  }, [text, skillCommands])
 
   const acceptCommand = useCallback((cmd: string) => {
     setText(cmd + ' ')
