@@ -353,18 +353,25 @@ impl OpenAIClient {
                 OpenAIStreamParser::new(),
                 Vec::new(),
                 false, // finished: 收到 [DONE] 后设为 true，流不再读取更多数据
+                cancel.cloned(),
             ),
-            |(mut bytes_stream, mut buffer, mut parser, mut pending, mut finished): (
+            |(mut bytes_stream, mut buffer, mut parser, mut pending, mut finished, cancel): (
                 _,
                 _,
                 _,
                 Vec<AgentResult<LlmStreamChunk>>,
                 bool,
+                Option<CancelFlag>,
             )| async move {
                 loop {
+                    // 用户点击停止后，cancel 标志被设置，立即结束流
+                    if retry::is_cancelled(cancel.as_ref()) {
+                        return None;
+                    }
+
                     if !pending.is_empty() {
                         let chunk = pending.remove(0);
-                        return Some((chunk, (bytes_stream, buffer, parser, pending, finished)));
+                        return Some((chunk, (bytes_stream, buffer, parser, pending, finished, cancel)));
                     }
 
                     // 如果已经发出 Done，流结束
@@ -406,7 +413,7 @@ impl OpenAIClient {
                         Some(Err(e)) => {
                             return Some((
                                 Err(anyhow!("SSE 流读取错误: {}", e)),
-                                (bytes_stream, buffer, parser, pending, finished),
+                                (bytes_stream, buffer, parser, pending, finished, cancel),
                             ));
                         }
                         None => {

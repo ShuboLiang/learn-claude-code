@@ -451,12 +451,12 @@ async fn send_message(
                         broadcaster_for_agent.send(&sid, evt);
                         no_subscriber_ticks = 0;
                     }
-                    _ = tokio::time::sleep(Duration::from_millis(500)) => {
+                    _ = tokio::time::sleep(Duration::from_millis(200)) => {
                         // 检查 broadcaster 是否还有活跃 subscriber
                         if broadcaster_for_agent.receiver_count(&sid) == 0 {
                             no_subscriber_ticks += 1;
-                            if no_subscriber_ticks >= 4 {
-                                // 连续 2 秒无 subscriber，退出 bridge task
+                            if no_subscriber_ticks >= 3 {
+                                // 连续 600ms 无 subscriber，退出 bridge task
                                 // 释放 agent_rx，让 agent_tx.is_closed() 返回 true
                                 break;
                             }

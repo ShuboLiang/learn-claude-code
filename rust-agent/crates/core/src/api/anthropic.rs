@@ -544,6 +544,7 @@ impl AnthropicClient {
 
             // SSE 流式处理
             let (mut event_tx, event_rx) = futures::channel::mpsc::channel(128);
+            let cancel_flag = cancel.cloned();
 
             tokio::spawn(async move {
                 let mut stream = response.bytes_stream();
@@ -551,6 +552,10 @@ impl AnthropicClient {
                 let mut buffer = String::new();
 
                 while let Some(chunk_result) = stream.next().await {
+                    // 用户点击停止后，cancel 标志被设置，立即退出读取循环
+                    if retry::is_cancelled(cancel_flag.as_ref()) {
+                        return;
+                    }
                     match chunk_result {
                         Ok(bytes) => {
                             buffer.push_str(&String::from_utf8_lossy(&bytes));

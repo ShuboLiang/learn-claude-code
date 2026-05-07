@@ -784,6 +784,12 @@ impl AgentApp {
             }
 
             for tc in &other_calls {
+                // 用户点击停止后 event_tx 已关闭，跳过剩余工具执行
+                if event_tx.is_closed() {
+                    warn!("[Agent] 客户端已断开，跳过工具执行: {}", tc.name);
+                    break;
+                }
+
                 let input_preview = preview_text(&tc.input.to_string(), 200);
                 logger.log(&format!(
                     "=== 工具调用: {} ===\n输入: {input_preview}",
