@@ -689,8 +689,8 @@ async fn watch_files(
         let mut watcher = match notify::recommended_watcher(
             move |res: Result<notify::Event, notify::Error>| {
                 let Ok(event) = res else { return };
-                // 忽略 .git 目录内的变更
                 let path_str = event.paths.first().map(|p| p.display().to_string()).unwrap_or_default();
+                // 忽略 .git 目录内的变更
                 if path_str.contains("/.git/") || path_str.contains("\\.git\\") {
                     return;
                 }

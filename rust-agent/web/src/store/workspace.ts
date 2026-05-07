@@ -118,18 +118,18 @@ export const useWorkspaceStore = create<WorkspaceState & WorkspaceActions>()(
       streamWatchEvents(
         sessionId,
         (evt) => {
-          const { rootPath, expandedDirs } = get()
+          const state = get()
+          const rootPath = state.rootPath
           if (!rootPath) return
           const path = evt.data.path
-          // 同时处理 Windows (\) 和 Unix (/) 路径分隔符
           const lastSep = Math.max(path.lastIndexOf('\\'), path.lastIndexOf('/'))
           const parentDir = lastSep > 0 ? path.substring(0, lastSep) : ''
-          if (parentDir && expandedDirs[parentDir]) {
+          // 刷新父目录（如果已加载过）
+          if (parentDir && state.treeNodes[parentDir] !== undefined) {
             get().loadChildren(parentDir)
           }
-          if (expandedDirs[rootPath]) {
-            get().loadChildren(rootPath)
-          }
+          // 始终刷新根目录
+          get().loadChildren(rootPath)
         },
         watchAbort.signal,
       ).catch(() => {
