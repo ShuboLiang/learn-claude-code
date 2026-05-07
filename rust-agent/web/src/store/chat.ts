@@ -447,6 +447,7 @@ interface ChatActions {
   loadConfig: () => Promise<void>;
   loadSkills: () => Promise<void>;
   loadBots: () => Promise<void>;
+  goHome: () => void;
   createSession: (workingDir?: string) => Promise<void>;
   selectSession: (id: string) => Promise<void>;
   deleteSession: (id: string) => Promise<void>;
@@ -538,6 +539,23 @@ export const useChatStore = create<ChatState & ChatActions>()(
           s.botsLoaded = true;
         });
       }
+    },
+
+    goHome() {
+      const state = get();
+      if (state.loadAbortController) {
+        state.loadAbortController.abort();
+      }
+
+      set((s) => {
+        if (s.currentSessionId && s.streaming) {
+          s.streamingBySession[s.currentSessionId] = s.streaming;
+        }
+        s.currentSessionId = null;
+        s.messages = [];
+        s.streaming = null;
+        s.loadAbortController = null;
+      });
     },
 
     // ── Session actions ──
