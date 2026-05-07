@@ -67,13 +67,15 @@ function App() {
   const loadSessions = useChatStore((s) => s.loadSessions)
   const loadConfig = useChatStore((s) => s.loadConfig)
   const loadSkills = useChatStore((s) => s.loadSkills)
+  const loadBots = useChatStore((s) => s.loadBots)
   const currentSessionId = useChatStore((s) => s.currentSessionId)
   const clearCurrent = useChatStore((s) => s.clearCurrent)
 
   useEffect(() => {
     loadConfig()
     loadSkills()
-  }, [loadConfig, loadSkills])
+    loadBots()
+  }, [loadConfig, loadSkills, loadBots])
 
   useEffect(() => {
     loadSessions()

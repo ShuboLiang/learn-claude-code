@@ -19,6 +19,7 @@ export function Composer() {
   const clearCurrent = useChatStore((s) => s.clearCurrent)
   const handleCommand = useChatStore((s) => s.handleCommand)
   const skills = useChatStore((s) => s.skills)
+  const bots = useChatStore((s) => s.bots)
 
   // 技能命令列表
   const skillCommands = useMemo(() => {
@@ -30,25 +31,41 @@ export function Composer() {
     }))
   }, [skills])
 
+  // Bot 命令列表
+  const botCommands = useMemo(() => {
+    return bots.map((b) => ({
+      cmd: `/bot:${b.name}`,
+      label: b.nickname || b.name,
+      desc: b.description || `调用 ${b.name} Bot 执行任务`,
+      icon: <Bot className="h-3.5 w-3.5" />,
+    }))
+  }, [bots])
+
   // 命令提示逻辑：
-  // - 输入 / 时只显示基础命令 + /skill: 入口
+  // - 输入 / 时只显示基础命令 + /skill: + /bot: 入口
   // - 输入 /skill: 时显示技能列表
+  // - 输入 /bot: 时显示 Bot 列表
   const isCmdMode = useMemo(() => {
     const t = text.trimStart()
     if (!t.startsWith('/') || t.includes(' ')) return false
     if (t.startsWith('/skill:')) {
       return skillCommands.some((c) => c.cmd.startsWith(t))
     }
-    return BASE_COMMANDS.some((c) => c.cmd.startsWith(t)) || t === '/' || '/skill:'.startsWith(t)
-  }, [text, skillCommands])
+    if (t.startsWith('/bot:')) {
+      return botCommands.some((c) => c.cmd.startsWith(t))
+    }
+    return BASE_COMMANDS.some((c) => c.cmd.startsWith(t)) || t === '/' || '/skill:'.startsWith(t) || '/bot:'.startsWith(t)
+  }, [text, skillCommands, botCommands])
 
   const matchingCmds = useMemo(() => {
-    const t = text.trimStart().trimEnd() // 去掉尾部空格，避免 /skill: 后空格导致匹配失败
+    const t = text.trimStart().trimEnd()
     if (!t.startsWith('/')) return []
     if (t.startsWith('/skill:')) {
       return skillCommands.filter((c) => c.cmd.startsWith(t))
     }
-    // 输入 / 或 /c、/b 等：只显示基础命令 + /skill: 入口
+    if (t.startsWith('/bot:')) {
+      return botCommands.filter((c) => c.cmd.startsWith(t))
+    }
     const base = BASE_COMMANDS.filter((c) => c.cmd.startsWith(t))
     if (t === '/' || '/skill:'.startsWith(t)) {
       base.push({
@@ -58,12 +75,19 @@ export function Composer() {
         icon: <Sparkles className="h-3.5 w-3.5" />,
       })
     }
+    if (t === '/' || '/bot:'.startsWith(t)) {
+      base.push({
+        cmd: '/bot:',
+        label: '调用 Bot',
+        desc: `查看已配置的 ${botCommands.length} 个 Bot`,
+        icon: <Bot className="h-3.5 w-3.5" />,
+      })
+    }
     return base
-  }, [text, skillCommands])
+  }, [text, skillCommands, botCommands])
 
   const acceptCommand = useCallback((cmd: string) => {
-    // /skill: 选择后不加空格，让用户继续输入过滤技能
-    setText(cmd === '/skill:' ? cmd : cmd + ' ')
+    setText(cmd === '/skill:' || cmd === '/bot:' ? cmd : cmd + ' ')
     setCmdIndex(0)
     textareaRef.current?.focus()
   }, [])
@@ -87,6 +111,9 @@ export function Composer() {
           if (cmd.startsWith('/skill:')) {
             const skillName = cmd.slice(7)
             sendMessage(`请加载 ${skillName} 技能并执行相关任务。`)
+          } else if (cmd.startsWith('/bot:')) {
+            const botName = cmd.slice(5)
+            sendMessage(`请调用 ${botName} Bot 处理这个任务。`)
           } else {
             sendMessage(formatted)
           }

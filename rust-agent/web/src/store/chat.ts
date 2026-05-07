@@ -437,12 +437,15 @@ interface ChatState {
   loadAbortController: AbortController | null;
   /** 已安装的技能列表 */
   skills: api.SkillInfo[];
+  /** 已配置的 Bot 列表 */
+  bots: api.BotInfo[];
 }
 
 interface ChatActions {
   loadSessions: () => Promise<void>;
   loadConfig: () => Promise<void>;
   loadSkills: () => Promise<void>;
+  loadBots: () => Promise<void>;
   createSession: (workingDir?: string) => Promise<void>;
   selectSession: (id: string) => Promise<void>;
   deleteSession: (id: string) => Promise<void>;
@@ -489,6 +492,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
     selectedModel: "",
     loadAbortController: null,
     skills: [],
+    bots: [],
 
     // ── Config action ──
 
@@ -516,6 +520,17 @@ export const useChatStore = create<ChatState & ChatActions>()(
         });
       } catch (err) {
         console.error("加载技能列表失败:", err);
+      }
+    },
+
+    async loadBots() {
+      try {
+        const bots = await api.listBots();
+        set((s) => {
+          s.bots = bots;
+        });
+      } catch (err) {
+        console.error("加载 Bot 列表失败:", err);
       }
     },
 
