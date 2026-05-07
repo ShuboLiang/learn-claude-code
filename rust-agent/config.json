@@ -1,9 +1,0 @@
-{
-  "weights": {
-    "education": 0.10,
-    "major_match": 0.10,
-    "skills_match": 0.20,
-    "experience": 0.30,
-    "job_match": 0.30
-  }
-}

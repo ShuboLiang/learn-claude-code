@@ -85,25 +85,6 @@
                         { "type": "text", "width": "fit-content", "height": "fit-content", "text": "Web UI", "fontSize": 14, "textColor": "#1F2329", "textAlign": "center" },
                         { "type": "text", "width": "fit-content", "height": "fit-content", "text": "React + Vite + Zustand", "fontSize": 12, "textColor": "#646A73", "textAlign": "center" }
                       ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "node-cli",
-                      "width": "fill-container",
-                      "height": "fit-content",
-                      "layout": "vertical",
-                      "gap": 6,
-                      "padding": 12,
-                      "alignItems": "center",
-                      "fillColor": "#FFFFFF",
-                      "borderColor": "#5178C6",
-                      "borderWidth": 2,
-                      "borderRadius": 8,
-                      "children": [
-                        { "type": "icon", "id": "icon-cli", "name": "terminal", "width": 36, "height": 36, "color": "#5178C6" },
-                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "CLI 终端", "fontSize": 14, "textColor": "#1F2329", "textAlign": "center" },
-                        { "type": "text", "width": "fit-content", "height": "fit-content", "text": "Ink (React in Terminal)", "fontSize": 12, "textColor": "#646A73", "textAlign": "center" }
-                      ]
                     }
                   ]
                 }
