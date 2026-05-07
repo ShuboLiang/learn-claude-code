@@ -12,6 +12,7 @@ export function Composer() {
   const [text, setText] = useState('')
   const [cmdIndex, setCmdIndex] = useState(0)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const cmdListRef = useRef<HTMLDivElement>(null)
   const sendMessage = useChatStore((s) => s.sendMessage)
   const cancelStream = useChatStore((s) => s.cancelStream)
   const streaming = useChatStore((s) => s.streaming)
@@ -105,12 +106,23 @@ export function Composer() {
       if (isCmdMode && matchingCmds.length > 0) {
         if (e.key === 'ArrowDown') {
           e.preventDefault()
-          setCmdIndex((i) => (i + 1) % matchingCmds.length)
+          const nextIndex = (cmdIndex + 1) % matchingCmds.length
+          setCmdIndex(nextIndex)
+          // 键盘滚动时让高亮项进入可视区域
+          requestAnimationFrame(() => {
+            const el = cmdListRef.current?.querySelector(`[data-cmd-index="${nextIndex}"]`)
+            el?.scrollIntoView({ block: 'nearest' })
+          })
           return
         }
         if (e.key === 'ArrowUp') {
           e.preventDefault()
-          setCmdIndex((i) => (i - 1 + matchingCmds.length) % matchingCmds.length)
+          const nextIndex = (cmdIndex - 1 + matchingCmds.length) % matchingCmds.length
+          setCmdIndex(nextIndex)
+          requestAnimationFrame(() => {
+            const el = cmdListRef.current?.querySelector(`[data-cmd-index="${nextIndex}"]`)
+            el?.scrollIntoView({ block: 'nearest' })
+          })
           return
         }
         if (e.key === 'Tab' || e.key === 'Enter') {
@@ -171,10 +183,11 @@ export function Composer() {
         <div className="relative">
           {/* 命令提示弹窗 */}
           {isCmdMode && matchingCmds.length > 0 && (
-            <div className="absolute bottom-full left-0 right-0 mb-1 max-h-64 overflow-y-auto rounded-lg border bg-popover shadow-lg overflow-hidden">
+            <div ref={cmdListRef} className="absolute bottom-full left-0 right-0 mb-1 max-h-64 overflow-y-auto rounded-lg border bg-popover shadow-lg overflow-hidden">
               {matchingCmds.map((cmd, i) => (
                 <button
                   key={cmd.cmd}
+                  data-cmd-index={i}
                   onClick={() => acceptCommand(cmd.cmd)}
                   onMouseEnter={() => setCmdIndex(i)}
                   className={cn(
