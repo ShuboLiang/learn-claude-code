@@ -5,6 +5,7 @@ import { useChatStore } from '@/store/chat'
 
 const BASE_COMMANDS: { cmd: string; label: string; desc: string; icon: React.ReactNode }[] = [
   { cmd: '/clear', label: '清空上下文', desc: '清空当前会话的对话历史', icon: <Trash2 className="h-3.5 w-3.5" /> },
+  { cmd: '/skills', label: '查看技能', desc: '列出所有已安装的技能', icon: <Sparkles className="h-3.5 w-3.5" /> },
   { cmd: '/bots', label: '查看机器人', desc: '列出所有可用的 Bot 助手', icon: <Bot className="h-3.5 w-3.5" /> },
 ]
 
@@ -20,6 +21,7 @@ export function Composer() {
   const handleCommand = useChatStore((s) => s.handleCommand)
   const skills = useChatStore((s) => s.skills)
   const bots = useChatStore((s) => s.bots)
+  const botsLoaded = useChatStore((s) => s.botsLoaded)
 
   // 技能命令列表
   const skillCommands = useMemo(() => {
@@ -79,12 +81,12 @@ export function Composer() {
       base.push({
         cmd: '/bot:',
         label: '调用 Bot',
-        desc: `查看已配置的 ${botCommands.length} 个 Bot`,
+        desc: botsLoaded ? `查看已配置的 ${botCommands.length} 个 Bot` : '正在加载 Bot 列表...',
         icon: <Bot className="h-3.5 w-3.5" />,
       })
     }
     return base
-  }, [text, skillCommands, botCommands])
+  }, [text, skillCommands, botCommands, botsLoaded])
 
   const acceptCommand = useCallback((cmd: string) => {
     setText(cmd === '/skill:' || cmd === '/bot:' ? cmd : cmd + ' ')
@@ -99,21 +101,46 @@ export function Composer() {
     const formatted = trimmed.replace(/\\n/g, '\n').replace(/\\t/g, '\t')
 
     if (formatted.startsWith('/')) {
-      const [cmd] = formatted.split(/\s+/, 1)
+      const firstSpace = formatted.search(/\s/)
+      const cmd = firstSpace >= 0 ? formatted.slice(0, firstSpace) : formatted
+      const rest = firstSpace >= 0 ? formatted.slice(firstSpace).trim() : ''
       switch (cmd) {
         case '/clear':
-          clearCurrent()
+          if (rest) {
+            sendMessage(formatted)
+          } else {
+            clearCurrent()
+          }
+          break
+        case '/skills':
+          if (rest) {
+            sendMessage(formatted)
+          } else {
+            handleCommand('/skills')
+          }
           break
         case '/bots':
-          handleCommand('/bots')
+          if (rest) {
+            sendMessage(formatted)
+          } else {
+            handleCommand('/bots')
+          }
           break
         default:
           if (cmd.startsWith('/skill:')) {
             const skillName = cmd.slice(7)
-            sendMessage(`请加载 ${skillName} 技能并执行相关任务。`)
+            sendMessage(
+              rest
+                ? `请加载 ${skillName} 技能并执行以下任务：\n${rest}`
+                : `请加载 ${skillName} 技能并执行相关任务。`,
+            )
           } else if (cmd.startsWith('/bot:')) {
             const botName = cmd.slice(5)
-            sendMessage(`请调用 ${botName} Bot 处理这个任务。`)
+            sendMessage(
+              rest
+                ? `请调用 ${botName} Bot 处理以下任务：\n${rest}`
+                : `请调用 ${botName} Bot 处理这个任务。`,
+            )
           } else {
             sendMessage(formatted)
           }

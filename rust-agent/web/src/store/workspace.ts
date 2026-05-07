@@ -2,7 +2,6 @@ import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 import type { BrowseEntry } from '@/api/client'
 import { browseDirectory, streamWatchEvents, readFile, writeFile } from '@/api/workspace'
-import type { FileReadResult } from '@/api/workspace'
 
 interface WorkspaceState {
   rootPath: string | null

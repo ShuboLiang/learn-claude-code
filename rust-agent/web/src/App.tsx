@@ -1,5 +1,5 @@
 import { useEffect, useCallback } from 'react'
-import { Bot, Code2, FolderTree, Zap, Sparkles } from 'lucide-react'
+import { Bot, Code2, FolderTree, Zap } from 'lucide-react'
 import { SessionList } from '@/components/SessionList'
 import { ChatPane } from '@/components/ChatPane'
 import { WorkspacePanel } from '@/components/WorkspacePanel'

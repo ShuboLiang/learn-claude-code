@@ -54,7 +54,6 @@ async function runSSELoop(
   sid: string,
   abortController: AbortController,
   set: (fn: (s: ChatState & ChatActions) => void) => void,
-  get: () => ChatState & ChatActions,
 ) {
   const isAborted = () => abortController.signal.aborted;
 
@@ -439,6 +438,8 @@ interface ChatState {
   skills: api.SkillInfo[];
   /** 已配置的 Bot 列表 */
   bots: api.BotInfo[];
+  /** Bot 列表是否已完成首轮加载 */
+  botsLoaded: boolean;
 }
 
 interface ChatActions {
@@ -493,6 +494,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
     loadAbortController: null,
     skills: [],
     bots: [],
+    botsLoaded: false,
 
     // ── Config action ──
 
@@ -528,9 +530,13 @@ export const useChatStore = create<ChatState & ChatActions>()(
         const bots = await api.listBots();
         set((s) => {
           s.bots = bots;
+          s.botsLoaded = true;
         });
       } catch (err) {
         console.error("加载 Bot 列表失败:", err);
+        set((s) => {
+          s.botsLoaded = true;
+        });
       }
     },
 
@@ -664,7 +670,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
         });
       }
 
-      runSSELoop(id, sseAbortController, set, get).catch(() => {
+      runSSELoop(id, sseAbortController, set).catch(() => {
         set((s) => {
           delete s.streamingBySession[id];
           if (s.currentSessionId === id) s.streaming = null;
@@ -791,7 +797,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
       }
 
       // 订阅 SSE 实时流
-      await runSSELoop(sid, abortController, set, get);
+      await runSSELoop(sid, abortController, set);
     },
 
     async handleCommand(cmd: string) {
@@ -814,7 +820,7 @@ export const useChatStore = create<ChatState & ChatActions>()(
                   {
                     kind: "text",
                     content:
-                      "暂无已配置的 Bot。将 Bot 定义文件放入 skills/ 或 ~/.rust-agent/skills/ 目录即可。",
+                      "暂无已配置的 Bot。请将 Bot 定义文件放入 ~/.rust-agent/bots/<bot-name>/BOT.md。",
                   },
                 ],
               });
@@ -848,6 +854,62 @@ export const useChatStore = create<ChatState & ChatActions>()(
                   kind: "error",
                   code: "BOTS_ERROR",
                   message: "获取 Bot 列表失败",
+                },
+              ],
+            });
+          });
+        }
+        return;
+      }
+
+      if (cmd === "/skills") {
+        try {
+          const skills = await api.listSkills();
+          set((s) => {
+            s.messages.push({
+              id: nanoid(),
+              role: "user",
+              content: "/skills",
+              blocks: [],
+            });
+
+            if (skills.length === 0) {
+              s.messages.push({
+                id: nanoid(),
+                role: "assistant",
+                content: "",
+                blocks: [
+                  {
+                    kind: "text",
+                    content: "暂无已安装技能。",
+                  },
+                ],
+              });
+              return;
+            }
+
+            const lines = skills.map(
+              (skill) =>
+                `- **${skill.name}** — ${skill.description || "No description"}`,
+            );
+            s.messages.push({
+              id: nanoid(),
+              role: "assistant",
+              content: "",
+              blocks: [{ kind: "text", content: lines.join("\n") }],
+            });
+          });
+        } catch {
+          set((s) => {
+            s.messages.push({
+              id: nanoid(),
+              role: "assistant",
+              content: "",
+              blocks: [
+                {
+                  kind: "error",
+                  code: "SKILLS_ERROR",
+                  message: "获取技能列表失败",
                 },
               ],
             });
