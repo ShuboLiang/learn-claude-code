@@ -42,7 +42,7 @@ export function Composer() {
   }, [text, skillCommands])
 
   const matchingCmds = useMemo(() => {
-    const t = text.trimStart()
+    const t = text.trimStart().trimEnd() // 去掉尾部空格，避免 /skill: 后空格导致匹配失败
     if (!t.startsWith('/')) return []
     if (t.startsWith('/skill:')) {
       return skillCommands.filter((c) => c.cmd.startsWith(t))
@@ -61,7 +61,8 @@ export function Composer() {
   }, [text, skillCommands])
 
   const acceptCommand = useCallback((cmd: string) => {
-    setText(cmd + ' ')
+    // /skill: 选择后不加空格，让用户继续输入过滤技能
+    setText(cmd === '/skill:' ? cmd : cmd + ' ')
     setCmdIndex(0)
     textareaRef.current?.focus()
   }, [])
@@ -143,7 +144,7 @@ export function Composer() {
   )
 
   const insertCommand = useCallback((cmd: string) => {
-    setText(cmd + ' ')
+    setText(cmd === '/skill:' ? cmd : cmd + ' ')
     setCmdIndex(0)
     textareaRef.current?.focus()
   }, [])
@@ -170,7 +171,7 @@ export function Composer() {
         <div className="relative">
           {/* 命令提示弹窗 */}
           {isCmdMode && matchingCmds.length > 0 && (
-            <div className="absolute bottom-full left-0 right-0 mb-1 rounded-lg border bg-popover shadow-lg overflow-hidden">
+            <div className="absolute bottom-full left-0 right-0 mb-1 max-h-64 overflow-y-auto rounded-lg border bg-popover shadow-lg overflow-hidden">
               {matchingCmds.map((cmd, i) => (
                 <button
                   key={cmd.cmd}
