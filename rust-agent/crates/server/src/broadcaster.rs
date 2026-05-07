@@ -61,15 +61,22 @@ impl SessionBroadcaster {
     }
 
     /// 发送事件到指定会话的所有订阅者，并缓存到历史
+    ///
+    /// 流正常结束（AgentEvent::Done）时立即清理 broadcaster，避免已完成会话的无意义 SSE 连接
+    /// 和历史事件被重复重放。异常兜底清理由 routes.rs 的延迟 task 负责。
     pub fn send(&self, session_id: &str, event: AgentEvent) {
+        let is_done = matches!(event, AgentEvent::Done { .. });
+
         if let Some(mut entry) = self.channels.get_mut(session_id) {
-            // 缓存事件（排除 done/error 等终止事件，避免无意义累积）
-            match &event {
-                AgentEvent::Done { .. } => { /* 不缓存 done */ }
-                _ => entry.history.push(event.clone()),
+            if !is_done {
+                entry.history.push(event.clone());
             }
             // 忽略发送失败（如所有订阅者已断开）
             let _ = entry.tx.send(event);
+        }
+
+        if is_done {
+            self.channels.remove(session_id);
         }
     }
 

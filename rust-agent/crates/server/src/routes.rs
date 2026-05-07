@@ -490,13 +490,14 @@ async fn send_message(
         // 发送 Done 事件，通知所有订阅者流已结束
         broadcaster.send(&session_id, rust_agent_core::agent::AgentEvent::Done { source: EventSource::Main });
         tracing::info!("[send_message] Done 事件已发送");
-        // 流结束后延迟清理广播频道，让新 subscriber 有机会通过历史重放恢复状态
+        // 异常兜底：如果 agent panic 导致 Done 事件未发送，broadcaster 将永久泄漏。
+        // 正常路径下 broadcaster 已在 send(Done) 时被移除，此延迟清理无实际效果。
         let broadcaster_cleanup = broadcaster.clone();
         let sid_cleanup = session_id.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(10)).await;
             broadcaster_cleanup.remove(&sid_cleanup);
-            tracing::info!("[send_message] 广播频道已清理: {sid_cleanup}");
+            tracing::info!("[send_message] 广播频道兜底清理: {sid_cleanup}");
         });
     });
 
